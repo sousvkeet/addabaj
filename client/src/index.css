@@ -1,0 +1,165 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Palette: Kolkata para — limewashed walls, green khorkhori shutters,
+   yellow taxis for anything live, red-oxide floors for leaving/ending. */
+:root {
+  color-scheme: light;
+  --limewash: #e2eae5;
+  --wall: #f2f5f1;
+  --paper: #fcfdfb;
+  --shutter: #1f4c42;
+  --shutter-deep: #15362f;
+  --on-shutter: #eef4f0;
+  --taxi: #f2c230;
+  --on-taxi: #2a2205;
+  --oxide: #9c3424;
+  --ink: #14302a;
+  --ink-soft: #556d66;
+  --line: #c9d8cf;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --limewash: #11221e;
+  --wall: #0c1916;
+  --paper: #172c27;
+  --shutter: #2b6a5c;
+  --shutter-deep: #09130f;
+  --on-shutter: #eef4f0;
+  --taxi: #f2c230;
+  --on-taxi: #2a2205;
+  --oxide: #d0573f;
+  --ink: #e0eae5;
+  --ink-soft: #8fa79f;
+  --line: #22403a;
+}
+
+@theme inline {
+  --color-limewash: var(--limewash);
+  --color-wall: var(--wall);
+  --color-paper: var(--paper);
+  --color-shutter: var(--shutter);
+  --color-shutter-deep: var(--shutter-deep);
+  --color-on-shutter: var(--on-shutter);
+  --color-taxi: var(--taxi);
+  --color-on-taxi: var(--on-taxi);
+  --color-oxide: var(--oxide);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --font-display: "Tiro Bangla", "Noto Serif Bengali", Georgia, serif;
+  --font-sans: "Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--wall);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--taxi);
+  outline-offset: 2px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--taxi) 55%, transparent);
+}
+
+/* Thin, quiet scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--ink-soft) 35%, transparent) transparent;
+}
+
+/* Rolling shop shutter on the sign-in panel: it rolls up once on load. */
+.shop-shutter {
+  background:
+    repeating-linear-gradient(
+      180deg,
+      #4d6b63 0 3px,
+      #3b5a52 3px 5px,
+      #5d7b72 5px 13px,
+      #436159 13px 16px
+    );
+  box-shadow: inset 0 -10px 18px rgb(0 0 0 / 0.35);
+  animation: shutter-up 1.3s cubic-bezier(0.65, 0, 0.35, 1) 0.25s both;
+}
+
+@keyframes shutter-up {
+  from { transform: translateY(0); }
+  to { transform: translateY(calc(-100% + 22px)); }
+}
+
+.speaking-ring {
+  box-shadow: 0 0 0 3px var(--taxi), 0 0 0 7px color-mix(in srgb, var(--taxi) 30%, transparent);
+  transition: box-shadow 120ms ease-out;
+}
+
+.ring-pulse::before,
+.ring-pulse::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: 9999px;
+  border: 3px solid var(--taxi);
+  animation: ring-pulse 1.8s ease-out infinite;
+}
+.ring-pulse::after {
+  animation-delay: 0.9s;
+}
+
+@keyframes ring-pulse {
+  from { transform: scale(1); opacity: 0.9; }
+  to { transform: scale(1.45); opacity: 0; }
+}
+
+.typing-dots span {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 3px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: typing 1.2s infinite ease-in-out;
+}
+.typing-dots span:nth-child(2) { animation-delay: 0.15s; }
+.typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes typing {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-3px); }
+}
+
+.pop-in {
+  animation: pop-in 160ms ease-out;
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shop-shutter {
+    animation: none;
+    transform: translateY(calc(-100% + 22px));
+  }
+  .ring-pulse::before,
+  .ring-pulse::after,
+  .typing-dots span,
+  .pop-in {
+    animation: none;
+  }
+}

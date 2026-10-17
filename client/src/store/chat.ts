@@ -1,0 +1,509 @@
+import { create } from 'zustand';
+import { api, errorMessage } from '../lib/api';
+import { emitAck, socket } from '../lib/socket';
+import type {
+  Conversation, DmMessage, Invite, Paged, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
+} from '../lib/types';
+import { myId, onLogout, useAuth } from './auth';
+import { toast } from './ui';
+
+type Typing = Record<string, string>; // userId -> display name
+
+type ChatState = {
+  bootstrapped: boolean;
+  online: Record<string, boolean>;
+  lastSeen: Record<string, string | null>;
+  users: Record<string, User>;
+  conversations: Record<string, Conversation>;
+  dms: Record<string, Paged<DmMessage>>;
+  dmTyping: Record<string, boolean>;
+  rooms: Record<string, RoomSummary>;
+  roomDetails: Record<string, RoomDetail>;
+  roomMessages: Record<string, Paged<RoomMessage>>;
+  roomTyping: Record<string, Typing>;
+  invites: Invite[];
+  voice: Record<string, VoiceParticipant[]>;
+  activeDm: string | null;
+  activeRoom: string | null;
+
+  sync: () => Promise<void>;
+  rememberUser: (user: User) => void;
+
+  openDm: (partnerId: string | null) => void;
+  loadDm: (partnerId: string, older?: boolean) => Promise<void>;
+  sendDm: (partnerId: string, body: string, retryOf?: string) => Promise<void>;
+  receiveDm: (message: DmMessage, partner: User) => void;
+  markDmRead: (partnerId: string) => void;
+  applyDmRead: (e: { readerId: string; partnerId: string; readAt: string }) => void;
+  setDmTyping: (from: string, typing: boolean) => void;
+
+  openRoom: (roomId: string | null) => void;
+  loadRoom: (roomId: string) => Promise<void>;
+  loadRoomMessages: (roomId: string, older?: boolean) => Promise<void>;
+  sendRoomMessage: (roomId: string, body: string, retryOf?: string) => Promise<void>;
+  receiveRoomMessage: (message: RoomMessage) => void;
+  markRoomRead: (roomId: string) => void;
+  setRoomTyping: (e: { roomId: string; userId: string; name: string; typing: boolean }) => void;
+  upsertRoom: (room: RoomSummary | RoomDetail) => void;
+  dropRoom: (roomId: string) => void;
+
+  createRoom: (input: { name: string; description: string; maxMembers: number }) => Promise<RoomDetail>;
+  updateRoom: (roomId: string, input: Partial<{ name: string; description: string; maxMembers: number }>) => Promise<void>;
+  deleteRoom: (roomId: string) => Promise<void>;
+  addMember: (roomId: string, userId: string) => Promise<void>;
+  inviteMember: (roomId: string, userId: string) => Promise<void>;
+  cancelInvite: (roomId: string, inviteId: string) => Promise<void>;
+  removeMember: (roomId: string, userId: string) => Promise<void>;
+  setRole: (roomId: string, userId: string, role: Role) => Promise<void>;
+  leaveRoom: (roomId: string) => Promise<void>;
+
+  acceptInvite: (inviteId: string) => Promise<RoomDetail>;
+  declineInvite: (inviteId: string) => Promise<void>;
+
+  setVoice: (roomId: string, participants: VoiceParticipant[]) => void;
+};
+
+const emptyPage = <T,>(): Paged<T> => ({ items: [], loaded: false, hasMore: false });
+
+let tempCounter = 0;
+const tempId = () => `tmp-${Date.now()}-${++tempCounter}`;
+
+/** Merge server messages into a list, replacing optimistic copies and keeping id order. */
+function merge<T extends { id: number; tempId?: string; pending?: string }>(items: T[], incoming: T[], replaceTemp?: string) {
+  // Optimistic messages all have id 0, so they're keyed by their temp id.
+  const byKey = new Map<string | number, T>();
+  for (const m of items) if (!m.tempId || m.tempId !== replaceTemp) byKey.set(m.tempId ?? m.id, m);
+  for (const m of incoming) byKey.set(m.id, m);
+  const all = [...byKey.values()];
+  const sent = all.filter((m) => !m.pending).sort((a, b) => a.id - b.id);
+  const pending = all.filter((m) => m.pending);
+  return [...sent, ...pending];
+}
+
+const typingTimers = new Map<string, number>();
+const visible = () => document.visibilityState === 'visible';
+
+const initial = {
+  bootstrapped: false,
+  online: {},
+  lastSeen: {},
+  users: {},
+  conversations: {},
+  dms: {},
+  dmTyping: {},
+  rooms: {},
+  roomDetails: {},
+  roomMessages: {},
+  roomTyping: {},
+  invites: [],
+  voice: {},
+  activeDm: null,
+  activeRoom: null,
+};
+
+export const useChat = create<ChatState>()((set, get) => ({
+  ...initial,
+
+  sync: async () => {
+    try {
+      const [{ conversations }, { rooms }, { invites }] = await Promise.all([
+        api<{ conversations: Conversation[] }>('/dms'),
+        api<{ rooms: RoomSummary[] }>('/rooms'),
+        api<{ invites: Invite[] }>('/invites'),
+      ]);
+      set((s) => ({
+        bootstrapped: true,
+        conversations: Object.fromEntries(conversations.map((c) => [c.partner.id, c])),
+        rooms: Object.fromEntries(rooms.map((r) => [r.id, r])),
+        invites,
+        users: { ...s.users, ...Object.fromEntries(conversations.map((c) => [c.partner.id, c.partner])) },
+      }));
+      // Catch up on whatever was open while we were disconnected.
+      const { activeDm, activeRoom } = get();
+      if (activeDm) {
+        await get().loadDm(activeDm);
+        get().markDmRead(activeDm);
+      }
+      if (activeRoom && get().rooms[activeRoom]) {
+        await Promise.all([get().loadRoom(activeRoom), get().loadRoomMessages(activeRoom)]);
+        get().markRoomRead(activeRoom);
+      }
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  },
+
+  rememberUser: (user) => set((s) => ({ users: { ...s.users, [user.id]: { ...s.users[user.id], ...user } } })),
+
+  // ── Direct messages ──────────────────────────────────────────────
+
+  openDm: (partnerId) => {
+    set({ activeDm: partnerId });
+    if (!partnerId) return;
+    const { dms, users } = get();
+    if (!users[partnerId]) {
+      api<{ user: User }>(`/users/${partnerId}`)
+        .then(({ user }) => get().rememberUser(user))
+        .catch(() => {});
+    }
+    if (!dms[partnerId]?.loaded) void get().loadDm(partnerId).then(() => get().markDmRead(partnerId));
+    else get().markDmRead(partnerId);
+  },
+
+  loadDm: async (partnerId, older = false) => {
+    const page = get().dms[partnerId] ?? emptyPage<DmMessage>();
+    if (older && (!page.hasMore || page.loadingMore)) return;
+    const firstId = page.items.find((m) => !m.pending)?.id;
+    if (older) set((s) => ({ dms: { ...s.dms, [partnerId]: { ...page, loadingMore: true } } }));
+    try {
+      const q = older && firstId ? `?before=${firstId}` : '';
+      const { messages, hasMore } = await api<{ messages: DmMessage[]; hasMore: boolean }>(`/dms/${partnerId}/messages${q}`);
+      set((s) => {
+        const cur = s.dms[partnerId] ?? emptyPage<DmMessage>();
+        return {
+          dms: {
+            ...s.dms,
+            [partnerId]: {
+              items: merge(cur.items, messages),
+              loaded: true,
+              hasMore: older ? hasMore : cur.loaded ? cur.hasMore || hasMore : hasMore,
+              loadingMore: false,
+            },
+          },
+        };
+      });
+    } catch (err) {
+      set((s) => ({ dms: { ...s.dms, [partnerId]: { ...(s.dms[partnerId] ?? emptyPage()), loadingMore: false } } }));
+      toast(errorMessage(err), 'error');
+    }
+  },
+
+  sendDm: async (partnerId, body, retryOf) => {
+    const me = myId();
+    const tid = tempId();
+    const temp: DmMessage = {
+      id: 0, tempId: tid, senderId: me, recipientId: partnerId, kind: 'text', body, meta: null,
+      createdAt: new Date().toISOString(), readAt: null, pending: 'sending',
+    };
+    set((s) => {
+      const page = s.dms[partnerId] ?? { ...emptyPage<DmMessage>(), loaded: true };
+      const items = retryOf ? page.items.filter((m) => m.tempId !== retryOf) : page.items;
+      return { dms: { ...s.dms, [partnerId]: { ...page, items: [...items, temp] } } };
+    });
+    try {
+      const { message } = await emitAck<{ message: DmMessage }>('dm:send', { to: partnerId, body });
+      const partner = get().users[partnerId] ?? get().conversations[partnerId]?.partner;
+      set((s) => {
+        const page = s.dms[partnerId] ?? emptyPage<DmMessage>();
+        return {
+          dms: { ...s.dms, [partnerId]: { ...page, items: merge(page.items, [message], tid) } },
+          conversations: partner
+            ? { ...s.conversations, [partnerId]: { partner, lastMessage: message, unread: s.conversations[partnerId]?.unread ?? 0 } }
+            : s.conversations,
+        };
+      });
+    } catch (err) {
+      set((s) => {
+        const page = s.dms[partnerId];
+        if (!page) return s;
+        return {
+          dms: { ...s.dms, [partnerId]: { ...page, items: page.items.map((m) => (m.tempId === tid ? { ...m, pending: 'failed' as const } : m)) } },
+        };
+      });
+      toast(errorMessage(err), 'error');
+    }
+  },
+
+  receiveDm: (message, partner) => {
+    const me = myId();
+    const incoming = message.senderId !== me;
+    set((s) => {
+      const page = s.dms[partner.id];
+      const isOpen = s.activeDm === partner.id && visible();
+      const prev = s.conversations[partner.id];
+      return {
+        users: { ...s.users, [partner.id]: { ...s.users[partner.id], ...partner } },
+        dms: page ? { ...s.dms, [partner.id]: { ...page, items: merge(page.items, [message]) } } : s.dms,
+        dmTyping: incoming ? { ...s.dmTyping, [partner.id]: false } : s.dmTyping,
+        conversations: {
+          ...s.conversations,
+          [partner.id]: {
+            partner: { ...prev?.partner, ...partner },
+            lastMessage: message,
+            unread: (prev?.unread ?? 0) + (incoming && !isOpen && message.kind === 'text' ? 1 : 0),
+          },
+        },
+      };
+    });
+    if (incoming && get().activeDm === partner.id && visible()) get().markDmRead(partner.id);
+  },
+
+  markDmRead: (partnerId) => {
+    const { conversations, dms } = get();
+    const me = myId();
+    const hasUnread =
+      (conversations[partnerId]?.unread ?? 0) > 0 ||
+      dms[partnerId]?.items.some((m) => m.senderId === partnerId && m.recipientId === me && !m.readAt);
+    if (!hasUnread) return;
+    set((s) => ({
+      conversations: s.conversations[partnerId]
+        ? { ...s.conversations, [partnerId]: { ...s.conversations[partnerId], unread: 0 } }
+        : s.conversations,
+    }));
+    socket.emit('dm:read', { partnerId });
+  },
+
+  applyDmRead: ({ readerId, partnerId, readAt }) => {
+    const me = myId();
+    if (readerId === me) {
+      // Read on another of my tabs.
+      set((s) => ({
+        conversations: s.conversations[partnerId]
+          ? { ...s.conversations, [partnerId]: { ...s.conversations[partnerId], unread: 0 } }
+          : s.conversations,
+      }));
+      return;
+    }
+    // The other person read my messages.
+    set((s) => {
+      const page = s.dms[readerId];
+      const conv = s.conversations[readerId];
+      const stamp = (m: DmMessage) => (m.senderId === me && !m.readAt && !m.pending ? { ...m, readAt } : m);
+      return {
+        dms: page ? { ...s.dms, [readerId]: { ...page, items: page.items.map(stamp) } } : s.dms,
+        conversations: conv?.lastMessage
+          ? { ...s.conversations, [readerId]: { ...conv, lastMessage: stamp(conv.lastMessage) } }
+          : s.conversations,
+      };
+    });
+  },
+
+  setDmTyping: (from, typing) => {
+    window.clearTimeout(typingTimers.get(`dm:${from}`));
+    set((s) => ({ dmTyping: { ...s.dmTyping, [from]: typing } }));
+    if (typing) {
+      typingTimers.set(`dm:${from}`, window.setTimeout(() => get().setDmTyping(from, false), 5000));
+    }
+  },
+
+  // ── Rooms ────────────────────────────────────────────────────────
+
+  openRoom: (roomId) => {
+    set({ activeRoom: roomId });
+    if (!roomId) return;
+    void get().loadRoom(roomId);
+    if (!get().roomMessages[roomId]?.loaded) void get().loadRoomMessages(roomId).then(() => get().markRoomRead(roomId));
+    else get().markRoomRead(roomId);
+  },
+
+  loadRoom: async (roomId) => {
+    try {
+      const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}`);
+      get().upsertRoom(room);
+    } catch (err) {
+      if ((err as { status?: number }).status === 404 || (err as { status?: number }).status === 403) get().dropRoom(roomId);
+      else toast(errorMessage(err), 'error');
+    }
+  },
+
+  loadRoomMessages: async (roomId, older = false) => {
+    const page = get().roomMessages[roomId] ?? emptyPage<RoomMessage>();
+    if (older && (!page.hasMore || page.loadingMore)) return;
+    const firstId = page.items.find((m) => !m.pending)?.id;
+    if (older) set((s) => ({ roomMessages: { ...s.roomMessages, [roomId]: { ...page, loadingMore: true } } }));
+    try {
+      const q = older && firstId ? `?before=${firstId}` : '';
+      const { messages, hasMore } = await api<{ messages: RoomMessage[]; hasMore: boolean }>(`/rooms/${roomId}/messages${q}`);
+      set((s) => {
+        const cur = s.roomMessages[roomId] ?? emptyPage<RoomMessage>();
+        return {
+          roomMessages: {
+            ...s.roomMessages,
+            [roomId]: {
+              items: merge(cur.items, messages),
+              loaded: true,
+              hasMore: older ? hasMore : cur.loaded ? cur.hasMore || hasMore : hasMore,
+              loadingMore: false,
+            },
+          },
+        };
+      });
+    } catch (err) {
+      set((s) => ({ roomMessages: { ...s.roomMessages, [roomId]: { ...(s.roomMessages[roomId] ?? emptyPage()), loadingMore: false } } }));
+      if ((err as { status?: number }).status !== 404) toast(errorMessage(err), 'error');
+    }
+  },
+
+  sendRoomMessage: async (roomId, body, retryOf) => {
+    const me = meAsSender();
+    const tid = tempId();
+    const temp: RoomMessage = {
+      id: 0, tempId: tid, roomId, kind: 'text', body, createdAt: new Date().toISOString(),
+      sender: me, pending: 'sending',
+    };
+    set((s) => {
+      const page = s.roomMessages[roomId] ?? { ...emptyPage<RoomMessage>(), loaded: true };
+      const items = retryOf ? page.items.filter((m) => m.tempId !== retryOf) : page.items;
+      return { roomMessages: { ...s.roomMessages, [roomId]: { ...page, items: [...items, temp] } } };
+    });
+    try {
+      const { message } = await emitAck<{ message: RoomMessage }>('room:send', { roomId, body });
+      set((s) => {
+        const page = s.roomMessages[roomId] ?? emptyPage<RoomMessage>();
+        const room = s.rooms[roomId];
+        return {
+          roomMessages: { ...s.roomMessages, [roomId]: { ...page, items: merge(page.items, [message], tid) } },
+          rooms: room ? { ...s.rooms, [roomId]: { ...room, lastMessage: message, unread: 0 } } : s.rooms,
+        };
+      });
+    } catch (err) {
+      set((s) => {
+        const page = s.roomMessages[roomId];
+        if (!page) return s;
+        return {
+          roomMessages: {
+            ...s.roomMessages,
+            [roomId]: { ...page, items: page.items.map((m) => (m.tempId === tid ? { ...m, pending: 'failed' as const } : m)) },
+          },
+        };
+      });
+      toast(errorMessage(err), 'error');
+    }
+  },
+
+  receiveRoomMessage: (message) => {
+    const { roomId } = message;
+    const me = myId();
+    set((s) => {
+      const room = s.rooms[roomId];
+      const page = s.roomMessages[roomId];
+      const isOpen = s.activeRoom === roomId && visible();
+      const fromOther = message.kind === 'text' && message.sender?.id !== me;
+      const typing = { ...(s.roomTyping[roomId] ?? {}) };
+      if (message.sender) delete typing[message.sender.id];
+      return {
+        roomMessages: page ? { ...s.roomMessages, [roomId]: { ...page, items: merge(page.items, [message]) } } : s.roomMessages,
+        roomTyping: { ...s.roomTyping, [roomId]: typing },
+        rooms: room
+          ? { ...s.rooms, [roomId]: { ...room, lastMessage: message, unread: room.unread + (fromOther && !isOpen ? 1 : 0) } }
+          : s.rooms,
+      };
+    });
+    if (get().activeRoom === roomId && visible()) get().markRoomRead(roomId);
+  },
+
+  markRoomRead: (roomId) => {
+    const page = get().roomMessages[roomId];
+    const last = page?.items.filter((m) => !m.pending).at(-1);
+    set((s) => (s.rooms[roomId]?.unread ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0 } } } : s));
+    if (last) socket.emit('room:read', { roomId, messageId: last.id });
+  },
+
+  setRoomTyping: ({ roomId, userId, name, typing }) => {
+    const key = `room:${roomId}:${userId}`;
+    window.clearTimeout(typingTimers.get(key));
+    set((s) => {
+      const cur = { ...(s.roomTyping[roomId] ?? {}) };
+      if (typing) cur[userId] = name;
+      else delete cur[userId];
+      return { roomTyping: { ...s.roomTyping, [roomId]: cur } };
+    });
+    if (typing) {
+      typingTimers.set(key, window.setTimeout(() => get().setRoomTyping({ roomId, userId, name, typing: false }), 5000));
+    }
+  },
+
+  upsertRoom: (room) =>
+    set((s) => {
+      const { members, invites, voice, ...summary } = room as RoomDetail;
+      const next: Partial<ChatState> = {
+        rooms: { ...s.rooms, [room.id]: { ...s.rooms[room.id], ...summary, unread: s.activeRoom === room.id ? 0 : summary.unread } },
+      };
+      if (members) {
+        next.roomDetails = { ...s.roomDetails, [room.id]: room as RoomDetail };
+        next.users = { ...s.users, ...Object.fromEntries(members.map((m) => [m.id, { ...s.users[m.id], ...m }])) };
+        next.voice = { ...s.voice, [room.id]: voice ?? [] };
+      }
+      return next;
+    }),
+
+  dropRoom: (roomId) =>
+    set((s) => {
+      const rooms = { ...s.rooms };
+      const roomDetails = { ...s.roomDetails };
+      const roomMessages = { ...s.roomMessages };
+      delete rooms[roomId];
+      delete roomDetails[roomId];
+      delete roomMessages[roomId];
+      return { rooms, roomDetails, roomMessages };
+    }),
+
+  createRoom: async (input) => {
+    const { room } = await api<{ room: RoomDetail }>('/rooms', { method: 'POST', body: input });
+    get().upsertRoom(room);
+    return room;
+  },
+
+  updateRoom: async (roomId, input) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}`, { method: 'PATCH', body: input });
+    get().upsertRoom(room);
+  },
+
+  deleteRoom: async (roomId) => {
+    await api(`/rooms/${roomId}`, { method: 'DELETE' });
+    get().dropRoom(roomId);
+  },
+
+  addMember: async (roomId, userId) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/members`, { method: 'POST', body: { userId } });
+    get().upsertRoom(room);
+  },
+
+  inviteMember: async (roomId, userId) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/invites`, { method: 'POST', body: { userId } });
+    get().upsertRoom(room);
+  },
+
+  cancelInvite: async (roomId, inviteId) => {
+    await api(`/rooms/${roomId}/invites/${inviteId}`, { method: 'DELETE' });
+    await get().loadRoom(roomId);
+  },
+
+  removeMember: async (roomId, userId) => {
+    await api(`/rooms/${roomId}/members/${userId}`, { method: 'DELETE' });
+    await get().loadRoom(roomId);
+  },
+
+  setRole: async (roomId, userId, role) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/members/${userId}`, { method: 'PATCH', body: { role } });
+    get().upsertRoom(room);
+  },
+
+  leaveRoom: async (roomId) => {
+    await api(`/rooms/${roomId}/members/${myId()}`, { method: 'DELETE' });
+    get().dropRoom(roomId);
+  },
+
+  // ── Invites ──────────────────────────────────────────────────────
+
+  acceptInvite: async (inviteId) => {
+    const { room } = await api<{ room: RoomDetail }>(`/invites/${inviteId}/accept`, { method: 'POST' });
+    set((s) => ({ invites: s.invites.filter((i) => i.id !== inviteId) }));
+    get().upsertRoom(room);
+    return room;
+  },
+
+  declineInvite: async (inviteId) => {
+    await api(`/invites/${inviteId}/decline`, { method: 'POST' });
+    set((s) => ({ invites: s.invites.filter((i) => i.id !== inviteId) }));
+  },
+
+  setVoice: (roomId, participants) => set((s) => ({ voice: { ...s.voice, [roomId]: participants } })),
+}));
+
+function meAsSender() {
+  const u = useAuth.getState().user;
+  return { id: u?.id ?? '', name: u?.name ?? 'You', hue: u?.hue ?? 160 };
+}
+
+onLogout(() => useChat.setState({ ...initial }));

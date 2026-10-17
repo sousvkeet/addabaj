@@ -1,0 +1,19 @@
+{
+  "name": "adda-khana",
+  "private": true,
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c yellow,green \"npm run dev -w server\" \"npm run dev -w client\"",
+    "build": "npm run build -w client",
+    "start": "npm start -w server",
+    "db:migrate": "npm run migrate -w server",
+    "test:e2e": "node tests/e2e.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.5",
+    "playwright": "^1.64.1"
+  }
+}

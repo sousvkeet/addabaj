@@ -1,0 +1,210 @@
+import { one, query } from '../db.js';
+import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
+import { getIO, roomChannel, userChannel } from '../realtime.js';
+import { publicUser, USER_COLUMNS } from './users.js';
+import { voice } from '../socket/voice.js';
+
+export function roomMessage(row) {
+  return {
+    id: row.id,
+    roomId: row.room_id,
+    kind: row.kind,
+    body: row.body,
+    createdAt: row.created_at,
+    sender: row.sender_id
+      ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue }
+      : null,
+  };
+}
+
+export const ROOM_MESSAGE_SELECT = `
+  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id,
+         u.name AS sender_name, u.avatar_hue AS sender_hue
+  FROM room_messages m LEFT JOIN users u ON u.id = m.sender_id`;
+
+/** Throws unless the user belongs to the room. Returns { role, ownerId }. */
+export async function requireMember(roomId, userId) {
+  assertUuid(roomId, 'room');
+  const row = await one(
+    `SELECT rm.role, r.owner_id FROM room_members rm JOIN rooms r ON r.id = rm.room_id
+     WHERE rm.room_id = $1 AND rm.user_id = $2`,
+    [roomId, userId],
+  );
+  if (!row) throw notFound("That room doesn't exist or you're not a member.");
+  return { role: row.role, ownerId: row.owner_id };
+}
+
+export async function requireAdmin(roomId, userId) {
+  const m = await requireMember(roomId, userId);
+  if (m.role !== 'admin') throw forbidden('Only room admins can do that.');
+  return m;
+}
+
+/**
+ * Locks the room row and checks there is a free seat. Must run inside a
+ * transaction so concurrent adds/accepts can't overfill the room.
+ */
+export async function lockSeat(client, roomId) {
+  const { rows: [room] } = await client.query(
+    'SELECT id, name, max_members FROM rooms WHERE id = $1 FOR UPDATE',
+    [roomId],
+  );
+  if (!room) throw notFound("That room doesn't exist anymore.");
+  const { rows: [{ count }] } = await client.query(
+    'SELECT count(*)::int AS count FROM room_members WHERE room_id = $1',
+    [roomId],
+  );
+  if (count >= room.max_members) {
+    throw conflict(`${room.name} is full (${room.max_members} of ${room.max_members}). Raise the member limit or remove someone first.`);
+  }
+  return room;
+}
+
+const SUMMARY_SELECT = `
+  SELECT r.id, r.name, r.description, r.owner_id, r.max_members, r.created_at, rm.role,
+    (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
+    (SELECT count(*)::int FROM room_messages m
+       WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id <> rm.user_id) AS unread,
+    lm.id AS lm_id, lm.kind AS lm_kind, lm.body AS lm_body, lm.created_at AS lm_created_at,
+    lm.sender_id AS lm_sender_id, lu.name AS lm_sender_name, lu.avatar_hue AS lm_sender_hue
+  FROM room_members rm
+  JOIN rooms r ON r.id = rm.room_id
+  LEFT JOIN LATERAL (
+    SELECT * FROM room_messages m WHERE m.room_id = r.id ORDER BY m.id DESC LIMIT 1
+  ) lm ON true
+  LEFT JOIN users lu ON lu.id = lm.sender_id`;
+
+function summary(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    ownerId: row.owner_id,
+    maxMembers: row.max_members,
+    memberCount: row.member_count,
+    myRole: row.role,
+    unread: row.unread,
+    createdAt: row.created_at,
+    lastMessage: row.lm_id
+      ? roomMessage({
+          id: row.lm_id, room_id: row.id, kind: row.lm_kind, body: row.lm_body,
+          created_at: row.lm_created_at, sender_id: row.lm_sender_id,
+          sender_name: row.lm_sender_name, sender_hue: row.lm_sender_hue,
+        })
+      : null,
+  };
+}
+
+export async function listRooms(userId) {
+  const { rows } = await query(
+    `${SUMMARY_SELECT} WHERE rm.user_id = $1
+     ORDER BY COALESCE(lm.created_at, r.created_at) DESC`,
+    [userId],
+  );
+  return rows.map(summary);
+}
+
+export async function roomSummary(roomId, userId) {
+  const row = await one(`${SUMMARY_SELECT} WHERE rm.user_id = $1 AND rm.room_id = $2`, [userId, roomId]);
+  return row ? summary(row) : null;
+}
+
+export async function roomDetail(roomId, userId) {
+  const base = await roomSummary(roomId, userId);
+  if (!base) throw notFound("That room doesn't exist or you're not a member.");
+  const { rows: members } = await query(
+    `SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at
+     FROM room_members rm JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = $1
+     ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,
+    [roomId, base.ownerId],
+  );
+  let invites = [];
+  if (base.myRole === 'admin') {
+    const { rows } = await query(
+      `SELECT i.id, i.created_at,
+              u.id AS u_id, u.email AS u_email, u.name AS u_name, u.avatar_hue AS u_hue, u.last_seen_at AS u_seen,
+              b.name AS by_name
+       FROM room_invites i
+       JOIN users u ON u.id = i.invitee_id
+       JOIN users b ON b.id = i.inviter_id
+       WHERE i.room_id = $1 AND i.status = 'pending'
+       ORDER BY i.created_at DESC`,
+      [roomId],
+    );
+    invites = rows.map((r) => ({
+      id: r.id,
+      createdAt: r.created_at,
+      invitedBy: r.by_name,
+      invitee: publicUser({ id: r.u_id, email: r.u_email, name: r.u_name, avatar_hue: r.u_hue, last_seen_at: r.u_seen }),
+    }));
+  }
+  return {
+    ...base,
+    members: members.map((m) => ({ ...publicUser(m), role: m.role, joinedAt: m.joined_at })),
+    invites,
+    voice: voice.participants(roomId),
+  };
+}
+
+/** Inserts a system line ("Asha added Rahul") and pushes it to the room. */
+export async function postSystemMessage(roomId, body) {
+  const row = await one(
+    `INSERT INTO room_messages (room_id, kind, body) VALUES ($1, 'system', $2)
+     RETURNING id, room_id, kind, body, created_at, sender_id`,
+    [roomId, body],
+  );
+  const message = roomMessage(row);
+  getIO()?.to(roomChannel(roomId)).emit('room:message', message);
+  return message;
+}
+
+/** Tell every member's client to refetch the room. */
+export function announceRoomChanged(roomId) {
+  getIO()?.to(roomChannel(roomId)).emit('room:changed', { roomId });
+}
+
+export async function attachMember(roomId, userId) {
+  const io = getIO();
+  if (!io) return;
+  io.in(userChannel(userId)).socketsJoin(roomChannel(roomId));
+  const room = await roomSummary(roomId, userId);
+  io.to(userChannel(userId)).emit('room:added', room);
+}
+
+export function detachMember(roomId, userId, reason) {
+  const io = getIO();
+  if (!io) return;
+  voice.kick(roomId, userId, reason);
+  io.to(userChannel(userId)).emit('room:removed', { roomId, reason });
+  io.in(userChannel(userId)).socketsLeave(roomChannel(roomId));
+}
+
+export async function inviteForInvitee(inviteId) {
+  const r = await one(
+    `SELECT i.id, i.created_at, r.id AS room_id, r.name AS room_name, r.description AS room_description,
+            r.max_members,
+            (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
+            ${USER_COLUMNS.split(', ').map((c) => `u.${c} AS u_${c}`).join(', ')}
+     FROM room_invites i
+     JOIN rooms r ON r.id = i.room_id
+     JOIN users u ON u.id = i.inviter_id
+     WHERE i.id = $1`,
+    [inviteId],
+  );
+  if (!r) return null;
+  return {
+    id: r.id,
+    createdAt: r.created_at,
+    room: {
+      id: r.room_id,
+      name: r.room_name,
+      description: r.room_description,
+      memberCount: r.member_count,
+      maxMembers: r.max_members,
+    },
+    inviter: publicUser({
+      id: r.u_id, email: r.u_email, name: r.u_name, avatar_hue: r.u_avatar_hue, last_seen_at: r.u_last_seen_at,
+    }),
+  };
+}
