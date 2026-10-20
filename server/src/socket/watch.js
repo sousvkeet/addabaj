@@ -5,6 +5,7 @@ import { AppError } from '../errors.js';
 import { postSystemMessage, requireAdmin } from '../services/rooms.js';
 import { cleanPosition, getWatch, playbackFor, publicWatch, saveWatch } from '../services/watch.js';
 import { forgetStream } from '../stream/cache.js';
+import { cancelMerge, startMerge } from '../stream/merge.js';
 import { bestFor, findVideos, takeOption } from '../stream/find.js';
 import { handle } from './util.js';
 
@@ -41,10 +42,15 @@ export function registerWatch(socket) {
     await requireAdmin(roomId, user.id);
     const choice = scanId ? takeOption(String(scanId), String(optionId ?? ''), user.id) : await bestFor(url, { userId: user.id });
     const { source, start, stream } = playbackFor(roomId, choice);
-    const watch = { source, playing: true, position: start, at: Date.now(), by: user.id, byName: user.name, stream };
+    // A joined video plays once it's ready; until then the room sees progress.
+    const watch = { source, playing: !source.preparing, position: start, at: Date.now(), by: user.id, byName: user.name, stream };
     const previous = await getWatch(roomId);
     await saveWatch(roomId, watch);
-    if (previous?.stream) forgetStream(previous.stream.token);
+    if (previous?.stream) {
+      cancelMerge(previous.stream.token);
+      forgetStream(previous.stream.token);
+    }
+    if (stream?.merge) startMerge(roomId, stream);
     await postSystemMessage(roomId, `${user.name} is playing “${source.title}” for everyone`);
     return { watch: publicWatch(watch) };
   }));
@@ -63,7 +69,10 @@ export function registerWatch(socket) {
     const current = await getWatch(roomId);
     if (!current) return {};
     await saveWatch(roomId, null);
-    if (current.stream) forgetStream(current.stream.token);
+    if (current.stream) {
+      cancelMerge(current.stream.token);
+      forgetStream(current.stream.token);
+    }
     await postSystemMessage(roomId, `${user.name} stopped the video`);
     return {};
   }));

@@ -41,6 +41,17 @@ export async function guardedRequest(url, { method = 'GET', headers = {}, maxRed
   }
 }
 
+// Some servers reject a browser's name but accept a plain tool's (IDM-CLI's fallback).
+export const FALLBACK_UA = 'curl/8.0';
+
+/** Like guardedRequest for video files: if the site answers 403, retry once as a plain tool. */
+export async function requestMedia(url, options = {}) {
+  const first = await guardedRequest(url, options);
+  if (first.res.statusCode !== 403) return first;
+  first.res.resume();
+  return guardedRequest(url, { ...options, headers: { ...options.headers, 'user-agent': FALLBACK_UA } });
+}
+
 /** Reads a response body as text, up to `limit` bytes. */
 export function readText(res, limit = 3_000_000) {
   return new Promise((resolve, reject) => {

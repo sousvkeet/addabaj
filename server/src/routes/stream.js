@@ -9,8 +9,8 @@ import { config } from '../config.js';
 import { one } from '../db.js';
 import { isUuid, notFound } from '../errors.js';
 import { playlistHasDrm } from '../stream/formats.js';
-import { cachedFile, sharedSegment } from '../stream/cache.js';
-import { guardedRequest, isPlaylistType, readText } from '../stream/http.js';
+import { cachedFile, localFile, sharedSegment } from '../stream/cache.js';
+import { isPlaylistType, readText, requestMedia as guardedRequest } from '../stream/http.js';
 
 export const streamRouter = Router();
 
@@ -70,9 +70,6 @@ function rewrite(text, base, roomId, token) {
 // In development, one line per relayed request helps when a site is slow or refuses.
 const devLog = !config.isProd;
 
-/** How far past the downloaded part a request may start and still wait for the download. */
-const AHEAD_BYTES = 4 * 1024 * 1024;
-
 /** Serves a byte range from the shared download, waiting for it where needed. */
 function serveCached(req, res, entry) {
   const size = entry.size;
@@ -101,11 +98,17 @@ function serveCached(req, res, entry) {
 }
 
 async function relay(req, res, stream, target, asPlaylist) {
+  // Picture and sound joined on the server: served from its disk once ready.
+  if (stream.merge) {
+    const file = localFile(stream.token);
+    if (!file) return res.status(409).json({ error: 'The video is still being prepared.' });
+    return serveCached(req, res, file);
+  }
   // Video files: everyone shares one download (unless they jump far ahead of it).
   if (!asPlaylist && stream.kind === 'file' && target === stream.url) {
     const entry = await cachedFile(stream.token, stream.url, stream.headers);
     const start = Number(/^bytes=(\d+)-/.exec(req.headers.range ?? '')?.[1] ?? 0);
-    if (entry && start <= entry.downloaded + AHEAD_BYTES) return serveCached(req, res, entry);
+    if (entry?.serves(start)) return serveCached(req, res, entry);
   }
   // Stream segments: fetched once and shared by everyone watching.
   if (!asPlaylist && stream.kind === 'hls' && !req.headers.range && target !== stream.url) {

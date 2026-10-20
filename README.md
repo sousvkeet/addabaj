@@ -16,9 +16,14 @@ A real-time hangout app: one-to-one chat with voice and video calls, plus rooms 
   - **Any link:** a video page on almost any site, YouTube, or a direct `.mp4`, `.webm` or `.m3u8` link. **Find videos** looks for videos the way a download manager does, then lists them with their qualities and sizes, with the best one preselected. Finders, tried in order:
     1. **Site support** by [yt-dlp](https://github.com/yt-dlp/yt-dlp): about 1,800 sites (Facebook, Instagram, X, Dailymotion, Vimeo, TikTok, Reddit, Archive.org, news sites…) plus generic web players.
     2. **Page scan:** `<video>` tags, video metadata and video links anywhere in the page.
-    3. **Deep scan:** opens the page in a hidden browser, presses play and records the video requests it makes.
+    3. **Deep scan:** opens the page in a hidden browser, presses play (skipping ads where it can) and records the video requests it makes. It recognises streams by their content, not only by a `.m3u8` name.
+
+    Each find is checked for length. Short clips (under 30 s: previews, intros, ads) are dropped when a real video (a minute or longer) is on the page. If only short clips turn up, the next finder still runs. Results from page scans are listed longest first.
   - **Relay:** YouTube plays in YouTube's player. Videos found on web pages play through the server's relay, which adds the headers the site expects and supports seeking. Streams are relayed segment by segment through signed links, so the relay only fetches parts listed in a playlist it served. Direct links play straight from their source and fall back to the relay if a browser can't play them, for example when the site blocks cross-site playback or the link is `http://` on an HTTPS page.
-  - **Shared download:** a relayed video file is fetched once, with a single connection, into a temporary file that every viewer reads from as it fills, the way a download manager works.
+  - **Shared download:** a relayed video file is fetched once into a temporary file that every viewer reads from as it fills, the way a download manager works.
+  - **Separate picture and sound:** many sites keep their better qualities (often everything above 360p) as a silent video file plus a separate sound file. With FFmpeg installed, Find videos offers these too, for example "720p MP4, picture and sound joined first". The server downloads both and joins them without re-encoding, so it's quick and loses no quality. The room sees "Getting the video ready…" with progress, and playback starts for everyone together. After a server restart, a joined video is prepared again automatically. This approach comes from [IDM-CLI](https://github.com/rj41-w2/idm-cli).
+  - **Getting past blocks:** if a site blocks yt-dlp, it retries impersonating Chrome's network fingerprint. That needs the standalone `yt-dlp_linux` build that `npm run setup:yt-dlp` installs. If a site answers 403 to a video request, the relay retries once as `curl/8.0`.
+  - **Extra connections:** like IDM, it can download over several connections at once, up to `STREAM_CONNECTIONS` (default 4). It adds them only while they help: while the file arrives slower than 4 MB/s, and only if each addition speeds things up, so sites that limit each connection get much faster and fast sites stay on one. When the room jumps far ahead, a connection starts right at that point.
     - The site sees one download however many people watch, everyone gets the same data, and seeking back is instant.
     - Jumping beyond the downloaded part is fetched from the site directly.
     - Stream segments are likewise fetched once and shared.
@@ -64,7 +69,8 @@ A real-time hangout app: one-to-one chat with voice and video calls, plus rooms 
 3. Install dependencies, plus yt-dlp for finding videos on most sites:
    ```sh
    npm install
-   npm run setup:yt-dlp        # downloads yt-dlp to server/bin/ and checks its checksum; needs Python 3.9+
+   npm run setup:yt-dlp        # downloads yt-dlp to server/bin/ and checks its checksum
+   npm run setup:ffmpeg        # downloads a static FFmpeg (about 160 MB) to server/bin/ and checks its checksum
    npx playwright install chromium   # for the deep scan (optional)
    ```
    Re-run `npm run setup:yt-dlp` now and then; sites change and yt-dlp keeps up.
@@ -78,7 +84,7 @@ A real-time hangout app: one-to-one chat with voice and video calls, plus rooms 
 
 | File | Read by | Holds |
 |---|---|---|
-| `server/.env` | `server/src/config.js` | `DATABASE_URL`, `JWT_SECRET`, `PORT` (API), `NODE_ENV`, Cloudflare TURN keys, `FORCE_TURN_RELAY`, optional `TURN_*`, and for watch together `YTDLP_PATH`, `DEEP_SCAN`, `STREAM_ALLOW_PRIVATE`, `STREAM_CACHE_GB`, `STREAM_CACHE_DIR` |
+| `server/.env` | `server/src/config.js` | `DATABASE_URL`, `JWT_SECRET`, `PORT` (API), `NODE_ENV`, Cloudflare TURN keys, `FORCE_TURN_RELAY`, optional `TURN_*`, and for watch together `YTDLP_PATH`, `DEEP_SCAN`, `STREAM_ALLOW_PRIVATE`, `STREAM_CACHE_GB`, `STREAM_CACHE_DIR`, `STREAM_CONNECTIONS`, `FFMPEG_PATH` |
 | `client/.env` | `client/vite.config.ts` | `CLIENT_PORT` (dev server), `API_URL` (where the dev server forwards `/api` and `/socket.io`) |
 
 To change the API port, change `PORT` in `server/.env` and the port in `API_URL` in `client/.env` to match.
@@ -129,11 +135,22 @@ The test drives three users with fake microphones. It checks the TURN relay with
 - finding a video on a Wikimedia Commons page and watching it through the shared download, including a jump ahead,
 - a JavaScript-player page caught by the deep scan,
 - a direct stream falling back to the relay,
+- a Bilibili video whose picture and sound are separate files: joined on the server, then watched in sync with sound,
 - clear refusals for DRM, pages without video and private addresses.
 
 The YouTube and web-page checks need internet access.
 
 It serves its own test clip from `tests/fixtures/` on port 4099.
+
+`npm run test:find` checks the video finder and the shared download without internet access. It covers:
+
+- video lengths: MP4 with its index at the start or at the end, WebM, streams, and live streams,
+- a page whose 5-second preview clip sits next to a 13-minute stream, where the stream must win,
+- a file that a server hands out in 64 KB pieces, which must download completely,
+- a site that limits each connection, which must get faster with several connections,
+- a site that allows only one connection, which must still download completely,
+- a jump far ahead, which must get its data quickly,
+- pairing and joining a separate H.264 picture file and AAC sound file into one playable file. This needs FFmpeg.
 
 Screenshots are saved to `tests/screenshots/`.
 

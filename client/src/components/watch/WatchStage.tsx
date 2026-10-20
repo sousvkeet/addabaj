@@ -6,6 +6,7 @@ import { duration } from '../../lib/format';
 import { emitAck, socket } from '../../lib/socket';
 import type { FindResult, RoomDetail, WatchState } from '../../lib/types';
 import { useAuth } from '../../store/auth';
+import { useWatchProgress } from '../../store/watchProgress';
 import { toast } from '../../store/ui';
 import { Button, IconButton } from '../ui/Button';
 import { Dialog, Field, inputClass } from '../ui/Dialog';
@@ -154,15 +155,19 @@ export function WatchStage({ room, onChange }: { room: RoomDetail; onChange: () 
   return (
     <section aria-label="Watch together" className="shrink-0 border-b border-line bg-black">
       <div ref={frame} className="relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black">
-        <View
-          key={sourceKey}
-          source={watch.source}
-          controls={isAdmin}
-          startAt={startAt}
-          onReady={setAdapter}
-          onUserAction={onUserAction}
-          onError={setError}
-        />
+        {watch.source.preparing || watch.source.error ? (
+          <Preparing roomId={room.id} failed={watch.source.error} />
+        ) : (
+          <View
+            key={sourceKey}
+            source={watch.source}
+            controls={isAdmin}
+            startAt={startAt}
+            onReady={setAdapter}
+            onUserAction={onUserAction}
+            onError={setError}
+          />
+        )}
 
         {/* Members follow the host: block clicks that would pause or seek. */}
         {!isAdmin && <div className="absolute inset-0" aria-hidden />}
@@ -249,6 +254,41 @@ export function WatchStage({ room, onChange }: { room: RoomDetail; onChange: () 
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * While the server downloads the separate picture and sound files and joins
+ * them, everyone sees the progress; playback then starts for the whole room.
+ */
+function Preparing({ roomId, failed }: { roomId: string; failed?: string }) {
+  const p = useWatchProgress((s) => s.rooms[roomId]);
+  if (failed) {
+    return (
+      <div role="alert" className="absolute inset-0 flex items-center justify-center bg-shutter-deep p-6 text-center text-[14.5px] text-on-shutter">
+        <p className="max-w-sm">{failed}</p>
+      </div>
+    );
+  }
+  const percent = p?.percent ?? 0;
+  return (
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-shutter-deep px-8 text-center text-on-shutter" role="status">
+      <LoaderCircle size={26} className="animate-spin text-taxi" />
+      <p className="text-[15px] font-semibold">Getting the video ready for everyone…</p>
+      <div
+        className="h-2 w-full max-w-xs overflow-hidden rounded-full bg-white/15"
+        role="progressbar"
+        aria-label="Preparing the video"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <div className="h-full rounded-full bg-taxi transition-[width] duration-700" style={{ width: `${percent}%` }} />
+      </div>
+      <p className="text-[13px] text-on-shutter/70">
+        {p?.phase === 'join' ? 'Joining picture and sound…' : `Downloading picture and sound, ${percent}%`}
+      </p>
+    </div>
   );
 }
 

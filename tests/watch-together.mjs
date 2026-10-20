@@ -297,6 +297,27 @@ await check('a video page: find, pick a quality, everyone watches through the se
   await B.page.screenshot({ path: `${SHOTS}watch-5-relayed.png` });
 });
 
+await check('separate picture and sound (Bilibili) are joined on the server, then everyone watches with sound', async () => {
+  const found = await find(A.page, 'https://www.bilibili.com/video/BV1bK411W797');
+  if (found.outcome !== 'choose') throw new Error(found.error);
+  await found.dlg.getByText('picture and sound joined first').first().waitFor();
+  await play(found.dlg, '720p');
+  // Everyone sees the progress while the server downloads and joins.
+  await B.page.getByText('Getting the video ready for everyone…').waitFor({ timeout: 15000 });
+  await B.page.screenshot({ path: `${SHOTS}watch-6-preparing.png` });
+  await B.page.getByText('Getting the video ready for everyone…').waitFor({ state: 'detached', timeout: 90000 });
+  await A.page.waitForTimeout(1500);
+  await watchAlong(A.page);
+  await watchAlong(B.page);
+  const r = await waitFor(async () => {
+    const a = await vid(A.page), b = await vid(B.page);
+    return { ok: a && b && !a.paused && !b.paused && a.t > 2 && Math.abs(a.t - b.t) < 1.5, a, b };
+  }, 30000, 'joined video not playing in sync');
+  const sound = await B.page.evaluate(() => document.querySelector('video[data-watch-video]').webkitAudioDecodedByteCount);
+  if (!(sound > 0)) throw new Error(`no sound decoded (${sound})`);
+  console.log(`     joined video at ${r.a.t.toFixed(2)}s / ${r.b.t.toFixed(2)}s, sound decoded: ${sound} bytes`);
+});
+
 await check('a JavaScript player page is found by the deep scan and streams through the relay', async () => {
   const found = await find(A.page, 'https://hls-js.netlify.app/demo/');
   if (found.outcome !== 'choose') throw new Error(found.error);

@@ -7,6 +7,7 @@ import { badRequest } from '../errors.js';
 import { fileTitle, youtubeLink, youtubeTitle } from '../services/watch.js';
 import { finishOptions, playlistHasDrm } from './formats.js';
 import { assertPublicHost } from './guard.js';
+import { probeDuration } from './probe.js';
 import { guardedRequest, isMediaType, isPlaylistType, readText } from './http.js';
 import { scanPage } from './scan.js';
 import { deepScan } from './sniff.js';
@@ -101,7 +102,54 @@ function embedAlternative(url) {
   return null;
 }
 
+/** Clips shorter than this are dropped when a real video (LONG_SECONDS+) is also found. */
+const SHORT_SECONDS = 30;
+const LONG_SECONDS = 60;
+
+const isShort = (v) => !v.live && v.duration != null && v.duration < SHORT_SECONDS;
+const allShort = (videos) => videos.length > 0 && videos.every(isShort);
+
+/** Fills in how long each found video is (scans don't know; yt-dlp usually does). */
+async function withDurations(videos) {
+  await Promise.all(
+    videos
+      .filter((v) => v.duration == null && !v.live)
+      .slice(0, 12)
+      .map(async (v) => {
+        const o = v.options.find((x) => x.kind !== 'youtube');
+        if (!o) return;
+        // A video that has to be joined: its picture file tells the length.
+        const option = o.kind === 'merge' ? { kind: 'file', url: o.video.url, headers: o.video.headers } : o;
+        const seconds = await probeDuration(option);
+        if (seconds === Infinity) v.live = true;
+        else if (seconds) v.duration = seconds;
+      }),
+  );
+  return videos;
+}
+
+/** Adds newly found videos, skipping ones already in the list. */
+function merge(videos, more) {
+  const key = (o) => o.url ?? o.videoId ?? o.video?.url;
+  const seen = new Set(videos.flatMap((v) => v.options.map(key)));
+  return [...videos, ...more.filter((v) => !v.options.some((o) => seen.has(key(o))))];
+}
+
+/**
+ * Drops short clips (previews, intros, ads) when a real video is there, and,
+ * for videos found by scanning, lists the longest first.
+ */
+function rank(videos, skipped, { byLength }) {
+  const hasLong = videos.some((v) => v.live || (v.duration ?? 0) >= LONG_SECONDS);
+  const kept = hasLong ? videos.filter((v) => !isShort(v)) : videos;
+  skipped.short += videos.length - kept.length;
+  if (!byLength) return kept;
+  const length = (v) => (v.live ? Number.MAX_VALUE : v.duration ?? -1);
+  return kept.map((v, i) => [v, i]).sort(([a, i], [b, j]) => length(b) - length(a) || i - j).map(([v]) => v);
+}
+
 const NOTES = {
+  short: 'Short clips on the page (previews or ads) were left out.',
   drm: 'Some videos were skipped because they are protected (DRM).',
   split: 'Some qualities were skipped because their picture and sound are separate files.',
   codec: 'Some files were skipped because browsers can’t play their format.',
@@ -121,7 +169,8 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
   const url = parseLink(raw);
   const progress = (message) => onProgress?.(message);
   const reasons = new Set();
-  const skipped = { drm: 0, split: 0, codec: 0 };
+  const skipped = { drm: 0, split: 0, codec: 0, short: 0 };
+  let byLength = false;
   const collect = (r) => {
     if (r?.reason) reasons.add(r.reason);
     for (const k of Object.keys(skipped)) skipped[k] += r?.skipped?.[k] ?? 0;
@@ -156,8 +205,17 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
       }
       collect(r);
       videos = await withoutDrm(r.videos, skipped);
+      // Generic page players often come back without a length: check it, so a
+      // preview clip found this way can't pass for the real video.
+      if (videos.some((v) => v.duration == null && !v.live)) {
+        progress('Checking how long each video is…');
+        videos = await withDurations(videos);
+        byLength = true;
+      }
     }
-    if (!videos.length) {
+    // Each next finder also runs when everything found so far is a short clip:
+    // the real video is often a stream the earlier finders couldn't see.
+    if (!videos.length || allShort(videos)) {
       progress('Reading the page…');
       try {
         const r = await scanPage(url.href);
@@ -165,19 +223,30 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
           videos = [{ title: fileTitle(new URL(r.direct.url)), site: url.hostname.replace(/^www\./, ''), options: finishOptions([{ ...r.direct, headers: {} }]) }];
         } else {
           collect(r);
-          videos = await withoutDrm(r.videos, skipped);
+          const found = await withoutDrm(r.videos, skipped);
+          if (found.length) {
+            progress('Checking how long each video is…');
+            videos = merge(videos, await withDurations(found));
+            byLength = true;
+          }
         }
       } catch (err) {
         if (err.code === 'EBLOCKED') throw err;
         reasons.add('unreachable');
       }
     }
-    if (!videos.length) {
+    if (!videos.length || allShort(videos)) {
       progress('Looking deeper: opening the page in a background browser…');
       const r = await deepScan(url.href, { onProgress: progress });
       collect(r);
-      videos = await withoutDrm(r.videos, skipped);
+      const found = await withoutDrm(r.videos, skipped);
+      if (found.length) {
+        progress('Checking how long each video is…');
+        videos = merge(videos, await withDurations(found));
+        byLength = true;
+      }
     }
+    videos = rank(videos, skipped, { byLength });
   }
 
   if (!videos.length) {
@@ -186,6 +255,12 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
       FAILURES[why] ?? 'No playable video was found on this page. Try the page of the video itself, or a direct link to the video file.',
     );
   }
+
+  // Several videos with the same page title get numbered, in list order.
+  const counts = {};
+  for (const v of videos) counts[v.title] = (counts[v.title] ?? 0) + 1;
+  const seen = {};
+  for (const v of videos) if (counts[v.title] > 1) v.title = `${v.title} (${(seen[v.title] = (seen[v.title] ?? 0) + 1)})`;
 
   videos.forEach((v, i) => {
     v.id = String(i);

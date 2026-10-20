@@ -73,6 +73,21 @@ export function playbackFor(roomId, { video, option }) {
   }
   const token = randomBytes(16).toString('base64url');
   const relayUrl = `/api/stream/${roomId}/${token}/main`;
+  if (option.kind === 'merge') {
+    const { video: v, audio: a, container } = option;
+    const detail = `${option.label} ${option.detail}${video.site ? `, from ${video.site}` : ''}`;
+    return {
+      source: { kind: 'file', url: relayUrl, title: video.title, detail, relay: true, preparing: true },
+      start: 0,
+      stream: {
+        token,
+        kind: 'file',
+        url: v.url,
+        headers: v.headers ?? {},
+        merge: { container, video: { url: v.url, headers: v.headers ?? {} }, audio: { url: a.url, headers: a.headers ?? {} } },
+      },
+    };
+  }
   const quality = option.kind === 'file' ? `${option.label} ${option.detail}` : option.detail;
   const detail = video.site ? `${quality}, from ${video.site}` : quality;
   const stream = { token, url: option.url, headers: option.headers ?? {}, kind: option.kind };

@@ -18,6 +18,8 @@ import { streamRouter } from './routes/stream.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
 import { ytdlpPath } from './stream/ytdlp.js';
+import { ffmpegPath } from './stream/ffmpeg.js';
+import { resumeMerges } from './stream/merge.js';
 
 await migrate();
 
@@ -76,4 +78,10 @@ server.listen(config.port, async () => {
       ? 'Watch together: yt-dlp found (site support on)'
       : 'Watch together: yt-dlp not installed; run `npm run setup:yt-dlp` for site support',
   );
+  console.log(
+    ffmpegPath()
+      ? 'Watch together: FFmpeg found (separate picture and sound can be joined)'
+      : 'Watch together: FFmpeg not installed; run `npm run setup:ffmpeg` to offer qualities that need joining',
+  );
+  resumeMerges().catch((err) => console.error('Could not resume video preparation', err));
 });

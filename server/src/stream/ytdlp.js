@@ -5,7 +5,8 @@ import { accessSync, constants } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { guardProxy } from './guard.js';
-import { finishOptions, pickHeaders, playableFile } from './formats.js';
+import { finishOptions, pairForJoining, pickHeaders, playableFile } from './formats.js';
+import { ffmpegPath } from './ffmpeg.js';
 
 const bundled = fileURLToPath(new URL('../../bin/yt-dlp', import.meta.url));
 
@@ -76,6 +77,8 @@ function normalize(info) {
     }
     const formats = e.formats?.length ? e.formats : e.url ? [e] : [];
     const options = [];
+    const pictureOnly = [];
+    const soundOnly = [];
     let hls = null;
     for (const f of formats) {
       if (f.has_drm) {
@@ -92,9 +95,13 @@ function normalize(info) {
         continue;
       }
       if (protocol !== 'https' && protocol !== 'http') continue; // DASH, RTMP, storyboards…
-      if (f.vcodec === 'none') continue; // sound only
+      const size = f.filesize ?? f.filesize_approx ?? null;
+      if (f.vcodec === 'none') {
+        if (f.acodec && f.acodec !== 'none') soundOnly.push({ url: f.url, headers, ext: f.ext, acodec: f.acodec, abr: f.abr ?? f.tbr ?? 0, size });
+        continue;
+      }
       if (f.acodec === 'none') {
-        skipped.split++;
+        if (playableFile(f)) pictureOnly.push({ url: f.url, headers, ext: f.ext, vcodec: f.vcodec, height: f.height ?? null, size });
         continue;
       }
       if (!playableFile(f)) {
@@ -111,13 +118,44 @@ function normalize(info) {
         size: f.filesize ?? f.filesize_approx ?? null,
       });
     }
+    // Picture-only qualities become playable by joining them with a sound file (needs FFmpeg).
+    const joined = ffmpegPath() ? pairForJoining(pictureOnly, soundOnly) : [];
+    if (pictureOnly.length && !joined.length) skipped.split += pictureOnly.length;
+    options.push(...joined);
     if (options.length) videos.push({ ...meta, options: finishOptions(options) });
   }
   return { videos, skipped };
 }
 
-/** Returns { videos, skipped } or { videos: [], reason } — never throws for site problems. */
+// The standalone yt-dlp build can impersonate a real browser's network
+// fingerprint (curl_cffi), which gets past some bot blockers (as IDM-CLI does).
+let impersonation;
+function canImpersonate(bin) {
+  if (impersonation !== undefined) return Promise.resolve(impersonation);
+  return new Promise((resolve) => {
+    execFile(bin, ['--list-impersonate-targets'], { timeout: 20_000 }, (_err, out) => {
+      impersonation = /^chrome\b.*curl_cffi(?!.*unavailable)/im.test(String(out));
+      resolve(impersonation);
+    });
+  });
+}
+
+/** Problems a browser disguise can't fix. */
+const FINAL = new Set(['login', 'drm', 'unavailable', 'geo', 'blocked']);
+
+/**
+ * Returns { videos, skipped } or { videos: [], reason } — never throws for site
+ * problems. If the site blocks the first try, tries again looking like Chrome.
+ */
 export async function ytdlpFind(url) {
+  const first = await ytdlpRun(url, []);
+  if (first.videos.length || FINAL.has(first.reason) || first.reason === 'missing') return first;
+  if (!(await canImpersonate(ytdlpPath()))) return first;
+  const second = await ytdlpRun(url, ['--impersonate', 'chrome', '--extractor-args', 'generic:impersonate']);
+  return second.videos.length ? second : first;
+}
+
+async function ytdlpRun(url, extra) {
   const bin = ytdlpPath();
   if (!bin) return { videos: [], reason: 'missing' };
   const proxy = await guardProxy();
@@ -125,7 +163,7 @@ export async function ytdlpFind(url) {
   try {
     const args = [
       '-J', '--ignore-config', '--no-warnings', '--skip-download', '--no-playlist',
-      '--playlist-items', '1:8', '--socket-timeout', '15', '--proxy', proxy.url, '--', url,
+      '--playlist-items', '1:8', '--socket-timeout', '15', '--proxy', proxy.url, ...extra, '--', url,
     ];
     const { stdout, stderr, timedOut } = await new Promise((resolve) => {
       execFile(bin, args, { timeout: 60_000, maxBuffer: 48 * 1024 * 1024 }, (err, out, errOut) =>

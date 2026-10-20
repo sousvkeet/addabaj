@@ -49,6 +49,8 @@ export const streaming = {
   // viewers. Disk use is capped; 0 turns the shared download off.
   cacheDir: process.env.STREAM_CACHE_DIR || resolve(rootDir, 'server/cache'),
   cacheMaxBytes: Math.max(0, Number(process.env.STREAM_CACHE_GB ?? 10)) * 1024 ** 3,
+  // Parallel connections per relayed file, like a download manager (1 = off).
+  connections: Math.min(16, Math.max(1, Number(process.env.STREAM_CONNECTIONS ?? 4) || 4)),
 };
 
 export const limits = {

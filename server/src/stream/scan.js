@@ -128,9 +128,9 @@ export async function scanPage(url) {
   // A master playlist already covers its own variant playlists.
   const hasMaster = playable.some((p) => p.kind === 'hls' && p.master);
   const kept = playable.filter((p) => !(p.kind === 'hls' && hasMaster && !p.master));
-  kept.forEach((p, i) => {
+  kept.forEach((p) => {
     videos.push({
-      title: kept.length > 1 ? `${title} (${i + 1})` : title,
+      title,
       thumbnail: absoluteHttp(thumbnail, pageUrl),
       duration: null,
       site,

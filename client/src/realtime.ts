@@ -7,6 +7,7 @@ import { useCall } from './store/call';
 import { useChat } from './store/chat';
 import { toast } from './store/ui';
 import { useVoice } from './store/voice';
+import { setPreparing, type Preparing } from './store/watchProgress';
 
 const chat = () => useChat.getState();
 
@@ -72,6 +73,7 @@ export function bindRealtime() {
   });
 
   // Watch together
+  socket.on('watch:preparing', ({ roomId, ...p }: Preparing & { roomId: string }) => setPreparing(roomId, p));
   socket.on('watch:state', ({ roomId, watch }: { roomId: string; watch: WatchState | null }) => {
     useChat.setState((s) => ({
       roomDetails: s.roomDetails[roomId] ? { ...s.roomDetails, [roomId]: { ...s.roomDetails[roomId], watch } } : s.roomDetails,

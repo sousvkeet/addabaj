@@ -65,6 +65,13 @@ const PLAY_BUTTONS = [
   '.vjs-big-play-button', '.jw-icon-display', '.plyr__control--overlaid', '.ytp-large-play-button',
   'button[aria-label*="play" i]', '[class*="play-button" i]', '[class*="playButton" i]', '[class*="big-play" i]',
 ];
+const SKIP_BUTTONS = ['[class*="skip" i]', 'button:has-text("Skip")', '[aria-label*="skip" i]'];
+// Streams are often served without a .m3u8 name or the official type; these
+// small responses get their first line checked for #EXTM3U.
+const MAYBE_PLAYLIST_TYPE = /text\/plain|octet-stream|binary|x-unknown|^$/i;
+const MAYBE_PLAYLIST_SIZE = 512 * 1024;
+/** Big enough to be the real video rather than an ad or preview. */
+const SUBSTANTIAL_BYTES = 20_000_000;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -93,8 +100,14 @@ export async function deepScan(url, { onProgress } = {}) {
         const u = resp.url();
         if (!/^https?:/.test(u) || SEGMENT_EXT.test(new URL(u).pathname)) return;
         const type = resp.headers()['content-type'] ?? '';
-        const playlist = /mpegurl/i.test(type) || /\.m3u8(?:$|\?)/i.test(u);
-        const video = /^video\//i.test(type) || MEDIA_EXT.test(new URL(u).pathname);
+        const length = Number(resp.headers()['content-length']);
+        const kindOfRequest = resp.request().resourceType();
+        const maybe =
+          ['xhr', 'fetch', 'media', 'other'].includes(kindOfRequest) &&
+          MAYBE_PLAYLIST_TYPE.test(type) &&
+          (length ? length <= MAYBE_PLAYLIST_SIZE : /m3u|playlist|manifest|master|index/i.test(u));
+        const playlist = /mpegurl/i.test(type) || /\.m3u8(?:$|\?)/i.test(u) || maybe;
+        const video = !playlist && (/^video\//i.test(type) || MEDIA_EXT.test(new URL(u).pathname));
         if (!playlist && !video) return;
         const status = resp.status();
         if (status >= 400) return;
@@ -105,7 +118,12 @@ export async function deepScan(url, { onProgress } = {}) {
         if (playlist) {
           const text = await resp.text().catch(() => '');
           if (!text.trimStart().startsWith('#EXTM3U')) return;
-          found.set(u, { kind: 'hls', url: u, headers, master: text.includes('#EXT-X-STREAM-INF'), drm: playlistHasDrm(text), text });
+          found.set(u, {
+            kind: 'hls', url: u, headers, text,
+            master: text.includes('#EXT-X-STREAM-INF'),
+            ended: text.includes('#EXT-X-ENDLIST'),
+            drm: playlistHasDrm(text),
+          });
         } else {
           const h = resp.headers();
           const size = Number(/\/(\d+)$/.exec(h['content-range'] ?? '')?.[1] ?? h['content-length']) || null;
@@ -126,27 +144,28 @@ export async function deepScan(url, { onProgress } = {}) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
     await sleep(2500);
 
-    // Press play the way a person would: video elements, common play buttons, then the middle.
-    onProgress?.('Starting the video to catch its stream…');
-    for (const frame of page.frames()) {
-      await frame
-        .evaluate(() => document.querySelectorAll('video').forEach((v) => { v.muted = true; void v.play().catch(() => {}); }))
-        .catch(() => {});
-      for (const selector of PLAY_BUTTONS) {
-        const el = frame.locator(selector).first();
-        if (await el.isVisible().catch(() => false)) {
-          await el.click({ timeout: 1500 }).catch(() => {});
-          break;
+    // Press play the way a person would: video elements, common play buttons,
+    // the middle of the player; skip ads. Players often need a few tries (the
+    // first click may only open an ad), and the real video can start after a
+    // short ad, so keep going until something substantial appears (~25 s max).
+    const substantial = () =>
+      [...found.values()].some((f) => (f.kind === 'hls' && (f.master || f.ended)) || (f.kind === 'file' && (f.size ?? 0) > SUBSTANTIAL_BYTES));
+    for (let round = 0; round < 3 && !substantial(); round++) {
+      onProgress?.(round ? 'Still looking: the page may be showing an ad first…' : 'Starting the video to catch its stream…');
+      for (const frame of page.frames()) {
+        await frame
+          .evaluate(() => document.querySelectorAll('video').forEach((v) => { v.muted = true; void v.play().catch(() => {}); }))
+          .catch(() => {});
+        for (const selector of [...SKIP_BUTTONS, ...PLAY_BUTTONS]) {
+          const el = frame.locator(selector).first();
+          if (await el.isVisible().catch(() => false)) {
+            await el.click({ timeout: 1500 }).catch(() => {});
+            break;
+          }
         }
       }
-    }
-    await page.mouse.click(640, 360).catch(() => {});
-
-    // Wait until something substantial shows up, up to ~10 s.
-    for (let i = 0; i < 20; i++) {
-      const good = [...found.values()].some((f) => (f.kind === 'hls' && f.master) || (f.kind === 'file' && (f.size ?? 0) > 2_000_000));
-      if (good && i >= 4) break;
-      await sleep(500);
+      await page.mouse.click(640, 360).catch(() => {});
+      for (let i = 0; i < 16 && !(substantial() && i >= 4); i++) await sleep(500);
     }
 
     // Videos whose element points straight at a file (not a blob) count too.
@@ -168,8 +187,8 @@ export async function deepScan(url, { onProgress } = {}) {
       ...captures.filter((c) => c.kind === 'hls' && !c.master && !c.drm && !mastered(c)),
       ...captures.filter((c) => c.kind === 'file' && playableFile(c)).sort((a, b) => (b.size ?? 0) - (a.size ?? 0)),
     ].slice(0, 8);
-    const videos = kept.map((c, i) => ({
-      title: kept.length > 1 ? `${title} (${i + 1})` : title,
+    const videos = kept.map((c) => ({
+      title,
       thumbnail: null,
       duration: null,
       site,

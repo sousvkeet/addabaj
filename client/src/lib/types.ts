@@ -51,12 +51,16 @@ export type WatchSource = {
   fallbackUrl?: string;
   /** Plays through the server relay. */
   relay?: boolean;
+  /** The server is joining picture and sound; playback starts when ready. */
+  preparing?: boolean;
+  /** Why the video couldn't be prepared. */
+  error?: string;
 };
 
 /** One way to play a found video (a quality, or YouTube's player). */
 export type FoundOption = {
   id: string;
-  kind: WatchSource['kind'];
+  kind: WatchSource['kind'] | 'merge';
   label: string;
   detail: string;
   size: string | null;

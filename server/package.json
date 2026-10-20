@@ -6,7 +6,8 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "migrate": "node src/migrate.js",
-    "setup:yt-dlp": "node scripts/install-yt-dlp.mjs"
+    "setup:yt-dlp": "node scripts/install-yt-dlp.mjs",
+    "setup:ffmpeg": "node scripts/install-ffmpeg.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

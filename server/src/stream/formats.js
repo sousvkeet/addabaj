@@ -48,6 +48,40 @@ export function pickHeaders(headers = {}, cookies) {
 export const playlistHasDrm = (text) =>
   /#EXT-X-(SESSION-)?KEY:[^\n]*(METHOD=SAMPLE-AES|KEYFORMAT="(urn:uuid:|com\.widevine|com\.apple\.streamingkeydelivery|com\.microsoft\.playready))/i.test(text);
 
+const SOUND_FOR_MP4 = /^(mp4a|aac)/i;
+const SOUND_FOR_WEBM = /^(opus|vorbis)/i;
+const WEBM_PICTURE = /^(vp0?8|vp0?9|av01)/i;
+
+/**
+ * Pairs each picture-only quality with the sound file that suits it best, for
+ * joining with FFmpeg: H.264 with AAC in MP4, VP8/VP9/AV1 with Opus in WebM
+ * (falling back to whatever sound there is, in MP4). Best sound quality wins.
+ */
+export function pairForJoining(pictures, sounds) {
+  if (!pictures.length || !sounds.length) return [];
+  const byQuality = [...sounds].sort((a, b) => (b.abr ?? 0) - (a.abr ?? 0));
+  const out = [];
+  for (const p of pictures) {
+    const webmPicture = WEBM_PICTURE.test(p.vcodec ?? '') || p.ext === 'webm';
+    const sound =
+      (webmPicture ? byQuality.find((s) => SOUND_FOR_WEBM.test(s.acodec ?? '')) : byQuality.find((s) => SOUND_FOR_MP4.test(s.acodec ?? ''))) ??
+      byQuality.find((s) => SOUND_FOR_MP4.test(s.acodec ?? '') || /^opus/i.test(s.acodec ?? ''));
+    if (!sound) continue;
+    const container = webmPicture && SOUND_FOR_WEBM.test(sound.acodec ?? '') ? 'webm' : 'mp4';
+    out.push({
+      kind: 'merge',
+      height: p.height,
+      vcodec: p.vcodec,
+      ext: container,
+      container,
+      size: p.size && sound.size ? p.size + sound.size : (p.size ?? null),
+      video: { url: p.url, headers: p.headers },
+      audio: { url: sound.url, headers: sound.headers },
+    });
+  }
+  return out;
+}
+
 /**
  * Labels options, sorts them best-first and marks one as recommended:
  * an adaptive stream if there is one (each viewer gets what their connection
@@ -66,7 +100,21 @@ export function finishOptions(options) {
     if (!prev || score(f) > score(prev)) byHeight.set(key, f);
   }
   const streams = options.filter((o) => o.kind === 'hls' || o.kind === 'youtube');
-  const list = [...streams, ...[...byHeight.values()].slice(0, 6)];
+  // Joined qualities only where no ready-made file of that height exists; per
+  // height the picture that plays most widely: H.264, then VP9, AV1, HEVC.
+  const reach = (o) => {
+    const v = o.vcodec ?? '';
+    return /^(avc|h264)/i.test(v) ? 3 : /^vp0?9/i.test(v) ? 2 : /^av01/i.test(v) ? 1 : 0;
+  };
+  const joinable = new Map();
+  for (const m of options.filter((o) => o.kind === 'merge')) {
+    const key = m.height ?? 0;
+    if (byHeight.has(m.height)) continue;
+    const prev = joinable.get(key);
+    if (!prev || reach(m) > reach(prev)) joinable.set(key, m);
+  }
+  const ladder = [...byHeight.values(), ...joinable.values()].sort((a, b) => (b.height ?? 0) - (a.height ?? 0)).slice(0, 7);
+  const list = [...streams, ...ladder];
 
   for (const o of list) {
     if (o.kind === 'youtube') {
@@ -75,15 +123,20 @@ export function finishOptions(options) {
     } else if (o.kind === 'hls') {
       o.label = 'Auto';
       o.detail = o.maxHeight ? `Adaptive stream, up to ${o.maxHeight}p` : 'Adaptive stream';
+    } else if (o.kind === 'merge') {
+      o.label = o.height ? `${o.height}p` : 'Original';
+      o.detail = `${extLabel(o.container)}, picture and sound joined first${mayNotPlayEverywhere(o.vcodec) ? ', may not play in every browser' : ''}`;
     } else {
       o.label = o.height ? `${o.height}p` : 'Original';
       o.detail = `${extLabel(o.ext)} file${mayNotPlayEverywhere(o.vcodec) ? ', may not play in every browser' : ''}`;
     }
     o.sizeLabel = formatBytes(o.size);
   }
+  // Recommended: an adaptive stream; else the sharpest picture up to 1080p,
+  // preferring a ready-made file over one that has to be joined at equal height.
   const best =
     list.find((o) => o.kind === 'youtube' || o.kind === 'hls') ??
-    list.find((o) => o.kind === 'file' && (o.height ?? 0) <= 1080 && !mayNotPlayEverywhere(o.vcodec)) ??
+    ladder.find((o) => (o.height ?? 0) <= 1080 && !mayNotPlayEverywhere(o.vcodec)) ??
     list[0];
   if (best) best.recommended = true;
   return list;
