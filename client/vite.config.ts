@@ -1,13 +1,14 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig(({ mode }) => {
-  // Ports live in the project-root .env, shared with the server.
-  const env = loadEnv(mode, '..', '');
-  const apiPort = Number(env.PORT || 4080);
+  // client/.env (plus .env.local / .env.[mode] if present). Only VITE_-prefixed
+  // variables ever reach browser code; these two only configure the dev server.
+  const env = loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), '');
   const clientPort = Number(env.CLIENT_PORT || 5180);
-  const api = `http://localhost:${apiPort}`;
+  const api = env.API_URL || 'http://localhost:4080';
 
   return {
     plugins: [react(), tailwindcss()],

@@ -5,12 +5,13 @@ import { dirname, resolve } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 export const rootDir = resolve(here, '../..');
 
-const envFile = resolve(rootDir, '.env');
+// server/.env; variables already set in the real environment win.
+const envFile = resolve(here, '../.env');
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 function required(name) {
   const value = process.env[name];
-  if (!value) throw new Error(`Missing required environment variable ${name} (see .env.example)`);
+  if (!value) throw new Error(`Missing required environment variable ${name} (copy server/.env.example to server/.env)`);
   return value;
 }
 

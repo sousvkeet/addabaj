@@ -1,7 +1,9 @@
 import { chromium } from 'playwright';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 
 // Runs against the dev servers (npm run dev); dev builds expose stores on window.adda.
+const clientEnv = new URL('../client/.env', import.meta.url).pathname;
+if (existsSync(clientEnv)) process.loadEnvFile(clientEnv);
 const BASE = process.env.BASE_URL ?? `http://localhost:${process.env.CLIENT_PORT ?? 5180}`;
 const SHOTS = new URL('./screenshots/', import.meta.url).pathname;
 mkdirSync(SHOTS, { recursive: true });
