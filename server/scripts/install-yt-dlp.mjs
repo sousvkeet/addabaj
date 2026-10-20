@@ -18,12 +18,13 @@ async function get(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-const [binary, sums] = await Promise.all([get(`${base}/yt-dlp`), get(`${base}/SHA2-256SUMS`)]);
+const binName = process.platform === 'linux' ? 'yt-dlp_linux' : 'yt-dlp';
+const [binary, sums] = await Promise.all([get(`${base}/${binName}`), get(`${base}/SHA2-256SUMS`)]);
 const expected = sums
   .toString('utf8')
   .split('\n')
   .map((line) => line.trim().split(/\s+/))
-  .find(([, name]) => name === 'yt-dlp')?.[0];
+  .find(([, name]) => name === binName)?.[0];
 const actual = createHash('sha256').update(binary).digest('hex');
 if (!expected || expected !== actual) {
   throw new Error(`Checksum mismatch for yt-dlp (expected ${expected ?? 'none'}, got ${actual}). Not installed.`);
