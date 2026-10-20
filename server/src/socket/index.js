@@ -9,6 +9,7 @@ import { findUser } from '../services/users.js';
 import { calls } from './calls.js';
 import { handle } from './util.js';
 import { voice } from './voice.js';
+import { registerWatch } from './watch.js';
 
 function cleanBody(body) {
   const text = typeof body === 'string' ? body.trim() : '';
@@ -35,6 +36,7 @@ export function initSocket(io) {
     registerRoomChat(socket);
     calls.register(io, socket);
     voice.register(io, socket);
+    registerWatch(socket);
 
     socket.on('disconnect', async () => {
       const offline = presence.remove(userId, socket.id);

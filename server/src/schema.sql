@@ -67,3 +67,6 @@ CREATE TABLE IF NOT EXISTS room_messages (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS room_messages_room_idx ON room_messages (room_id, id DESC);
+
+-- Watch together: what the room is watching and where playback is (null when nothing plays).
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS watch jsonb;

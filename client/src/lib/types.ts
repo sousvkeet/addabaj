@@ -40,6 +40,52 @@ export type RoomMessage = {
 
 export type Role = 'admin' | 'member';
 
+export type WatchSource = {
+  kind: 'youtube' | 'file' | 'hls';
+  url: string;
+  videoId?: string;
+  title: string;
+  /** e.g. "720p MP4 file, from archive.org" */
+  detail?: string;
+  /** The server relay, used if the browser can't play `url` directly. */
+  fallbackUrl?: string;
+  /** Plays through the server relay. */
+  relay?: boolean;
+};
+
+/** One way to play a found video (a quality, or YouTube's player). */
+export type FoundOption = {
+  id: string;
+  kind: WatchSource['kind'];
+  label: string;
+  detail: string;
+  size: string | null;
+  recommended: boolean;
+  relay: boolean;
+};
+
+export type FoundVideo = {
+  id: string;
+  title: string;
+  thumbnail: string | null;
+  duration: number | null;
+  live: boolean;
+  site: string | null;
+  options: FoundOption[];
+};
+
+export type FindResult = { scanId: string; videos: FoundVideo[]; notes: string[] };
+
+/** Shared playback: at server time `at`, the video was at `position` seconds. */
+export type WatchState = {
+  source: WatchSource;
+  playing: boolean;
+  position: number;
+  at: number;
+  by: string;
+  byName: string;
+};
+
 export type RoomSummary = {
   id: string;
   name: string;
@@ -51,6 +97,8 @@ export type RoomSummary = {
   unread: number;
   createdAt: string;
   lastMessage: RoomMessage | null;
+  /** Title of the video the room is watching together, if any. */
+  watching?: string | null;
 };
 
 export type RoomMember = User & { role: Role; joinedAt: string };
@@ -68,6 +116,7 @@ export type RoomDetail = RoomSummary & {
   members: RoomMember[];
   invites: RoomInviteAdminView[];
   voice: VoiceParticipant[];
+  watch: WatchState | null;
 };
 
 export type Invite = {

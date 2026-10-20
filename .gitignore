@@ -5,3 +5,5 @@ dist
 !.env.example
 *.log
 tests/screenshots
+server/bin
+server/cache

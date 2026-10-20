@@ -3,6 +3,7 @@ import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
 import { getIO, roomChannel, userChannel } from '../realtime.js';
 import { publicUser, USER_COLUMNS } from './users.js';
 import { voice } from '../socket/voice.js';
+import { publicWatch } from './watch.js';
 
 export function roomMessage(row) {
   return {
@@ -61,7 +62,7 @@ export async function lockSeat(client, roomId) {
 }
 
 const SUMMARY_SELECT = `
-  SELECT r.id, r.name, r.description, r.owner_id, r.max_members, r.created_at, rm.role,
+  SELECT r.id, r.name, r.description, r.owner_id, r.max_members, r.created_at, r.watch, rm.role,
     (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
     (SELECT count(*)::int FROM room_messages m
        WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id <> rm.user_id) AS unread,
@@ -85,6 +86,7 @@ function summary(row) {
     myRole: row.role,
     unread: row.unread,
     createdAt: row.created_at,
+    watching: row.watch?.source?.title ?? null,
     lastMessage: row.lm_id
       ? roomMessage({
           id: row.lm_id, room_id: row.id, kind: row.lm_kind, body: row.lm_body,
@@ -144,6 +146,7 @@ export async function roomDetail(roomId, userId) {
     members: members.map((m) => ({ ...publicUser(m), role: m.role, joinedAt: m.joined_at })),
     invites,
     voice: voice.participants(roomId),
+    watch: publicWatch((await one('SELECT watch FROM rooms WHERE id = $1', [roomId]))?.watch ?? null),
   };
 }
 

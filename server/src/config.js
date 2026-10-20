@@ -38,6 +38,19 @@ export const config = {
   ],
 };
 
+/** Watch together: fetching videos from web pages. */
+export const streaming = {
+  // The server refuses to fetch from private/local addresses (your machine, LAN,
+  // cloud metadata) unless this is true, e.g. to stream from a NAS at home.
+  allowPrivate: process.env.STREAM_ALLOW_PRIVATE === 'true',
+  // Open pages in a hidden browser when nothing else finds a video.
+  deepScan: process.env.DEEP_SCAN !== 'false',
+  // Relayed video files are fetched once into this folder and shared by all
+  // viewers. Disk use is capped; 0 turns the shared download off.
+  cacheDir: process.env.STREAM_CACHE_DIR || resolve(rootDir, 'server/cache'),
+  cacheMaxBytes: Math.max(0, Number(process.env.STREAM_CACHE_GB ?? 10)) * 1024 ** 3,
+};
+
 export const limits = {
   minRoomMembers: 2,
   maxRoomMembers: 50,

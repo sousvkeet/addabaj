@@ -1,6 +1,6 @@
 # Adda Khana
 
-A real-time hangout app: one-to-one chat with voice and video calls, plus rooms with group chat and a shared voice table.
+A real-time hangout app: one-to-one chat with voice and video calls, plus rooms with group chat, a shared voice table and videos watched together.
 
 ## Features
 
@@ -12,7 +12,22 @@ A real-time hangout app: one-to-one chat with voice and video calls, plus rooms 
   - During any call you can mute, turn your camera on or off (so a voice call can become a video call), and see when the other person is speaking, muted or has their camera off.
   - Video shows the other person large with you in a corner. On desktop it's a floating window you can shrink back to the call bar; on phones it's full screen.
   - Missed, declined and finished calls are logged in the chat.
-- **Microphone, speaker and camera choice:** from the account menu, during a call, or under room voice.
+- **Watch together (rooms):** a room admin pastes a link, picks a video and quality, and everyone in the room watches it in sync above the chat.
+  - **Any link:** a video page on almost any site, YouTube, or a direct `.mp4`, `.webm` or `.m3u8` link. **Find videos** looks for videos the way a download manager does, then lists them with their qualities and sizes, with the best one preselected. Finders, tried in order:
+    1. **Site support** by [yt-dlp](https://github.com/yt-dlp/yt-dlp): about 1,800 sites (Facebook, Instagram, X, Dailymotion, Vimeo, TikTok, Reddit, Archive.org, news sites…) plus generic web players.
+    2. **Page scan:** `<video>` tags, video metadata and video links anywhere in the page.
+    3. **Deep scan:** opens the page in a hidden browser, presses play and records the video requests it makes.
+  - **Relay:** YouTube plays in YouTube's player. Videos found on web pages play through the server's relay, which adds the headers the site expects and supports seeking. Streams are relayed segment by segment through signed links, so the relay only fetches parts listed in a playlist it served. Direct links play straight from their source and fall back to the relay if a browser can't play them, for example when the site blocks cross-site playback or the link is `http://` on an HTTPS page.
+  - **Shared download:** a relayed video file is fetched once, with a single connection, into a temporary file that every viewer reads from as it fills, the way a download manager works.
+    - The site sees one download however many people watch, everyone gets the same data, and seeking back is instant.
+    - Jumping beyond the downloaded part is fetched from the site directly.
+    - Stream segments are likewise fetched once and shared.
+    - Disk use is capped by `STREAM_CACHE_GB` (default 10). Files are removed when the video stops or after 10 idle minutes, and the folder is cleared on start.
+  - **Who controls it:** only admins can find, play, pause, seek, change or stop. The server enforces this.
+  - **Staying in sync:** the admin who last controlled playback is the host. Every member's player compares itself with the shared timeline every 2 seconds and re-syncs if it drifts. Late joiners start at the current point.
+  - **Members' controls:** volume, mute and full screen. If their browser blocks autoplay, they see **Click to watch along**.
+  - **What it won't do:** play DRM-protected video (Netflix, Prime Video and similar), get past logins or bot checks, or fetch anything on the server's own machine or network. Each of these is explained when it happens.
+- **Microphone, speaker and camera choice:**- **Microphone, speaker and camera choice:** from the account menu, during a call, or under room voice.
   - A live level bar shows which microphone hears you.
   - A test sound checks the speaker. Speaker choice works in Chrome, Edge and Firefox; Safari always uses the system output.
   - A preview checks the camera.
@@ -46,10 +61,13 @@ A real-time hangout app: one-to-one chat with voice and video calls, plus rooms 
    ```sh
    createdb adda_khana
    ```
-3. Install dependencies:
+3. Install dependencies, plus yt-dlp for finding videos on most sites:
    ```sh
    npm install
+   npm run setup:yt-dlp        # downloads yt-dlp to server/bin/ and checks its checksum; needs Python 3.9+
+   npx playwright install chromium   # for the deep scan (optional)
    ```
+   Re-run `npm run setup:yt-dlp` now and then; sites change and yt-dlp keeps up.
 4. Run in development:
    ```sh
    npm run dev
@@ -60,7 +78,7 @@ A real-time hangout app: one-to-one chat with voice and video calls, plus rooms 
 
 | File | Read by | Holds |
 |---|---|---|
-| `server/.env` | `server/src/config.js` | `DATABASE_URL`, `JWT_SECRET`, `PORT` (API), `NODE_ENV`, Cloudflare TURN keys, `FORCE_TURN_RELAY`, optional `TURN_*` |
+| `server/.env` | `server/src/config.js` | `DATABASE_URL`, `JWT_SECRET`, `PORT` (API), `NODE_ENV`, Cloudflare TURN keys, `FORCE_TURN_RELAY`, optional `TURN_*`, and for watch together `YTDLP_PATH`, `DEEP_SCAN`, `STREAM_ALLOW_PRIVATE`, `STREAM_CACHE_GB`, `STREAM_CACHE_DIR` |
 | `client/.env` | `client/vite.config.ts` | `CLIENT_PORT` (dev server), `API_URL` (where the dev server forwards `/api` and `/socket.io`) |
 
 To change the API port, change `PORT` in `server/.env` and the port in `API_URL` in `client/.env` to match.
@@ -99,6 +117,24 @@ The test drives three users with fake microphones. It checks the TURN relay with
 - three-way room voice,
 - removing a member, and dark theme.
 
+`npm run test:watch` tests watch together with three people. It covers:
+
+- the admin-only button,
+- a refused bad link,
+- play, pause and seek staying in sync,
+- drift correction and a late joiner,
+- the server refusing control from a member,
+- stop for everyone,
+- YouTube sync,
+- finding a video on a Wikimedia Commons page and watching it through the shared download, including a jump ahead,
+- a JavaScript-player page caught by the deep scan,
+- a direct stream falling back to the relay,
+- clear refusals for DRM, pages without video and private addresses.
+
+The YouTube and web-page checks need internet access.
+
+It serves its own test clip from `tests/fixtures/` on port 4099.
+
 Screenshots are saved to `tests/screenshots/`.
 
 ## Project layout
@@ -118,6 +154,10 @@ tests/e2e.mjs         Browser end-to-end test
 ```
 
 ## Limits to know about
+
+- Videos from web pages are relayed through the server. The site is downloaded from once, but each viewer still uses the server's upload bandwidth. A link found on a page can expire after some hours. The part already downloaded keeps playing, but if a long session stops beyond it, find the video again.
+- Some sites throttle or block servers that download a lot. The relay retries hiccups, and players retry a stalled load before showing an error, but a slow site stays slow.
+- The server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. To relay from your own network, for example a NAS, set `STREAM_ALLOW_PRIVATE=true`.
 
 - Call and voice state is kept in server memory. Run a single server process; restarting it ends any calls in progress.
 - Room voice is a full mesh, meaning each person sends audio directly to every other person. That's why voice is capped at 12 people.

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, AudioLines, Headphones, LoaderCircle, Users } from 'lucide-react';
+import { ArrowLeft, AudioLines, Headphones, LoaderCircle, MonitorPlay, Users } from 'lucide-react';
 import { socket } from '../lib/socket';
 import { useMedia } from '../lib/useMedia';
 import type { VoiceParticipant } from '../lib/types';
@@ -13,6 +13,7 @@ import { Button, IconButton } from '../components/ui/Button';
 import { Composer } from '../components/Composer';
 import { MessageList, TypingLine, type ThreadItem } from '../components/MessageList';
 import { RoomPanel } from '../components/RoomPanel';
+import { WatchDialog, WatchStage } from '../components/watch/WatchStage';
 
 const EMPTY: VoiceParticipant[] = [];
 
@@ -44,6 +45,7 @@ export function RoomView() {
   const location = useLocation();
   const [panelOpen, setPanelOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [watchOpen, setWatchOpen] = useState(false);
 
   useEffect(() => {
     openRoom(roomId);
@@ -133,12 +135,20 @@ export function RoomView() {
               <span className="hidden sm:inline">Join voice</span>
             </Button>
           )}
+          {room.myRole === 'admin' && (
+            <Button variant="outline" size="sm" onClick={() => setWatchOpen(true)} aria-label="Watch together">
+              <MonitorPlay size={16} />
+              <span className="hidden lg:inline">Watch</span>
+            </Button>
+          )}
           {!wide && (
             <IconButton label="Members and voice" onClick={() => setPanelOpen(true)}>
               <Users size={20} />
             </IconButton>
           )}
         </header>
+
+        {detail?.watch && <WatchStage room={detail} onChange={() => setWatchOpen(true)} />}
 
         <MessageList
           key={`thread-${roomId}`}
@@ -158,6 +168,10 @@ export function RoomView() {
           onTyping={(t) => socket.emit('room:typing', { roomId, typing: t })}
         />
       </div>
+
+      {room.myRole === 'admin' && (
+        <WatchDialog roomId={roomId} open={watchOpen} onClose={() => setWatchOpen(false)} replacing={!!detail?.watch} />
+      )}
 
       {wide ? (
         <aside className="flex w-[330px] shrink-0 flex-col border-l border-line bg-limewash">{panel}</aside>

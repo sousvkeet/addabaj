@@ -1,5 +1,6 @@
+import { syncClock } from './lib/clock';
 import { socket } from './lib/socket';
-import type { DmMessage, Invite, RoomMessage, RoomSummary, User, VoiceParticipant } from './lib/types';
+import type { DmMessage, Invite, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
 import { useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
@@ -14,7 +15,10 @@ export function bindRealtime() {
   if (bound) return;
   bound = true;
 
-  socket.on('connect', () => void chat().sync());
+  socket.on('connect', () => {
+    void chat().sync();
+    void syncClock();
+  });
   socket.on('disconnect', (reason) => {
     useCall.getState().onConnectionLost();
     useVoice.getState().onConnectionLost();
@@ -63,6 +67,14 @@ export function bindRealtime() {
     if (!room) return;
     if (reason === 'removed') toast(`You were removed from ${room.name}.`);
     else if (reason === 'deleted' && room.ownerId !== useAuth.getState().user?.id) toast(`${room.name} was deleted.`);
+  });
+
+  // Watch together
+  socket.on('watch:state', ({ roomId, watch }: { roomId: string; watch: WatchState | null }) => {
+    useChat.setState((s) => ({
+      roomDetails: s.roomDetails[roomId] ? { ...s.roomDetails, [roomId]: { ...s.roomDetails[roomId], watch } } : s.roomDetails,
+      rooms: s.rooms[roomId] ? { ...s.rooms, [roomId]: { ...s.rooms[roomId], watching: watch?.source.title ?? null } } : s.rooms,
+    }));
   });
 
   // Invites

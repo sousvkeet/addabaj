@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router';
-import { AudioLines, Plus } from 'lucide-react';
+import { AudioLines, MonitorPlay, Plus } from 'lucide-react';
 import { listStamp } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -58,6 +58,12 @@ export function RoomList() {
                     <span className={`min-w-0 flex-1 truncate text-[14px] ${room.unread ? 'font-medium text-ink' : 'text-ink-soft'}`}>
                       {m ? (sender ? `${sender}: ${m.body}` : m.body) : room.description || 'No messages yet'}
                     </span>
+                    {room.watching && (
+                      <span className="inline-flex items-center rounded-full bg-shutter px-1.5 leading-5 text-taxi" title={`Watching ${room.watching}`}>
+                        <MonitorPlay size={12} />
+                        <span className="sr-only">Watching {room.watching}</span>
+                      </span>
+                    )}
                     {talking > 0 && (
                       <span
                         className="inline-flex items-center gap-1 rounded-full bg-shutter px-1.5 text-[12px] leading-5 font-semibold text-taxi"

@@ -10,7 +10,9 @@
     "build": "npm run build -w client",
     "start": "npm start -w server",
     "db:migrate": "npm run migrate -w server",
-    "test:e2e": "node tests/e2e.mjs"
+    "test:e2e": "node tests/e2e.mjs",
+    "test:watch": "node tests/watch-together.mjs",
+    "setup:yt-dlp": "npm run setup:yt-dlp -w server"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",
