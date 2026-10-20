@@ -57,7 +57,9 @@ app.use((err, _req, res, _next) => {
 });
 
 const server = createServer(app);
-const io = new Server(server, { serveClient: false });
+// A short heartbeat notices phones whose connection died silently within
+// ~16 s (default ~45 s); clients also probe when the person comes back.
+const io = new Server(server, { serveClient: false, pingInterval: 8000, pingTimeout: 8000 });
 setIO(io);
 initSocket(io);
 

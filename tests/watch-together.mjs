@@ -248,10 +248,12 @@ await check('stop for everyone removes the video for all', async () => {
   await B.page.getByRole('log').getByText('Asha Host stopped the video').waitFor();
 });
 
-await check('YouTube plays for everyone and stays in sync', async () => {
+await check('YouTube plays for everyone (and appears live on a phone already in the room)', async () => {
   const found = await find(A.page, 'https://www.youtube.com/watch?v=M7lc1UVf-VE');
   if (found.outcome !== 'choose') throw new Error(found.error);
   await play(found.dlg);
+  // Mitali (phone) is already in the room: the video must appear live, without a reload.
+  await C.page.getByRole('region', { name: 'Watch together' }).waitFor({ timeout: 8000 });
   await B.page.locator('iframe[src*="M7lc1UVf-VE"]').waitFor({ timeout: 15000 });
   await A.page.locator('iframe[src*="M7lc1UVf-VE"]').waitFor({ timeout: 15000 });
   await A.page.waitForTimeout(4000);

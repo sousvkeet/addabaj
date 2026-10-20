@@ -7,6 +7,7 @@ import { RoomList } from '../components/RoomList';
 import { InviteList } from '../components/InviteList';
 import { AudioSinks, CallStage, IncomingCall, LiveBar, useLive } from '../components/CallUi';
 import { DeviceSettings } from '../components/DeviceSettings';
+import { ConnectionNotice } from '../components/ConnectionNotice';
 
 export function AppShell() {
   const { pathname } = useLocation();
@@ -43,6 +44,7 @@ export function AppShell() {
       <CallStage />
       <IncomingCall />
       <DeviceSettings />
+      <ConnectionNotice />
       <AudioSinks />
     </div>
   );

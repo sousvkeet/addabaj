@@ -1,4 +1,5 @@
 import { syncClock } from './lib/clock';
+import { watchConnection } from './lib/liveness';
 import { socket } from './lib/socket';
 import type { DmMessage, Invite, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
 import { useAuth } from './store/auth';
@@ -27,6 +28,7 @@ export function bindRealtime() {
   socket.on('connect_error', (err) => {
     if (err.message === 'unauthorized') useAuth.getState().expire();
   });
+  watchConnection(() => useAuth.getState().status === 'authed');
 
   // Presence
   socket.on('presence:snapshot', ({ online }: { online: string[] }) => {
