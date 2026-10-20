@@ -1,11 +1,15 @@
-import { Coffee, Headphones, Mic, MicOff, PhoneOff } from 'lucide-react';
+import { useEffect } from 'react';
+import { Coffee, Headphones, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
 import type { RoomMember, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
 import { useChat } from '../store/chat';
+import { canPickSpeaker, useDevices } from '../store/devices';
+import { useUi } from '../store/ui';
 import { useVoice } from '../store/voice';
 import { Avatar } from './ui/Avatar';
 import { Button } from './ui/Button';
+import { DeviceSelect } from './DeviceSettings';
 
 export const VOICE_SEATS = 12;
 const EMPTY: VoiceParticipant[] = [];
@@ -23,6 +27,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
   const toggleMute = useVoice((s) => s.toggleMute);
   const inCall = useCall((s) => s.phase !== 'idle');
   const meId = useAuth((s) => s.user?.id);
+  const openDevices = useUi((s) => s.setDevicesOpen);
 
   const here = voiceRoom === roomId && status !== 'idle';
   const byId = new Map(members.map((m) => [m.id, m]));
@@ -101,6 +106,35 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
       <p className="mt-2 text-center text-[12.5px] text-ink-soft">
         {inCall && !here ? 'End your call to join voice.' : `Up to ${VOICE_SEATS} people can talk at once.`}
       </p>
+      <DevicePickers onMore={() => openDevices(true)} />
     </section>
+  );
+}
+
+/** Microphone and speaker choice, right where people talk. */
+function DevicePickers({ onMore }: { onMore: () => void }) {
+  const refresh = useDevices((s) => s.refresh);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  return (
+    <div className="mt-4 space-y-2 rounded-xl border border-line bg-paper/60 p-3">
+      <label className="flex items-center gap-2.5">
+        <Mic size={16} className="shrink-0 text-ink-soft" aria-hidden />
+        <span className="sr-only">Microphone</span>
+        <DeviceSelect kind="audioinput" label="Microphone" compact />
+      </label>
+      {canPickSpeaker && (
+        <label className="flex items-center gap-2.5">
+          <Volume2 size={16} className="shrink-0 text-ink-soft" aria-hidden />
+          <span className="sr-only">Speaker</span>
+          <DeviceSelect kind="audiooutput" label="Speaker" compact />
+        </label>
+      )}
+      <button type="button" onClick={onMore} className="pl-[26px] text-[12.5px] font-semibold text-shutter underline-offset-2 hover:underline dark:text-taxi">
+        Test microphone and speaker
+      </button>
+    </div>
   );
 }

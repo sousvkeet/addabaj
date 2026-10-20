@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import { ArrowDown, Check, CheckCheck, Clock, LoaderCircle, Phone, PhoneMissed } from 'lucide-react';
+import { ArrowDown, Check, CheckCheck, Clock, LoaderCircle, Phone, PhoneMissed, Video } from 'lucide-react';
 import { clock, dayLabel, duration, sameDay } from '../lib/format';
 import { Avatar } from './ui/Avatar';
 
@@ -14,6 +14,7 @@ export type ThreadItem = {
   pending?: 'sending' | 'failed';
   callOutcome?: 'completed' | 'missed' | 'declined';
   callDuration?: number;
+  callVideo?: boolean;
 };
 
 type Props = {
@@ -25,7 +26,7 @@ type Props = {
   showSenders?: boolean;
   receipts?: boolean;
   onRetry: (item: ThreadItem) => void;
-  onCallBack?: () => void;
+  onCallBack?: (video: boolean) => void;
   empty?: ReactNode;
 };
 
@@ -130,7 +131,7 @@ function Message({
   showSender: boolean;
   receipts: boolean;
   onRetry: (item: ThreadItem) => void;
-  onCallBack?: () => void;
+  onCallBack?: (video: boolean) => void;
 }) {
   if (item.kind === 'system') {
     return (
@@ -147,11 +148,13 @@ function Message({
       <div className={`mt-3 flex ${item.mine ? 'justify-end' : ''}`}>
         <div className="flex items-center gap-3 rounded-2xl border border-line bg-paper py-2.5 pr-4 pl-3">
           <span className={`flex size-9 items-center justify-center rounded-full ${missed ? 'bg-oxide/12 text-oxide' : 'bg-limewash text-shutter dark:text-taxi'}`}>
-            {missed ? <PhoneMissed size={17} /> : <Phone size={17} />}
+            {missed ? <PhoneMissed size={17} /> : item.callVideo ? <Video size={17} /> : <Phone size={17} />}
           </span>
           <span>
             <span className="block text-[14.5px] font-semibold">
-              {item.callOutcome === 'completed' ? (item.mine ? 'Outgoing call' : 'Incoming call') : item.body}
+              {item.callOutcome === 'completed'
+                ? `${item.mine ? 'Outgoing' : 'Incoming'} ${item.callVideo ? 'video call' : 'call'}`
+                : item.body}
             </span>
             <span className="block text-[12.5px] text-ink-soft">
               {item.callOutcome === 'completed' ? `${duration(item.callDuration ?? 0)} long, ` : ''}
@@ -159,7 +162,7 @@ function Message({
             </span>
           </span>
           {onCallBack && !item.mine && missed && (
-            <button type="button" onClick={onCallBack} className="ml-2 text-[13.5px] font-semibold text-shutter hover:underline dark:text-taxi">
+            <button type="button" onClick={() => onCallBack(!!item.callVideo)} className="ml-2 text-[13.5px] font-semibold text-shutter hover:underline dark:text-taxi">
               Call back
             </button>
           )}

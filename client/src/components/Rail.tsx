@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
-import { LogOut, Mail, MessageCircle, Moon, Sun, Users } from 'lucide-react';
+import { LogOut, Mail, MessageCircle, Moon, Settings2, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { useUi } from '../store/ui';
@@ -60,6 +60,7 @@ function AccountMenu() {
   const logout = useAuth((s) => s.logout);
   const theme = useUi((s) => s.theme);
   const toggleTheme = useUi((s) => s.toggleTheme);
+  const openDevices = useUi((s) => s.setDevicesOpen);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -97,6 +98,18 @@ function AccountMenu() {
             <p className="truncate font-semibold">{user.name}</p>
             <p className="truncate text-[13px] text-ink-soft">{user.email}</p>
           </div>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              openDevices(true);
+            }}
+            className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-[14px] hover:bg-limewash"
+          >
+            <Settings2 size={17} />
+            Microphone, speaker and camera
+          </button>
           <button
             role="menuitem"
             type="button"

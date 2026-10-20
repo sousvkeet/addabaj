@@ -1,11 +1,12 @@
 import { useEffect, useMemo } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Phone, PhoneOff } from 'lucide-react';
+import { ArrowLeft, Phone, PhoneOff, Settings2, Video } from 'lucide-react';
 import { lastSeen } from '../lib/format';
 import { socket } from '../lib/socket';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
 import { useChat } from '../store/chat';
+import { useUi } from '../store/ui';
 import { Avatar } from '../components/ui/Avatar';
 import { Button, IconButton } from '../components/ui/Button';
 import { Composer } from '../components/Composer';
@@ -26,6 +27,7 @@ export function ChatView() {
   const callPeer = useCall((s) => s.peer?.id);
   const startCall = useCall((s) => s.startCall);
   const endCall = useCall((s) => s.endCall);
+  const openDevices = useUi((s) => s.setDevicesOpen);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -45,6 +47,7 @@ export function ChatView() {
         pending: m.pending,
         callOutcome: m.meta?.outcome,
         callDuration: m.meta?.duration,
+        callVideo: !!m.meta?.video,
       })),
     [page?.items, me?.id],
   );
@@ -53,7 +56,7 @@ export function ChatView() {
 
   const name = partner?.name ?? '…';
   const onCallWithThem = callPhase !== 'idle' && callPeer === userId;
-  const call = () => partner && void startCall({ id: partner.id, name: partner.name, hue: partner.hue });
+  const call = (video = false) => partner && void startCall({ id: partner.id, name: partner.name, hue: partner.hue }, { video });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -75,15 +78,27 @@ export function ChatView() {
           </p>
         </div>
         {onCallWithThem ? (
-          <Button variant="danger" size="sm" onClick={endCall} aria-label="End call">
-            <PhoneOff size={16} />
-            <span className="hidden sm:inline">End call</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => openDevices(true)} aria-label="Microphone, speaker and camera">
+              <Settings2 size={16} />
+              <span className="hidden sm:inline">Devices</span>
+            </Button>
+            <Button variant="danger" size="sm" onClick={endCall} aria-label="End call">
+              <PhoneOff size={16} />
+              <span className="hidden sm:inline">End call</span>
+            </Button>
+          </div>
         ) : (
-          <Button variant="live" size="sm" onClick={call} disabled={!partner || callPhase !== 'idle'} aria-label={`Call ${name}`}>
-            <Phone size={16} />
-            <span className="hidden sm:inline">Call</span>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="live" size="sm" onClick={() => call(false)} disabled={!partner || callPhase !== 'idle'} aria-label={`Voice call ${name}`}>
+              <Phone size={16} />
+              <span className="hidden sm:inline">Voice</span>
+            </Button>
+            <Button variant="live" size="sm" onClick={() => call(true)} disabled={!partner || callPhase !== 'idle'} aria-label={`Video call ${name}`}>
+              <Video size={17} />
+              <span className="hidden sm:inline">Video</span>
+            </Button>
+          </div>
         )}
       </header>
 
@@ -96,12 +111,12 @@ export function ChatView() {
         onLoadOlder={() => void loadDm(userId, true)}
         receipts
         onRetry={(item) => void sendDm(userId, item.body, item.key)}
-        onCallBack={callPhase === 'idle' ? call : undefined}
+        onCallBack={callPhase === 'idle' ? (video) => call(video) : undefined}
         empty={
           <div className="mx-auto max-w-sm py-16 text-center">
             {partner && <Avatar name={partner.name} hue={partner.hue} size={72} className="mx-auto" />}
             <p className="mt-4 font-display text-[22px]">Say hello to {name}</p>
-            <p className="mt-1 text-[14px] text-ink-soft">Messages arrive instantly. Use the call button above to talk by voice.</p>
+            <p className="mt-1 text-[14px] text-ink-soft">Messages arrive instantly. Use the buttons above for a voice or video call.</p>
           </div>
         }
       />

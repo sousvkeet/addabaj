@@ -13,7 +13,7 @@ export type DmMessage = {
   recipientId: string;
   kind: 'text' | 'call';
   body: string;
-  meta: { outcome?: 'completed' | 'missed' | 'declined'; duration?: number } | null;
+  meta: { outcome?: 'completed' | 'missed' | 'declined'; duration?: number; video?: boolean } | null;
   createdAt: string;
   readAt: string | null;
   /** Client-only: optimistic send state. */

@@ -21,11 +21,12 @@ function otherSocket(call, socketId) {
 
 async function recordCall(call, outcome) {
   const duration = call.startedAt ? Math.round((Date.now() - call.startedAt) / 1000) : 0;
-  const body = outcome === 'completed' ? 'Voice call' : outcome === 'declined' ? 'Call declined' : 'Missed voice call';
+  const what = call.video ? 'video call' : 'voice call';
+  const body = outcome === 'completed' ? (call.video ? 'Video call' : 'Voice call') : outcome === 'declined' ? 'Call declined' : `Missed ${what}`;
   const row = await one(
     `INSERT INTO dm_messages (sender_id, recipient_id, kind, body, meta) VALUES ($1, $2, 'call', $3, $4)
      RETURNING ${DM_COLUMNS}`,
-    [call.callerId, call.calleeId, body, { outcome, duration }],
+    [call.callerId, call.calleeId, body, { outcome, duration, video: call.video }],
   );
   const message = dmMessage(row);
   const [caller, callee] = await Promise.all([findUser(call.callerId), findUser(call.calleeId)]);
@@ -58,7 +59,7 @@ export const calls = {
       return call;
     };
 
-    socket.on('call:start', handle(async ({ to }) => {
+    socket.on('call:start', handle(async ({ to, video }) => {
       if (!isUuid(to) || to === userId) throw new AppError(400, "You can't call that person.");
       if (userCall.has(userId)) throw new AppError(409, "You're already on a call.");
       const callee = await findUser(to);
@@ -74,23 +75,25 @@ export const calls = {
         callerSocket: socket.id,
         calleeSocket: null,
         startedAt: null,
+        // Whether the caller asked for video; either side can turn its camera on later.
+        video: !!video,
       };
       call.timer = setTimeout(() => finish(call, 'missed'), RING_TIMEOUT_MS);
       active.set(call.id, call);
       userCall.set(userId, call.id);
       userCall.set(to, call.id);
-      io.to(userChannel(to)).emit('call:incoming', { callId: call.id, from: socket.data.user });
+      io.to(userChannel(to)).emit('call:incoming', { callId: call.id, from: socket.data.user, video: call.video });
       return { callId: call.id };
     }));
 
-    socket.on('call:accept', handle(async ({ callId }) => {
+    socket.on('call:accept', handle(async ({ callId, video }) => {
       const call = getCall(callId);
       if (call.calleeId !== userId || call.calleeSocket) throw new AppError(409, 'That call was already answered.');
       clearTimeout(call.timer);
       voice.leaveAny(userId);
       call.calleeSocket = socket.id;
       call.startedAt = Date.now();
-      io.to(call.callerSocket).emit('call:accepted', { callId });
+      io.to(call.callerSocket).emit('call:accepted', { callId, video: !!video });
       socket.to(userChannel(userId)).emit('call:dismissed', { callId });
       return {};
     }));
@@ -118,6 +121,14 @@ export const calls = {
       const call = active.get(callId);
       const target = call && otherSocket(call, socket.id);
       if (target) io.to(target).emit('call:peer-mute', { callId, muted: !!muted });
+    });
+
+    socket.on('call:camera', ({ callId, on } = {}) => {
+      const call = active.get(callId);
+      if (!call) return;
+      if (on) call.video = true;
+      const target = otherSocket(call, socket.id);
+      if (target) io.to(target).emit('call:peer-camera', { callId, on: !!on });
     });
   },
 

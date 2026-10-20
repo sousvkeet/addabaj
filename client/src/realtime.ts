@@ -81,6 +81,7 @@ export function bindRealtime() {
   socket.on('call:accepted', (e) => void call().onAccepted(e));
   socket.on('call:signal', (e) => void call().onSignal(e));
   socket.on('call:peer-mute', (e) => call().onPeerMute(e));
+  socket.on('call:peer-camera', (e) => call().onPeerCamera(e));
   socket.on('call:ended', (e) => call().onEnded(e));
   socket.on('call:dismissed', (e) => call().onDismissed(e));
 

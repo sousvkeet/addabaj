@@ -1,5 +1,6 @@
 import { api } from './api';
 import { audioContext } from './sounds';
+import { chosen, useDevices } from '../store/devices';
 
 type IceConfig = { iceServers: RTCIceServer[]; iceTransportPolicy: RTCIceTransportPolicy; fetchedAt: number };
 
@@ -28,30 +29,78 @@ export function createPeer() {
   });
 }
 
-/** Ask for the microphone with clear, fixable error messages. */
-export async function getMicrophone(): Promise<MediaStream> {
+const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+const VIDEO: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
+
+function requireMediaDevices() {
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-    throw new Error('Voice needs a secure connection. Open Adda Khana over https:// or on localhost.');
-  }
-  try {
-    return await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      video: false,
-    });
-  } catch (err) {
-    const name = (err as DOMException)?.name;
-    if (name === 'NotAllowedError' || name === 'SecurityError') {
-      throw new Error('Microphone access is blocked. Allow it from the lock icon in the address bar, then try again.');
-    }
-    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
-      throw new Error('No microphone found. Plug one in and try again.');
-    }
-    if (name === 'NotReadableError') {
-      throw new Error('Your microphone is being used by another app. Close it and try again.');
-    }
-    throw new Error("Couldn't start your microphone.");
+    throw new Error('Calls need a secure connection. Open Adda Khana over https:// or on localhost.');
   }
 }
+
+function friendlyError(err: unknown, device: 'microphone' | 'camera'): Error {
+  const name = (err as DOMException)?.name;
+  const Device = device === 'microphone' ? 'Microphone' : 'Camera';
+  if (name === 'NotAllowedError' || name === 'SecurityError') {
+    return new Error(`${Device} access is blocked. Allow it from the lock icon in the address bar, then try again.`);
+  }
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return new Error(`No ${device} found. Plug one in and try again.`);
+  if (name === 'NotReadableError') return new Error(`Your ${device} is being used by another app. Close it and try again.`);
+  return new Error(`Couldn't start your ${device}.`);
+}
+
+/**
+ * Opens the chosen device, or the system default when none is chosen. A saved
+ * ID can go stale (browsers rotate them), so on failure this opens the default
+ * to unlock device names, finds the chosen device again by name, and switches
+ * to it. Only a device that is really gone falls back to the default.
+ */
+async function open(kind: 'audioinput' | 'videoinput', base: MediaTrackConstraints): Promise<MediaStream> {
+  requireMediaDevices();
+  const devices = useDevices.getState();
+  await devices.refresh().catch(() => {});
+  const id = chosen(kind);
+  const constraints = (deviceId?: string) =>
+    kind === 'audioinput'
+      ? { audio: { ...base, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) }, video: false }
+      : { video: { ...base, ...(deviceId ? { deviceId: { exact: deviceId } } : {}) }, audio: false };
+  const gum = (deviceId?: string) => navigator.mediaDevices.getUserMedia(constraints(deviceId));
+  try {
+    const stream = await gum(id || undefined);
+    void devices.refresh(); // device names become available after permission
+    return stream;
+  } catch (err) {
+    const name = (err as DOMException)?.name;
+    if (!id || (name !== 'NotFoundError' && name !== 'OverconstrainedError')) {
+      throw friendlyError(err, kind === 'audioinput' ? 'microphone' : 'camera');
+    }
+    let fallback: MediaStream;
+    try {
+      fallback = await gum();
+    } catch (err2) {
+      throw friendlyError(err2, kind === 'audioinput' ? 'microphone' : 'camera');
+    }
+    await devices.refresh().catch(() => {}); // re-matches the choice by name
+    const found = chosen(kind);
+    if (found && found !== id) {
+      try {
+        const exact = await gum(found);
+        stopStream(fallback);
+        return exact;
+      } catch {
+        /* keep the default */
+      }
+    }
+    if (chosen(kind) === id) useDevices.getState().choose(kind, '');
+    return fallback;
+  }
+}
+
+/** Ask for the microphone with clear, fixable error messages. */
+export const getMicrophone = () => open('audioinput', AUDIO);
+
+/** Ask for the camera with clear, fixable error messages. */
+export const getCamera = () => open('videoinput', VIDEO);
 
 export const stopStream = (stream: MediaStream | null | undefined) =>
   stream?.getTracks().forEach((t) => t.stop());
@@ -95,6 +144,31 @@ export function watchSpeaking(stream: MediaStream, onChange: (speaking: boolean)
     window.clearInterval(id);
     source.disconnect();
     if (speaking) onChange(false);
+  };
+}
+
+/** Reports input loudness (0–1) about 12 times a second, for a level meter. */
+export function watchLevel(stream: MediaStream, onLevel: (level: number) => void) {
+  let ctx: AudioContext;
+  try {
+    ctx = audioContext();
+  } catch {
+    return () => {};
+  }
+  const source = ctx.createMediaStreamSource(stream);
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 512;
+  source.connect(analyser);
+  const data = new Uint8Array(analyser.fftSize);
+  const id = window.setInterval(() => {
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (const v of data) sum += ((v - 128) / 128) ** 2;
+    onLevel(Math.min(1, Math.sqrt(sum / data.length) * 4));
+  }, 80);
+  return () => {
+    window.clearInterval(id);
+    source.disconnect();
   };
 }
 

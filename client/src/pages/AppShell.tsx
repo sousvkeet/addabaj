@@ -5,7 +5,8 @@ import { Rail } from '../components/Rail';
 import { ChatList } from '../components/ChatList';
 import { RoomList } from '../components/RoomList';
 import { InviteList } from '../components/InviteList';
-import { AudioSinks, IncomingCall, LiveBar, useLive } from '../components/CallUi';
+import { AudioSinks, CallStage, IncomingCall, LiveBar, useLive } from '../components/CallUi';
+import { DeviceSettings } from '../components/DeviceSettings';
 
 export function AppShell() {
   const { pathname } = useLocation();
@@ -39,7 +40,9 @@ export function AppShell() {
         <Outlet />
       </main>
       <LiveBar />
+      <CallStage />
       <IncomingCall />
+      <DeviceSettings />
       <AudioSinks />
     </div>
   );

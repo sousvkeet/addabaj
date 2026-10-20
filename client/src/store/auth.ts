@@ -17,10 +17,14 @@ const resetHandlers: (() => void)[] = [];
 /** Stores register a reset so logging out leaves nothing behind. */
 export const onLogout = (fn: () => void) => resetHandlers.push(fn);
 
+let initOnce: Promise<void> | null = null;
+
 export const useAuth = create<AuthState>()((set) => {
   const signedIn = (user: User) => {
     set({ user, status: 'authed' });
-    socket.connect();
+    // Calling connect() again while a connection is opening makes Socket.IO
+    // join twice over one WebSocket, so the server sees two sockets for one tab.
+    if (!socket.active) socket.connect();
   };
   const signedOut = () => {
     socket.disconnect();
@@ -31,15 +35,17 @@ export const useAuth = create<AuthState>()((set) => {
   return {
     user: null,
     status: 'loading',
-    init: async () => {
-      try {
-        const { user } = await api<{ user: User | null }>('/auth/me');
-        if (user) signedIn(user);
-        else set({ status: 'guest' });
-      } catch {
-        set({ status: 'guest' });
-      }
-    },
+    // Runs once per page load, even when React calls the effect twice in development.
+    init: () =>
+      (initOnce ??= (async () => {
+        try {
+          const { user } = await api<{ user: User | null }>('/auth/me');
+          if (user) signedIn(user);
+          else set({ status: 'guest' });
+        } catch {
+          set({ status: 'guest' });
+        }
+      })()),
     login: async (email, password) => {
       const { user } = await api<{ user: User }>('/auth/login', { method: 'POST', body: { email, password } });
       signedIn(user);

@@ -10,7 +10,8 @@ mkdirSync(SHOTS, { recursive: true });
 const stamp = Date.now().toString(36);
 
 const browser = await chromium.launch({
-  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'],
+  // No autoplay override: calls must work under Chrome's real autoplay rules.
+  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
 });
 
 const results = [];
@@ -26,7 +27,7 @@ const check = async (label, fn) => {
 };
 
 async function user(name, viewport = { width: 1440, height: 900 }) {
-  const ctx = await browser.newContext({ viewport, permissions: ['microphone'] });
+  const ctx = await browser.newContext({ viewport, permissions: ['microphone', 'camera'] });
   // Keep a handle on every peer connection so we can see which route ICE picked.
   await ctx.addInitScript(() => {
     const Native = window.RTCPeerConnection;
@@ -175,7 +176,7 @@ await check('Rahul opens the chat and Asha sees the read tick', async () => {
 });
 
 await check('Asha calls Rahul, Rahul accepts, audio connects both ways', async () => {
-  await A.page.getByRole('button', { name: 'Call Rahul Das' }).click();
+  await A.page.getByRole('button', { name: 'Voice call Rahul Das' }).click();
   await B.page.getByRole('alertdialog').waitFor({ timeout: 8000 });
   await B.page.screenshot({ path: `${SHOTS}03-incoming.png` });
   await B.page.getByRole('button', { name: 'Accept call' }).click();
@@ -184,6 +185,26 @@ await check('Asha calls Rahul, Rahul accepts, audio connects both ways', async (
   const tracks = await store(B.page, () => window.adda.call.getState().remoteStream?.getAudioTracks().length ?? 0);
   if (tracks !== 1) throw new Error(`remote audio tracks: ${tracks}`);
   await assertRoutes('call', A.page);
+  // Prove sound actually arrives and plays, not just that a track exists.
+  await A.page.waitForTimeout(1500);
+  for (const u of [A, B]) {
+    const audio = await u.page.evaluate(async () => {
+      const pc = window.__pcs.find((p) => p.connectionState === 'connected');
+      let bytes = 0;
+      let energy = 0;
+      (await pc.getStats()).forEach((s) => {
+        if (s.type === 'inbound-rtp' && s.kind === 'audio') {
+          bytes = s.bytesReceived;
+          energy = s.totalAudioEnergy ?? 0;
+        }
+      });
+      const playing = [...document.querySelectorAll('audio[data-call-audio]')].some((a) => !a.paused && a.currentTime > 0.5);
+      return { bytes, energy, playing };
+    });
+    if (!(audio.bytes > 1000 && audio.energy > 0 && audio.playing)) {
+      throw new Error(`${u.name} isn't hearing the call: ${JSON.stringify(audio)}`);
+    }
+  }
 });
 
 await check('mute shows on the other side', async () => {
@@ -204,10 +225,45 @@ await check('ending the call logs it in the chat for both', async () => {
 });
 
 await check('declined call shows a toast and a log entry', async () => {
-  await A.page.getByRole('button', { name: 'Call Rahul Das' }).click();
+  await A.page.getByRole('button', { name: 'Voice call Rahul Das' }).click();
   await B.page.getByRole('button', { name: 'Decline call' }).click({ timeout: 8000 });
   await A.page.getByText('Rahul Das declined the call.').waitFor({ timeout: 5000 });
   await A.page.getByRole('log').getByText('Call declined').waitFor({ timeout: 5000 });
+});
+
+await check('video call: both people see each other, and audio flows with it', async () => {
+  await A.page.getByRole('button', { name: 'Video call Rahul Das' }).click();
+  await B.page.getByText('Incoming video call').waitFor({ timeout: 10000 });
+  await B.page.getByRole('button', { name: 'Accept with video' }).click();
+  for (const u of [A, B]) {
+    await u.page.waitForFunction(() => {
+      const s = window.adda.call.getState();
+      const v = document.querySelector('video[data-remote-video]');
+      return s.phase === 'active' && s.peerCameraOn && v && v.videoWidth > 0 && v.currentTime > 0.3;
+    }, null, { timeout: 20000 });
+    if (!(await u.page.locator('video[data-self-video]').count())) throw new Error(`${u.name} has no self view`);
+  }
+  await assertRoutes('video', A.page);
+  await A.page.screenshot({ path: `${SHOTS}04b-video-call.png` });
+});
+
+await check('camera off/on mid-call, and switching microphone keeps the call going', async () => {
+  await B.page.getByRole('button', { name: 'Turn camera off' }).click();
+  await A.page.getByText("Rahul's camera is off").waitFor({ timeout: 5000 });
+  await B.page.getByRole('button', { name: 'Turn camera on' }).click();
+  await A.page.locator('video[data-remote-video]').waitFor({ timeout: 5000 });
+  await A.page.getByRole('button', { name: 'Audio and video settings' }).click();
+  const mic = A.page.getByRole('dialog').getByLabel('Microphone', { exact: true });
+  const options = await mic.locator('option').allInnerTexts();
+  if (options.length < 2) throw new Error(`microphones listed: ${options}`);
+  const label = () => A.page.evaluate(() => window.__pcs.filter((p) => p.connectionState === 'connected').at(-1).getSenders().find((x) => x.track?.kind === 'audio').track.label);
+  const before = await label();
+  await mic.selectOption({ index: options.length - 1 });
+  await A.page.waitForFunction((b) => window.__pcs.filter((p) => p.connectionState === 'connected').at(-1).getSenders().find((x) => x.track?.kind === 'audio')?.track?.label !== b, before, { timeout: 5000 });
+  await A.page.getByRole('dialog').getByRole('button', { name: 'Done' }).click();
+  await A.page.getByRole('region', { name: /Video call with/ }).getByRole('button', { name: 'End call' }).click();
+  await A.page.getByText('Outgoing video call').waitFor({ timeout: 5000 });
+  await A.page.evaluate(() => localStorage.removeItem('adda-devices'));
 });
 
 let roomUrl;
@@ -304,6 +360,9 @@ await check('three people join room voice and all mesh links connect', async () 
     );
   }
   await assertRoutes('voice', A.page);
+  const panelMic = A.page.getByRole('region', { name: 'Voice', exact: true }).getByLabel('Microphone', { exact: true });
+  const micChoices = await panelMic.locator('option').allInnerTexts();
+  if (micChoices.length < 2) throw new Error(`room panel microphone choices: ${micChoices}`);
   await A.page.waitForTimeout(1500);
   await A.page.screenshot({ path: `${SHOTS}06-room-voice.png` });
 });

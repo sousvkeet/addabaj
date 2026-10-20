@@ -2,10 +2,11 @@ import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
 import { CandidateQueue, createPeer, getMicrophone, loadIceServers, stopStream, watchSpeaking } from '../lib/rtc';
 import { emitAck, socket } from '../lib/socket';
-import { blip } from '../lib/sounds';
+import { blip, unlockAudio } from '../lib/sounds';
 import type { VoiceParticipant } from '../lib/types';
 import { myId, onLogout } from './auth';
 import { useCall } from './call';
+import { onDeviceChoice } from './devices';
 import { toast } from './ui';
 
 // Room voice is a full mesh: the person who joins sends an offer to everyone
@@ -98,6 +99,37 @@ export const useVoice = create<VoiceState>()((set, get) => {
     return peer;
   }
 
+  function watchLocalMic() {
+    stopLocalMeter?.();
+    if (!localStream) return;
+    const me = myId();
+    stopLocalMeter = watchSpeaking(localStream, (speaking) =>
+      set((s) => ({ speaking: { ...s.speaking, [me]: speaking && !s.muted } })),
+    );
+  }
+
+  // A microphone chosen in settings takes effect for everyone in the room at once.
+  async function switchMic() {
+    if (!localStream || get().status !== 'live') return;
+    try {
+      const fresh = await getMicrophone();
+      const track = fresh.getAudioTracks()[0];
+      track.enabled = !get().muted;
+      await Promise.all(
+        [...peers.values()].map((p) => p.pc.getSenders().find((s) => s.track?.kind === 'audio')?.replaceTrack(track)),
+      );
+      stopStream(localStream);
+      localStream = fresh;
+      watchLocalMic();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  onDeviceChoice((kind) => {
+    if (kind === 'audioinput') void switchMic();
+  });
+
   async function offerTo(userId: string, roomId: string) {
     const { pc } = connect(userId, roomId);
     const offer = await pc.createOffer();
@@ -109,6 +141,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
     ...idle,
 
     join: async (roomId) => {
+      unlockAudio();
       const call = useCall.getState();
       if (call.phase !== 'idle') {
         toast('End your call before joining voice.');
@@ -126,10 +159,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
         if (get().roomId !== roomId) return;
         set({ status: 'live' });
         blip('join');
-        const me = myId();
-        stopLocalMeter = watchSpeaking(localStream, (speaking) =>
-          set((s) => ({ speaking: { ...s.speaking, [me]: speaking && !s.muted } })),
-        );
+        watchLocalMic();
         await Promise.all(others.map((p) => offerTo(p.userId, roomId).catch((err) => console.warn('Voice offer failed', err))));
       } catch (err) {
         cleanup();

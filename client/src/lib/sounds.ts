@@ -2,6 +2,18 @@
 let ctx: AudioContext | null = null;
 let stopCurrent: (() => void) | null = null;
 
+/**
+ * Call synchronously inside a click handler (before any await): browsers only
+ * let a page start audio in direct response to the user.
+ */
+export function unlockAudio() {
+  try {
+    audioContext();
+  } catch {
+    /* audio unavailable */
+  }
+}
+
 export function audioContext() {
   if (!ctx) ctx = new AudioContext();
   if (ctx.state === 'suspended') void ctx.resume().catch(() => {});

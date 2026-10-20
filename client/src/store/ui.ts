@@ -5,6 +5,12 @@ type Theme = 'light' | 'dark';
 
 type UiState = {
   toasts: Toast[];
+  /** The browser refused to play call audio until the user taps something. */
+  soundBlocked: boolean;
+  setSoundBlocked: (blocked: boolean) => void;
+  /** The audio and video settings dialog. */
+  devicesOpen: boolean;
+  setDevicesOpen: (open: boolean) => void;
   theme: Theme;
   toast: (text: string, tone?: Toast['tone']) => void;
   dismiss: (id: number) => void;
@@ -15,6 +21,10 @@ let nextId = 1;
 
 export const useUi = create<UiState>()((set, get) => ({
   toasts: [],
+  soundBlocked: false,
+  setSoundBlocked: (soundBlocked) => set({ soundBlocked }),
+  devicesOpen: false,
+  setDevicesOpen: (devicesOpen) => set({ devicesOpen }),
   theme: (document.documentElement.dataset.theme as Theme) ?? 'light',
   toast: (text, tone = 'info') => {
     const id = nextId++;

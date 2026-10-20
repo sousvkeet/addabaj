@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router';
-import { PhoneMissed, Phone, SquarePen } from 'lucide-react';
+import { PhoneMissed, Phone, SquarePen, Video } from 'lucide-react';
 import { listStamp } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -61,7 +61,13 @@ export function ChatList() {
                         <span className="text-shutter dark:text-taxi">typing…</span>
                       ) : m.kind === 'call' ? (
                         <>
-                          {m.meta?.outcome === 'completed' ? <Phone size={14} /> : <PhoneMissed size={14} className="text-oxide" />}
+                          {m.meta?.outcome !== 'completed' ? (
+                            <PhoneMissed size={14} className="text-oxide" />
+                          ) : m.meta?.video ? (
+                            <Video size={14} />
+                          ) : (
+                            <Phone size={14} />
+                          )}
                           <span className="truncate">{m.body}</span>
                         </>
                       ) : (

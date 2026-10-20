@@ -1,16 +1,22 @@
 # Adda Khana
 
-A real-time hangout app: one-to-one chat and voice calls, plus rooms with group chat and a shared voice table.
+A real-time hangout app: one-to-one chat with voice and video calls, plus rooms with group chat and a shared voice table.
 
 ## Features
 
 - **Accounts:** sign up and log in with email and password. You stay logged in for 30 days.
 - **Presence:** see who's online and when they were last seen.
 - **One-to-one chat:** instant delivery, typing indicator, read ticks, unread counts and message history.
-- **One-to-one voice calls:**
-  - The person you call sees a ring screen to accept or decline.
-  - During a call you can mute and unmute, see a timer, and see when the other person is speaking or muted.
+- **One-to-one voice and video calls:**
+  - Start either kind from a chat. The person you call sees a ring screen; a video call can be answered with video or voice only.
+  - During any call you can mute, turn your camera on or off (so a voice call can become a video call), and see when the other person is speaking, muted or has their camera off.
+  - Video shows the other person large with you in a corner. On desktop it's a floating window you can shrink back to the call bar; on phones it's full screen.
   - Missed, declined and finished calls are logged in the chat.
+- **Microphone, speaker and camera choice:** from the account menu, during a call, or under room voice.
+  - A live level bar shows which microphone hears you.
+  - A test sound checks the speaker. Speaker choice works in Chrome, Edge and Firefox; Safari always uses the system output.
+  - A preview checks the camera.
+  - Choices apply immediately, even mid-call, are remembered per browser, and fall back to the system default if a device is unplugged.
 - **Rooms:**
   - Whoever starts a room is its admin and chooses the maximum members (2–50).
   - Admins can **add** people straight in, or **invite** them so they can accept or decline. Admins can also cancel invites and remove members.
@@ -26,7 +32,7 @@ A real-time hangout app: one-to-one chat and voice calls, plus rooms with group 
 | Client | React 19, Vite 7, TypeScript, Tailwind CSS 4, Zustand, React Router 7 |
 | Server | Node.js 22, Express 5, Socket.IO 4 |
 | Database | PostgreSQL (`pg`); the schema is applied automatically on start |
-| Voice | WebRTC peer-to-peer audio, with Socket.IO carrying the connection setup messages, and Cloudflare Realtime TURN as the relay |
+| Calls | WebRTC peer-to-peer audio and video, with Socket.IO carrying the connection setup messages, and Cloudflare Realtime TURN as the relay |
 
 ## Setup
 
@@ -88,6 +94,7 @@ The test drives three users with fake microphones. It checks the TURN relay with
 - sign-up and a wrong-password error,
 - chat with typing indicator and read ticks,
 - an accepted call, mute, hang-up, and a declined call,
+- a video call with real video frames both ways, camera off/on, and switching microphone mid-call,
 - creating a room, adding and inviting members, and the room-full limit,
 - three-way room voice,
 - removing a member, and dark theme.
