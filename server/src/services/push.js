@@ -107,11 +107,12 @@ export async function pushToUser(userId, data, { ttl = 3600 } = {}) {
 
 // ── Phones ─────────────────────────────────────────────────────────────
 
-export async function registerDevice(userId, deviceToken, platform = 'android') {
+/** `sessionId`: the login on that phone, so logging the phone out (Settings › Devices) stops its notifications. */
+export async function registerDevice(userId, deviceToken, platform = 'android', sessionId = null) {
   await query(
-    `INSERT INTO push_devices (token, user_id, platform) VALUES ($1, $2, $3)
-     ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform, updated_at = now()`,
-    [deviceToken, userId, platform],
+    `INSERT INTO push_devices (token, user_id, platform, session_id) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform, session_id = EXCLUDED.session_id, updated_at = now()`,
+    [deviceToken, userId, platform, sessionId],
   );
   // Keep the newest few; old phones that never said goodbye drop off.
   await query(
@@ -192,6 +193,7 @@ export function pushDm(message, sender) {
     senderId: sender.id,
     senderName: sender.name,
     senderHue: sender.hue,
+    ...(sender.photo ? { chatPhoto: sender.photo, senderPhoto: sender.photo } : {}),
     messageId: message.id,
     text: preview(message),
     sentAt: new Date(message.createdAt).getTime(),
@@ -217,6 +219,7 @@ export async function pushRoomMessage(message) {
       senderId: message.sender.id,
       senderName: message.sender.name,
       senderHue: message.sender.hue,
+      ...(message.sender.photo ? { senderPhoto: message.sender.photo } : {}),
       messageId: message.id,
       text: preview(message),
       sentAt: new Date(message.createdAt).getTime(),
@@ -248,7 +251,11 @@ export function pushDeleted(userIds, { scope, chatId, messageId }) {
 export function pushCall(call, caller) {
   return pushToUser(
     call.calleeId,
-    { type: 'call', callId: call.id, callerId: caller.id, callerName: caller.name, callerHue: caller.hue, video: call.video ? 1 : 0, sentAt: Date.now() },
+    {
+      type: 'call', callId: call.id, callerId: caller.id, callerName: caller.name, callerHue: caller.hue,
+      ...(caller.photo ? { callerPhoto: caller.photo } : {}),
+      video: call.video ? 1 : 0, sentAt: Date.now(),
+    },
     { ttl: 40 },
   ).catch((err) => {
     failed(err);
@@ -265,6 +272,7 @@ export function pushCallEnded(call, caller, reason) {
     callerId: caller.id,
     callerName: caller.name,
     callerHue: caller.hue,
+    ...(caller.photo ? { callerPhoto: caller.photo } : {}),
     video: call.video ? 1 : 0,
     sentAt: Date.now(),
   }).catch(failed);

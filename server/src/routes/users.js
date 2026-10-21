@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { one } from '../db.js';
 import { AppError, assertUuid, badRequest, notFound } from '../errors.js';
 import { findUser, normalizeHandle, publicUser, USER_COLUMNS } from '../services/users.js';
+import { photoFile } from '../services/photos.js';
 
 export const usersRouter = Router();
 
@@ -50,6 +51,17 @@ usersRouter.get('/find', lookups, async (req, res) => {
 
 // A person whose id you already have (from a chat, a room, or finding them).
 // Ids are random and never listed anywhere, so this can't be used to browse people.
+// A profile photo, for signed-in people. Each version has its own address, so it's cached for good.
+usersRouter.get('/:id/photo/:version', async (req, res) => {
+  const version = String(req.params.version);
+  if (!/^[0-9a-f]{16}$/.test(version)) throw notFound('That photo has changed.');
+  const file = await photoFile(assertUuid(req.params.id, 'person'), version);
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.sendFile(file);
+});
+
 usersRouter.get('/:id', async (req, res) => {
   const user = await findUser(assertUuid(req.params.id, 'person'), req.userId);
   if (!user) throw notFound("That person doesn't exist.");

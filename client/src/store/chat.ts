@@ -33,6 +33,8 @@ type ChatState = {
 
   sync: () => Promise<void>;
   rememberUser: (user: User) => void;
+  /** Someone changed their photo (or other details): show it everywhere they appear. */
+  applyUser: (user: Pick<User, 'id'> & Partial<User>) => void;
 
   openDm: (partnerId: string | null) => void;
   loadDm: (partnerId: string, older?: boolean) => Promise<void>;
@@ -191,6 +193,38 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   rememberUser: (user) => set((s) => ({ users: { ...s.users, [user.id]: { ...s.users[user.id], ...user } } })),
+
+  applyUser: (user) =>
+    set((s) => {
+      const id = user.id;
+      const conversation = s.conversations[id];
+      const touches = (members: { id: string }[]) => members.some((m) => m.id === id);
+      return {
+        users: s.users[id] ? { ...s.users, [id]: { ...s.users[id], ...user } } : s.users,
+        conversations: conversation ? { ...s.conversations, [id]: { ...conversation, partner: { ...conversation.partner, ...user } } } : s.conversations,
+        roomDetails: Object.fromEntries(
+          Object.entries(s.roomDetails).map(([roomId, d]) => [
+            roomId,
+            touches(d.members) || d.invites?.some((i) => i.invitee.id === id)
+              ? {
+                  ...d,
+                  members: d.members.map((m) => (m.id === id ? { ...m, ...user } : m)),
+                  invites: d.invites?.map((i) => (i.invitee.id === id ? { ...i, invitee: { ...i.invitee, ...user } } : i)),
+                }
+              : d,
+          ]),
+        ),
+        roomMessages: Object.fromEntries(
+          Object.entries(s.roomMessages).map(([roomId, page]) => [
+            roomId,
+            page.items.some((m) => m.sender?.id === id)
+              ? { ...page, items: page.items.map((m) => (m.sender?.id === id ? { ...m, sender: { ...m.sender, ...('photo' in user ? { photo: user.photo } : {}) } } : m)) }
+              : page,
+          ]),
+        ),
+        invites: s.invites.some((i) => i.inviter.id === id) ? s.invites.map((i) => (i.inviter.id === id ? { ...i, inviter: { ...i.inviter, ...user } } : i)) : s.invites,
+      };
+    }),
 
   // ── Direct messages ──────────────────────────────────────────────
 

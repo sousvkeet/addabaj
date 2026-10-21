@@ -296,6 +296,28 @@ if (BUILT) {
     await p.context().setOffline(false);
     await p.context().close();
   });
+
+  await check('A page still running an older version of the site reloads itself once out of sight', async () => {
+    const p = await appPage(ana, BUILT);
+    // The server says it now hosts a newer page.
+    await p.route('**/api/site', async (route) => {
+      const r = await route.fetch();
+      await route.fulfill({ response: r, json: { ...(await r.json()), build: '/assets/index-newer.js' } });
+    });
+    await p.goto(`${BUILT}/chats`);
+    await p.getByRole('link', { name: /Bo/ }).waitFor();
+    await p.evaluate(() => (window.__before = true));
+    await sleep(1500);
+    expect(await p.evaluate(() => window.__before), 'it reloaded while on screen');
+    const reloaded = p.waitForEvent('load', { timeout: 8000 });
+    await p.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true });
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await reloaded;
+    expect(!(await p.evaluate(() => window.__before)), 'it did not reload');
+    await p.context().close();
+  });
 } else {
   console.log('SKIP opening offline: build the app first (npm run build)');
 }

@@ -106,7 +106,7 @@ function RoomInfo({ target }: { target: Extract<InfoTarget, { scope: 'room' }> }
             <ul className="space-y-1">
               {list.map(({ user }) => (
                 <li key={user.id} className="flex items-center gap-3 rounded-2xl px-1 py-1">
-                  <Avatar name={user.name} hue={user.hue} size={34} online={user.online} />
+                  <Avatar name={user.name} hue={user.hue} photo={user.photo} size={34} online={user.online} />
                   <span className="truncate font-medium">{user.name}</span>
                 </li>
               ))}

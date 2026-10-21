@@ -72,7 +72,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
               style={{ left: x, top: y, width: seat }}
               title={`${user?.name ?? 'Someone'}${p.muted ? ' (muted)' : ''}`}
             >
-              <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} size={seat} speaking={lit} muted={p.muted} className={linking ? 'opacity-50' : ''} />
+              <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} photo={user?.photo} size={seat} speaking={lit} muted={p.muted} className={linking ? 'opacity-50' : ''} />
               {n <= 8 && (
                 <span className="mt-1 w-[72px] truncate text-center text-[11.5px] font-semibold">
                   {isMe ? 'You' : user?.name.split(' ')[0] ?? 'Someone'}

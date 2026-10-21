@@ -95,7 +95,7 @@ export function nativeUser(user: { id: string; name: string } | null) {
 /** What's running, so the app keeps it going in the background with a notification. */
 export type Session =
   | { kind: 'none' }
-  | { kind: 'call'; phase: string; callId: string | null; name: string; hue: number; video: boolean; startedAt: number | null }
+  | { kind: 'call'; phase: string; callId: string | null; name: string; hue: number; photo?: string | null; video: boolean; startedAt: number | null }
   | { kind: 'voice'; roomId: string; name: string; startedAt: number }
   | { kind: 'live'; roomId: string; name: string; mode: string; startedAt: number };
 

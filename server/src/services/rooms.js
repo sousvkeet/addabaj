@@ -2,7 +2,7 @@ import { randomInt } from 'node:crypto';
 import { one, query } from '../db.js';
 import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
 import { getIO, roomChannel, userChannel } from '../realtime.js';
-import { publicUser, USER_COLUMNS } from './users.js';
+import { photoUrl, publicUser, USER_COLUMNS } from './users.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
 import { publicWatch } from './watch.js';
@@ -17,7 +17,7 @@ export function roomMessage(row) {
     body: row.body,
     createdAt: row.created_at,
     sender: row.sender_id
-      ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue }
+      ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue, photo: row.sender_photo_url ?? photoUrl(row.sender_id, row.sender_photo) }
       : null,
     replyToId: row.reply_to_id ?? null,
     deletedAt: row.deleted_at ?? null,
@@ -31,7 +31,7 @@ export function roomMessage(row) {
 
 export const ROOM_MESSAGE_SELECT = `
   SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id, m.deleted_at, m.deleted_by,
-         u.name AS sender_name, u.avatar_hue AS sender_hue
+         u.name AS sender_name, u.avatar_hue AS sender_hue, u.photo AS sender_photo
   FROM room_messages m LEFT JOIN users u ON u.id = m.sender_id`;
 
 /** Throws unless the user belongs to the room. Returns { role, ownerId }. */
@@ -175,7 +175,7 @@ export async function roomDetail(roomId, userId) {
   const base = await roomSummary(roomId, userId);
   if (!base) throw notFound("That room doesn't exist or you're not a member.");
   const { rows: members } = await query(
-    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id
+    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id
      FROM room_members rm JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = $1
      ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,
@@ -185,7 +185,7 @@ export async function roomDetail(roomId, userId) {
   if (base.myRole === 'admin') {
     const { rows } = await query(
       `SELECT i.id, i.created_at,
-              u.id AS u_id, u.email AS u_email, u.handle AS u_handle, u.name AS u_name, u.avatar_hue AS u_hue, u.last_seen_at AS u_seen,
+              u.id AS u_id, u.email AS u_email, u.handle AS u_handle, u.name AS u_name, u.avatar_hue AS u_hue, u.photo AS u_photo, u.last_seen_at AS u_seen,
               b.name AS by_name
        FROM room_invites i
        JOIN users u ON u.id = i.invitee_id
@@ -198,7 +198,7 @@ export async function roomDetail(roomId, userId) {
       id: r.id,
       createdAt: r.created_at,
       invitedBy: r.by_name,
-      invitee: publicUser({ id: r.u_id, email: r.u_email, handle: r.u_handle, name: r.u_name, avatar_hue: r.u_hue, last_seen_at: r.u_seen }, userId),
+      invitee: publicUser({ id: r.u_id, email: r.u_email, handle: r.u_handle, name: r.u_name, avatar_hue: r.u_hue, photo: r.u_photo, last_seen_at: r.u_seen }, userId),
     }));
   }
   return {
@@ -287,7 +287,7 @@ export async function inviteForInvitee(inviteId) {
       maxMembers: r.max_members,
     },
     inviter: publicUser({
-      id: r.u_id, email: r.u_email, handle: r.u_handle, name: r.u_name, avatar_hue: r.u_avatar_hue, last_seen_at: r.u_last_seen_at,
+      id: r.u_id, email: r.u_email, handle: r.u_handle, name: r.u_name, avatar_hue: r.u_avatar_hue, photo: r.u_photo, last_seen_at: r.u_last_seen_at,
     }),
   };
 }

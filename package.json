@@ -27,7 +27,9 @@
     "test:people": "node tests/people.mjs",
     "test:delete": "node tests/delete-messages.mjs",
     "test:updates": "node tests/app-updates.mjs",
-    "test:app": "node tests/app-feel.mjs"
+    "test:app": "node tests/app-feel.mjs",
+    "test:photos": "node tests/photos.mjs",
+    "test:devices": "node tests/devices.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

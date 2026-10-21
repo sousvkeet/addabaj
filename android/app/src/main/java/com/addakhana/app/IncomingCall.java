@@ -48,7 +48,7 @@ final class IncomingCall {
         Person caller = new Person.Builder()
                 .setName(name)
                 .setKey(d.get("callerId"))
-                .setIcon(Avatars.icon(name, hue))
+                .setIcon(Avatars.icon(c, name, hue, d.get("callerPhoto")))
                 .setImportant(true)
                 .build();
 
@@ -57,6 +57,7 @@ final class IncomingCall {
                 .putExtra("callerId", d.get("callerId"))
                 .putExtra("name", name)
                 .putExtra("hue", hue)
+                .putExtra("photo", d.get("callerPhoto"))
                 .putExtra("video", video)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_NO_USER_ACTION);
         PendingIntent full = PendingIntent.getActivity(c, tag(callId).hashCode(), screen,
@@ -112,7 +113,7 @@ final class IncomingCall {
         boolean missed = "missed".equals(reason) || "cancelled".equals(reason);
         if (missed && firstWord && (wasRinging || !AddaApp.visible)) {
             Notifications.showMissedCall(c, d.get("callerId"), d.get("callerName") == null ? "Someone" : d.get("callerName"),
-                    Avatars.hue(d.get("callerHue")), "1".equals(d.get("video")));
+                    Avatars.hue(d.get("callerHue")), d.get("callerPhoto"), "1".equals(d.get("video")));
         }
     }
 

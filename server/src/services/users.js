@@ -3,7 +3,13 @@ import { one, query } from '../db.js';
 import { presence } from '../realtime.js';
 import { hidesPresence } from './privacy.js';
 
-export const USER_COLUMNS = 'id, email, handle, name, avatar_hue, last_seen_at';
+export const USER_COLUMNS = 'id, email, handle, name, avatar_hue, photo, last_seen_at';
+
+/**
+ * Where someone's profile photo is (signed-in people only), or null for
+ * initials. The version is in the address, so it can be cached for good.
+ */
+export const photoUrl = (userId, version) => (version ? `/api/users/${userId}/photo/${version}` : null);
 
 /**
  * A person as others see them. Pass who is looking (`viewerId`): when either
@@ -18,6 +24,7 @@ export function publicUser(row, viewerId) {
     handle: row.handle ?? null,
     name: row.name,
     hue: row.avatar_hue,
+    photo: photoUrl(row.id, row.photo),
     lastSeenAt: hidden ? null : row.last_seen_at,
     online: hidden ? false : presence.isOnline(row.id),
     ...(hidden ? { presenceHidden: true } : {}),

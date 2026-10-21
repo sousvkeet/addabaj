@@ -75,6 +75,14 @@ public class IncomingCallActivity extends Activity {
 
         ImageView avatar = new ImageView(this);
         avatar.setImageBitmap(Avatars.bitmap(name, hue, dp(132)));
+        // Their photo, once it's loaded (the push already fetched it, usually).
+        String photo = getIntent().getStringExtra("photo");
+        if (photo != null && !photo.isEmpty()) {
+            new Thread(() -> {
+                android.graphics.Bitmap b = Avatars.photo(getApplicationContext(), photo, dp(132));
+                if (b != null) runOnUiThread(() -> avatar.setImageBitmap(b));
+            }, "caller-photo").start();
+        }
         LinearLayout.LayoutParams ap = new LinearLayout.LayoutParams(dp(132), dp(132));
         ap.topMargin = dp(40);
         col.addView(avatar, ap);

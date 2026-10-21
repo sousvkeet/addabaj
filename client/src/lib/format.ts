@@ -28,6 +28,13 @@ export function dayLabel(iso: string) {
 
 export const sameDay = (a: string, b: string) => startOfDay(new Date(a)) === startOfDay(new Date(b));
 
+/** "today", "yesterday", or "12 Oct": for "Logged in …". */
+export function shortDay(iso: string) {
+  const d = new Date(iso);
+  const ago = daysAgo(d);
+  return ago === 0 ? 'today' : ago === 1 ? 'yesterday' : dayMonth.format(d);
+}
+
 export function lastSeen(iso: string | null) {
   if (!iso) return 'Offline';
   const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);

@@ -1,9 +1,12 @@
+import { useState } from 'react';
 import { MicOff } from 'lucide-react';
 import { initials } from '../../lib/format';
 
 type Props = {
   name: string;
   hue: number;
+  /** Their profile photo; initials on their colour until it loads (or without one). */
+  photo?: string | null;
   size?: number;
   online?: boolean;
   speaking?: boolean;
@@ -12,13 +15,15 @@ type Props = {
   className?: string;
 };
 
-export function Avatar({ name, hue, size = 40, online, speaking, muted, square, className = '' }: Props) {
+export function Avatar({ name, hue, photo, size = 40, online, speaking, muted, square, className = '' }: Props) {
   const dot = Math.max(10, Math.round(size * 0.26));
+  const [broken, setBroken] = useState<string | null>(null);
+  const showPhoto = !!photo && broken !== photo;
   return (
     <span className={`relative inline-flex shrink-0 ${className}`} style={{ width: size, height: size }}>
       <span
         aria-hidden
-        className={`flex size-full select-none items-center justify-center font-display font-semibold text-white ${
+        className={`relative flex size-full select-none items-center justify-center overflow-hidden font-display font-semibold text-white ${
           square ? 'rounded-[32%]' : 'rounded-full'
         } ${speaking ? 'speaking-ring' : ''}`}
         style={{
@@ -30,6 +35,17 @@ export function Avatar({ name, hue, size = 40, online, speaking, muted, square, 
         }}
       >
         {square ? [...name.trim()][0]?.toUpperCase() ?? '#' : initials(name)}
+        {showPhoto && (
+          <img
+            src={photo}
+            alt=""
+            draggable={false}
+            loading="lazy"
+            decoding="async"
+            onError={() => setBroken(photo)}
+            className="absolute inset-0 size-full object-cover"
+          />
+        )}
       </span>
       {online && !muted && (
         <span

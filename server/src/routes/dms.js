@@ -20,7 +20,7 @@ dmsRouter.get('/', async (req, res) => {
        ) m
        ORDER BY partner, id DESC
      )
-     SELECT l.*, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at,
+     SELECT l.*, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at,
        (SELECT count(*)::int FROM dm_messages d
          WHERE d.recipient_id = $1 AND d.sender_id = l.partner AND d.read_at IS NULL AND d.deleted_at IS NULL
            AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id)) AS unread
@@ -29,7 +29,7 @@ dmsRouter.get('/', async (req, res) => {
     [req.userId],
   );
   const conversations = rows.map((r) => ({
-      partner: publicUser({ id: r.partner, email: r.email, handle: r.handle, name: r.name, avatar_hue: r.avatar_hue, last_seen_at: r.last_seen_at }, req.userId),
+      partner: publicUser({ id: r.partner, email: r.email, handle: r.handle, name: r.name, avatar_hue: r.avatar_hue, photo: r.photo, last_seen_at: r.last_seen_at }, req.userId),
       lastMessage: dmForViewer(dmMessage(r), req.userId),
       unread: r.unread,
     }));

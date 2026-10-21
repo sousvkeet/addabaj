@@ -232,3 +232,21 @@ CREATE TABLE IF NOT EXISTS app_releases (
   uploaded_by  uuid REFERENCES users(id) ON DELETE SET NULL,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+
+-- Profile photos: the version of the current photo (its file is
+-- <user id>-<version>.jpg in server/data/photos), or null for initials.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS photo text;
+
+-- Signed-in devices (Settings › Devices): one session per login, named by the
+-- login cookie. Logging a device out deletes its session, and with it that
+-- phone's push registration.
+CREATE TABLE IF NOT EXISTS sessions (
+  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id        uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  last_active_at timestamptz NOT NULL DEFAULT now(),
+  user_agent     text NOT NULL DEFAULT '',
+  ip             text
+);
+CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
+ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES sessions(id) ON DELETE CASCADE;

@@ -237,7 +237,7 @@ roomsRouter.get('/:id/messages/:messageId/info', async (req, res) => {
   if (!message) throw notFound("That message doesn't exist.");
   if (message.sender_id !== req.userId) throw forbidden('You can only see who read your own messages.');
   const { rows } = await query(
-    `SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, rm.last_read_id, rm.last_delivered_id, rm.last_read_at
+    `SELECT u.id, u.email, u.name, u.avatar_hue, u.photo, u.last_seen_at, rm.last_read_id, rm.last_delivered_id, rm.last_read_at
      FROM room_members rm JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = $1 AND rm.user_id <> $2
      ORDER BY lower(u.name)`,

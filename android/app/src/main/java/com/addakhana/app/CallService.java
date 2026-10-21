@@ -66,6 +66,8 @@ public class CallService extends Service {
             if (running) c.startService(new Intent(c, CallService.class).setAction(ACTION_STOP));
             return;
         }
+        // Their photo for the call's notification: fetched now, shown from the next update (the call connecting).
+        if ("call".equals(kind)) Avatars.prefetch(c, s.optString("photo"));
         Intent i = new Intent(c, CallService.class).setAction(ACTION_UPDATE).putExtra("session", json);
         try {
             if (running) c.startService(i);
@@ -189,7 +191,7 @@ public class CallService extends Service {
             int status = "outgoing".equals(phase) ? R.string.call_calling
                     : "connecting".equals(phase) ? R.string.call_connecting
                     : video ? R.string.call_ongoing_video : R.string.call_ongoing_voice;
-            Person p = new Person.Builder().setName(name).setIcon(Avatars.icon(name, session.optInt("hue", 260))).setImportant(true).build();
+            Person p = new Person.Builder().setName(name).setIcon(Avatars.icon(this, name, session.optInt("hue", 260), session.optString("photo"))).setImportant(true).build();
             b.setSmallIcon(video ? R.drawable.ic_video : R.drawable.ic_call)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setContentTitle(name)

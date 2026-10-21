@@ -5,6 +5,8 @@ export type User = {
   handle?: string | null;
   name: string;
   hue: number;
+  /** Their profile photo's address, or null for initials. */
+  photo?: string | null;
   lastSeenAt: string | null;
   online?: boolean;
   /** Only on your own account: */
@@ -101,7 +103,7 @@ export type RoomMessage = MessageExtras & {
   kind: 'text' | 'system';
   body: string;
   createdAt: string;
-  sender: { id: string; name: string; hue: number } | null;
+  sender: { id: string; name: string; hue: number; photo?: string | null } | null;
   /** Deleted for everyone (by its sender, or by a room admin). */
   deletedAt?: string | null;
   deletedByAdmin?: boolean;

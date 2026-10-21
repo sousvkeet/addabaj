@@ -36,12 +36,16 @@ import { recordBrowserCheck } from './stream/status.js';
 import { ffmpegPath } from './stream/ffmpeg.js';
 import { resumeMerges } from './stream/merge.js';
 import { live } from './socket/live.js';
+import { loadSessions } from './services/sessions.js';
 
 await migrate();
 await ensureHostAdmin();
 await loadSite();
 await loadPrivacy();
 await ensureRoomCodes();
+await loadSessions();
+// Logins older than a cookie's life are dropped now and then.
+setInterval(() => void loadSessions().catch((err) => console.error('Could not tidy sessions', err)), 12 * 60 * 60 * 1000).unref();
 
 const app = express();
 app.disable('x-powered-by');
@@ -115,7 +119,10 @@ app.get('/api/config', requireAuth, async (_req, res) => {
     push: pushEnabled(),
   });
 });
-app.get('/api/site', requireAuth, (_req, res) => res.json(publicSite()));
+// `build`: which version of the page this server hosts, so pages still running
+// an older one (an app left open for days) reload themselves (client realtime.ts).
+let siteBuild = null;
+app.get('/api/site', requireAuth, (_req, res) => res.json({ ...publicSite(), build: siteBuild }));
 app.use('/api/admin', requireAuth, adminRouter);
 app.use('/api/users', requireAuth, usersRouter);
 app.use('/api/dms', requireAuth, dmsRouter);
@@ -148,6 +155,7 @@ if (existsSync(dist)) {
   // script inline in index.html, allowed by its hash), YouTube's player, and media
   // from anywhere (watch together plays links straight from their sites).
   const html = readFileSync(resolve(dist, 'index.html'), 'utf8');
+  siteBuild = html.match(/\/assets\/index-[\w-]+\.js/)?.[0] ?? null;
   const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`);
   const csp = [
     "default-src 'self'",
@@ -174,6 +182,7 @@ app.use((err, _req, res, _next) => {
   // A relayed video can fail after it started streaming; just end that response.
   if (res.headersSent) return res.destroy();
   if (err instanceof ZodError) return res.status(400).json({ error: err.issues[0]?.message ?? 'Check the form and try again.' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: 'That file is too big.' });
   if (err.expose && err.status) return res.status(err.status).json({ error: err.message });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON body.' });
   console.error(err);

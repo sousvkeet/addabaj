@@ -11,7 +11,7 @@ import { toast } from './ui';
 import { useVoice } from './voice';
 
 type Phase = 'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active';
-type Peer = Pick<User, 'id' | 'name' | 'hue'>;
+type Peer = Pick<User, 'id' | 'name' | 'hue' | 'photo'>;
 
 type CallState = {
   phase: Phase;

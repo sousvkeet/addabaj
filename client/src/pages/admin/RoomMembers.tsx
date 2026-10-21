@@ -19,7 +19,7 @@ export function RoomMembers({
 }: {
   room: AdminRoom | null;
   onClose: () => void;
-  onChanged: (memberCount: number, owner: { id: string; name: string; hue: number } | null) => void;
+  onChanged: (memberCount: number, owner: { id: string; name: string; hue: number; photo?: string | null } | null) => void;
 }) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState('');
@@ -126,7 +126,7 @@ export function RoomMembers({
           {found.length === 0 && <li className="px-3 py-3 text-[14px] text-ink-soft">No one matches “{q}”.</li>}
           {found.map((u) => (
             <li key={u.id} className="flex items-center gap-3 border-b border-line/60 px-3 py-2 last:border-b-0">
-              <Avatar name={u.name} hue={u.hue} size={34} />
+              <Avatar name={u.name} hue={u.hue} photo={u.photo} size={34} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[14.5px] font-medium">{u.name}</span>
                 <span className="block truncate text-[12.5px] text-ink-soft">{u.handle ? `@${u.handle}` : u.email}</span>
@@ -158,7 +158,7 @@ export function RoomMembers({
           {members.map((m) => (
             <li key={m.id}>
               <div className="flex items-center gap-3 rounded-2xl px-1 py-1.5">
-                <Avatar name={m.name} hue={m.hue} size={36} />
+                <Avatar name={m.name} hue={m.hue} photo={m.photo} size={36} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-[14.5px] font-medium">{m.name}</span>

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { io } from 'socket.io-client';
@@ -259,6 +260,28 @@ await check('Room messages buzz every member who is away, with the room name', a
   expect(!pushes.some((x) => x.data.scope === 'room' && x.data.senderName === 'Ana' && x.token.startsWith('ana')), 'the sender was pushed');
 });
 
+await check('Notifications carry the sender’s profile photo, which the phone can download', async () => {
+  const set = await fetch(`${API}/api/auth/photo`, {
+    method: 'PUT',
+    headers: { cookie: ana.cookie, 'content-type': 'image/jpeg' },
+    body: readFileSync(new URL('./fixtures/photo.jpg', import.meta.url)),
+  });
+  const photo = (await set.json()).user?.photo;
+  expect(set.status === 200 && photo, `photo: ${set.status}`);
+  // Ana's open connection picked up her new photo: no reconnecting needed.
+  const dm = await emit(anaSock, 'dm:send', { to: bo.id, body: 'Now with my photo' });
+  expect(dm.ok, `send: ${dm.error}`);
+  const p = await waitFor(() => pushesFor(TOKEN_BO, 'message').find((x) => x.data.text === 'Now with my photo'));
+  expect(p?.data.senderPhoto === photo && p.data.chatPhoto === photo, `dm push: ${JSON.stringify(p?.data)}`);
+  const inRoom = await emit(anaSock, 'room:send', { roomId, body: 'Room, with my photo' });
+  expect(inRoom.ok, `room send: ${inRoom.error}`);
+  const q = await waitFor(() => pushesFor(TOKEN_CY, 'message').find((x) => x.data.text === 'Room, with my photo'));
+  expect(q?.data.senderPhoto === photo && !q.data.chatPhoto, `room push: ${JSON.stringify(q?.data)}`);
+  const file = await fetch(API + photo, { headers: { cookie: bo.cookie } });
+  expect(file.status === 200 && file.headers.get('content-type') === 'image/jpeg', `download: ${file.status}`);
+  expect((await fetch(API + photo)).status === 401, 'anyone could download it');
+});
+
 await check('Replying and marking read from a notification (REST) work like the app', async () => {
   const before = anaSock.events.length;
   const reply = await call(cy, 'POST', `/rooms/${roomId}/messages`, { body: 'In!' });
@@ -295,6 +318,7 @@ await check("Calling someone whose app is closed rings their phone instead of sa
   const p = await waitFor(() => pushesFor(TOKEN_BO, 'call').find((x) => x.data.callId === callId));
   expect(p, 'no ring push');
   expect(p.data.callerName === 'Ana' && p.data.callerId === ana.id && p.data.video === '0', `ring: ${JSON.stringify(p.data)}`);
+  expect(/^\/api\/users\/[0-9a-f-]+\/photo\/[0-9a-f]{16}$/.test(p.data.callerPhoto ?? ''), `no caller photo: ${p.data.callerPhoto}`);
   expect(p.android.ttl === '40s', `a ring should not wait long in FCM (ttl ${p.android.ttl})`);
 });
 

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { AtSign, ChevronRight, EyeOff, KeyRound, LogOut, Moon, Settings2 } from 'lucide-react';
+import { AtSign, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, Settings2 } from 'lucide-react';
 import { inApp, nativeAppVersion } from '../lib/native';
 import { useAuth } from '../store/auth';
 import { useUi } from '../store/ui';
@@ -9,6 +9,8 @@ import { ListHeader } from './ListHeader';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { PrivacyDialog } from './PrivacyDialog';
 import { MyIdDialog } from './MyIdDialog';
+import { PhotoEditor } from './PhotoEditor';
+import { DevicesDialog, devicesSummary, useSessions } from './DevicesDialog';
 
 type RowProps = { icon: ReactNode; title: string; hint?: string; onClick: () => void; trailing?: ReactNode; danger?: boolean; checked?: boolean };
 
@@ -40,7 +42,8 @@ export function SettingsList() {
   const theme = useUi((s) => s.theme);
   const toggleTheme = useUi((s) => s.toggleTheme);
   const openDevices = useUi((s) => s.setDevicesOpen);
-  const [open, setOpen] = useState<'id' | 'privacy' | 'password' | 'logout' | null>(null);
+  const [open, setOpen] = useState<'photo' | 'id' | 'devices' | 'privacy' | 'password' | 'logout' | null>(null);
+  const { sessions } = useSessions(open !== 'devices');
   const [leaving, setLeaving] = useState(false);
   if (!user) return null;
   const version = inApp ? nativeAppVersion().name : null;
@@ -50,16 +53,38 @@ export function SettingsList() {
     <>
       <ListHeader title="Settings" />
       <div className="min-h-0 flex-1 overflow-y-auto pb-6 md:px-2.5">
-        <button type="button" onClick={() => setOpen('id')} className="ripple flex w-full items-center gap-4 px-5 py-4 text-left active:bg-subtle/60 md:rounded-2xl md:px-3 md:hover:bg-subtle/70">
-          <Avatar name={user.name} hue={user.hue} size={64} />
-          <span className="min-w-0 flex-1">
+        <div className="flex items-center gap-4 px-5 py-4 md:px-3">
+          <button
+            type="button"
+            onClick={() => setOpen('photo')}
+            aria-label={user.photo ? 'Change your profile photo' : 'Add a profile photo'}
+            className="relative shrink-0 rounded-full transition-transform active:scale-95"
+          >
+            <Avatar name={user.name} hue={user.hue} photo={user.photo} size={64} />
+            <span aria-hidden className="absolute -right-0.5 -bottom-0.5 flex size-7 items-center justify-center rounded-full border-2 border-canvas bg-aurora text-white">
+              <Camera size={14} />
+            </span>
+          </button>
+          <button type="button" onClick={() => setOpen('id')} className="min-w-0 flex-1 text-left">
             <span className="block truncate text-[19px] font-semibold">{user.name}</span>
             <span className="block truncate text-[14px] text-ink-soft">{user.handle ? `@${user.handle}` : user.email}</span>
-          </span>
-        </button>
+          </button>
+        </div>
         <div className="mx-5 my-2 h-px bg-line/70 md:mx-3" />
         <ul>
+          <Row
+            icon={<Camera size={19} />}
+            title="Profile photo"
+            hint={user.photo ? 'Change or remove your photo' : 'Add a photo so people recognise you'}
+            onClick={() => setOpen('photo')}
+          />
           <Row icon={<AtSign size={19} />} title="Your user ID" hint={user.handle ? `@${user.handle} · how friends find you` : 'How friends find you'} onClick={() => setOpen('id')} />
+          <Row
+            icon={<MonitorSmartphone size={19} />}
+            title="Devices"
+            hint={sessions ? devicesSummary(sessions) : 'Where you’re logged in'}
+            onClick={() => setOpen('devices')}
+          />
           <Row icon={<EyeOff size={19} />} title="Privacy" hint="Last seen, online and read receipts" onClick={() => setOpen('privacy')} />
           <Row icon={<Settings2 size={19} />} title="Microphone, speaker and camera" hint="For calls, voice and video" onClick={() => openDevices(true)} />
           <Row
@@ -79,7 +104,9 @@ export function SettingsList() {
         </ul>
         {version && <p className="mt-6 text-center text-[12.5px] text-ink-soft">Adda Khana {version}</p>}
       </div>
+      <PhotoEditor open={open === 'photo'} onClose={close} />
       <MyIdDialog open={open === 'id'} onClose={close} />
+      <DevicesDialog open={open === 'devices'} onClose={close} />
       <PrivacyDialog open={open === 'privacy'} onClose={close} />
       <ChangePasswordDialog open={open === 'password'} onClose={close} />
       <ConfirmDialog

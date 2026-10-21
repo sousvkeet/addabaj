@@ -9,9 +9,11 @@ import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from 
 import { getIO, presence, userChannel } from '../realtime.js';
 import { videoTools } from '../stream/status.js';
 import { deleteRelease, listReleases, saveRelease, updateRelease } from '../services/appReleases.js';
+import { forgetPhoto, removePhoto } from '../services/photos.js';
+import { endOtherSessions } from '../services/sessions.js';
 import { announceRoomChanged, attachMember, deleteRoom, detachMember, lockSeat, postSystemMessage } from '../services/rooms.js';
 import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
-import { publicUser } from '../services/users.js';
+import { photoUrl, publicUser } from '../services/users.js';
 import { calls } from '../socket/calls.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
@@ -104,7 +106,7 @@ const adminUser = (r) => ({
 });
 
 const USER_SELECT = `
-  SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at, u.created_at, u.site_role, u.disabled_at, u.must_change_password,
+  SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at, u.created_at, u.site_role, u.disabled_at, u.must_change_password,
          (SELECT count(*)::int FROM room_members m WHERE m.user_id = u.id) AS rooms,
          ((SELECT count(*) FROM dm_messages d WHERE d.sender_id = u.id)
            + (SELECT count(*) FROM room_messages r WHERE r.sender_id = u.id))::int AS messages
@@ -195,6 +197,7 @@ adminRouter.post('/users/:id/password', async (req, res) => {
   const row = await one('UPDATE users SET password_hash = $2 WHERE id = $1 RETURNING id', [id, await bcrypt.hash(password, 10)]);
   if (!row) throw notFound("That person doesn't exist.");
   // Whoever had their account (and forgot the password) is signed out everywhere.
+  await endOtherSessions(id, null, 'host');
   await endSessions(id);
   disconnect(id);
   res.status(204).end();
@@ -203,7 +206,7 @@ adminRouter.post('/users/:id/password', async (req, res) => {
 adminRouter.delete('/users/:id', async (req, res) => {
   const id = assertUuid(req.params.id, 'person');
   if (id === req.userId) throw badRequest("You can't remove your own account here.");
-  const target = await one('SELECT site_role, disabled_at FROM users WHERE id = $1', [id]);
+  const target = await one('SELECT site_role, disabled_at, photo FROM users WHERE id = $1', [id]);
   if (!target) throw notFound("That person doesn't exist.");
   if (target.site_role === 'admin' && !target.disabled_at && (await otherActiveAdmins(id)) === 0) {
     throw badRequest('The site needs at least one host admin.');
@@ -213,7 +216,14 @@ adminRouter.delete('/users/:id', async (req, res) => {
   for (const r of owned) await deleteRoom(r.id);
   disconnect(id);
   await query('DELETE FROM users WHERE id = $1', [id]);
+  await forgetPhoto(id, target.photo);
   markDisabled(id, false);
+  res.status(204).end();
+});
+
+// Take down someone's profile photo (they're back to initials, and can choose another).
+adminRouter.delete('/users/:id/photo', async (req, res) => {
+  await removePhoto(assertUuid(req.params.id, 'person'));
   res.status(204).end();
 });
 
@@ -224,7 +234,7 @@ adminRouter.get('/rooms', async (req, res) => {
   const { rows } = await query(
     `SELECT r.id, r.name, r.description, r.max_members, r.created_at,
             r.watch -> 'source' ->> 'title' AS watching, r.watch -> 'source' ->> 'kind' AS watch_kind,
-            o.id AS owner_id, o.name AS owner_name, o.avatar_hue AS owner_hue,
+            o.id AS owner_id, o.name AS owner_name, o.avatar_hue AS owner_hue, o.photo AS owner_photo,
             (SELECT count(*)::int FROM room_members m WHERE m.room_id = r.id) AS member_count,
             (SELECT count(*)::int FROM room_messages x WHERE x.room_id = r.id AND x.kind = 'text') AS messages,
             (SELECT max(x.created_at) FROM room_messages x WHERE x.room_id = r.id) AS last_activity,
@@ -246,7 +256,7 @@ adminRouter.get('/rooms', async (req, res) => {
       messages: r.messages,
       createdAt: r.created_at,
       lastActivityAt: r.last_activity,
-      owner: { id: r.owner_id, name: r.owner_name, hue: r.owner_hue },
+      owner: { id: r.owner_id, name: r.owner_name, hue: r.owner_hue, photo: photoUrl(r.owner_id, r.owner_photo) },
       watching: r.watching,
       live: r.watch_kind === 'device',
       inVoice: voice.participants(r.id).length,
@@ -268,7 +278,7 @@ async function roomPeople(roomId) {
   const room = await one('SELECT id, name, owner_id, max_members FROM rooms WHERE id = $1', [roomId]);
   if (!room) throw notFound("That room doesn't exist.");
   const { rows } = await query(
-    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at
+    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at, rm.role, rm.joined_at
      FROM room_members rm JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = $1
      ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,

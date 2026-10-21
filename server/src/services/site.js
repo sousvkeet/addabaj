@@ -85,11 +85,16 @@ export const isDisabled = (userId) => disabled.has(userId);
 export const sessionValid = (userId, issuedAt) => !disabled.has(userId) && (issuedAt ?? 0) >= (validAfter.get(userId) ?? 0);
 
 /** Signs a person out everywhere (their password changed); returns when it took effect. */
-export async function endSessions(userId) {
+/** Every login cookie issued before now stops working (a device carrying on gets a fresh one). */
+export async function retireLogins(userId) {
   // This server's clock, the same one that dates new logins.
   const seconds = Math.floor(Date.now() / 1000);
   await query('UPDATE users SET sessions_valid_after = to_timestamp($2) WHERE id = $1', [userId, seconds]);
   validAfter.set(userId, seconds);
+}
+
+export async function endSessions(userId) {
+  await retireLogins(userId);
   // Their phones stop getting notifications until they sign in again.
   await query('DELETE FROM push_devices WHERE user_id = $1', [userId]);
 }

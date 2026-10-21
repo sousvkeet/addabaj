@@ -1,5 +1,6 @@
 import { one, query } from '../db.js';
-import { COOKIE_NAME, readCookie, verifyToken } from '../auth.js';
+import { COOKIE_NAME, readCookie, readToken } from '../auth.js';
+import { touchSession } from '../services/sessions.js';
 import { AppError, isUuid } from '../errors.js';
 import { presence, roomChannel, userChannel } from '../realtime.js';
 import { findUser } from '../services/users.js';
@@ -23,11 +24,14 @@ const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\u200d|\ufe0f)+
 
 export function initSocket(io) {
   io.use(async (socket, next) => {
-    const userId = verifyToken(readCookie(socket.handshake.headers.cookie, COOKIE_NAME));
-    const user = userId && (await findUser(userId).catch(() => null));
+    const login = readToken(readCookie(socket.handshake.headers.cookie, COOKIE_NAME));
+    const user = login && (await findUser(login.userId).catch(() => null));
     if (!user) return next(new Error('unauthorized'));
     socket.data.userId = user.id;
-    socket.data.user = { id: user.id, name: user.name, email: user.email, hue: user.hue };
+    // Which device (Settings › Devices), so logging it out also closes this connection.
+    socket.data.sid = login.sessionId;
+    touchSession(login.sessionId, null);
+    socket.data.user = { id: user.id, name: user.name, email: user.email, hue: user.hue, photo: user.photo };
     next();
   });
 

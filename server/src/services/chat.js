@@ -111,7 +111,7 @@ export async function sendRoomMessage(user, roomId, { body, attachmentId, replyT
       [roomId, userId, text, replyToId],
     );
     if (!row) throw new AppError(403, "You're not a member of this room anymore.");
-    const m = roomMessage({ ...row, sender_name: user.name, sender_hue: user.hue });
+    const m = roomMessage({ ...row, sender_name: user.name, sender_hue: user.hue, sender_photo_url: user.photo ?? null });
     if (attachmentId) await linkAttachment(c, attachmentId, userId, 'room_message_id', m.id);
     return m;
   });

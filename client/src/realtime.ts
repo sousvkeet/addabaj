@@ -14,11 +14,45 @@ import { setPreparing, type Preparing } from './store/watchProgress';
 
 const chat = () => useChat.getState();
 
+// ── A newer version of the site ───────────────────────────────────────
+//
+// A page left running for days (the Android app keeps its page alive in the
+// background) would never get a new version of the site, so nothing new would
+// show, not even the app update screen. When the server hosts a newer page,
+// reload once that can't disturb anything: out of sight, with no call, room
+// voice, live stream or message still sending.
+
+/** The main script this page runs ("/assets/index-…js"); null in development. */
+const runningBuild = () =>
+  [...document.scripts].map((s) => (s.src ? new URL(s.src).pathname : '')).find((p) => p.startsWith('/assets/index-')) ?? null;
+
+function busy() {
+  const c = chat();
+  const sending = [...Object.values(c.dms), ...Object.values(c.roomMessages)].some((p) => p.items.some((m) => m.pending === 'sending'));
+  return sending || useCall.getState().phase !== 'idle' || !!useVoice.getState().roomId || !!useLiveStream.getState().host;
+}
+
+let outdated = false;
+const reloadIfQuiet = () => {
+  if (outdated && document.visibilityState === 'hidden' && !busy()) window.location.reload();
+};
+
+function watchSiteVersion() {
+  useSite.subscribe((s) => {
+    const mine = runningBuild();
+    if (!s.build || !mine || s.build === mine) return;
+    outdated = true;
+    reloadIfQuiet();
+  });
+  document.addEventListener('visibilitychange', reloadIfQuiet);
+}
+
 let bound = false;
 
 export function bindRealtime() {
   if (bound) return;
   bound = true;
+  watchSiteVersion();
 
   socket.on('connect', () => {
     void chat().sync();
@@ -45,6 +79,30 @@ export function bindRealtime() {
   });
 
   // Presence
+  // Devices (Settings › Devices): a new login on my account, or this device logged out from another.
+  socket.on('session:new', ({ session }: { session: { name: string } }) => {
+    toast(`New login: ${session.name}. Not you? Log it out in Settings › Devices.`);
+    window.dispatchEvent(new Event('adda:sessions'));
+  });
+  socket.on('session:ended', ({ reason }: { reason: string }) => {
+    if (reason === 'logout') return;
+    toast(
+      reason === 'password'
+        ? 'You were logged out because the password was changed.'
+        : reason === 'host'
+          ? 'The host logged you out. Log in with the new password they gave you.'
+          : 'This device was logged out from another device.',
+      'error',
+    );
+    useAuth.getState().expire();
+  });
+
+  // Someone changed their photo: everywhere they appear, including my own account.
+  socket.on('user:updated', ({ user }: { user: Pick<User, 'id'> & Partial<User> }) => {
+    chat().applyUser(user);
+    const me = useAuth.getState().user;
+    if (me?.id === user.id) useAuth.getState().setUser({ ...me, ...user });
+  });
   socket.on('presence:snapshot', ({ online }: { online: string[] }) => {
     useChat.setState({ online: Object.fromEntries(online.map((id) => [id, true])) });
   });

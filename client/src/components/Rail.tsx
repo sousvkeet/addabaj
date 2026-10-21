@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
-import { AtSign, EyeOff, KeyRound, LogOut, Mail, MessageCircle, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
+import { AtSign, Camera, EyeOff, KeyRound, LogOut, Mail, MessageCircle, MonitorSmartphone, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { useUi } from '../store/ui';
@@ -9,6 +9,8 @@ import { Logo } from './ui/Logo';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { PrivacyDialog } from './PrivacyDialog';
 import { MyIdDialog } from './MyIdDialog';
+import { PhotoEditor } from './PhotoEditor';
+import { DevicesDialog } from './DevicesDialog';
 
 function Badge({ count }: { count: number }) {
   if (!count) return null;
@@ -72,7 +74,7 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
           {({ isActive }) => (
             <>
               <span className={`flex h-8 w-14 items-center justify-center rounded-full transition-colors ${isActive ? 'bg-brand/18 dark:bg-brand/40' : ''}`}>
-                <Avatar name={user.name} hue={user.hue} size={26} />
+                <Avatar name={user.name} hue={user.hue} photo={user.photo} size={26} />
               </span>
               <span className={isActive ? 'font-bold text-rail-ink' : 'text-rail-ink/60'}>You</span>
             </>
@@ -104,6 +106,8 @@ function AccountMenu() {
   const [changing, setChanging] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [idOpen, setIdOpen] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
+  const [devicesOpen, setDevicesOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -132,7 +136,7 @@ function AccountMenu() {
         style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-2))' }}
       >
         <span className="block rounded-full bg-rail p-[2px]">
-          <Avatar name={user.name} hue={user.hue} size={38} />
+          <Avatar name={user.name} hue={user.hue} photo={user.photo} size={38} />
         </span>
       </button>
       {open && (
@@ -141,12 +145,24 @@ function AccountMenu() {
           className="pop-in absolute bottom-0 left-[70px] z-50 w-72 overflow-hidden rounded-3xl border border-line bg-surface p-1.5 text-ink shadow-float"
         >
           <div className="mb-1 flex items-center gap-3 rounded-2xl bg-subtle/70 p-3">
-            <Avatar name={user.name} hue={user.hue} size={42} />
+            <Avatar name={user.name} hue={user.hue} photo={user.photo} size={42} />
             <div className="min-w-0">
               <p className="truncate font-semibold">{user.name}</p>
               <p className="truncate text-[13px] text-ink-soft">{user.handle ? `@${user.handle}` : user.email}</p>
             </div>
           </div>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setPhotoOpen(true);
+            }}
+            className={item}
+          >
+            <Camera size={17} className="text-ink-soft" />
+            Profile photo
+          </button>
           <button
             role="menuitem"
             type="button"
@@ -170,6 +186,18 @@ function AccountMenu() {
           >
             <Settings2 size={17} className="text-ink-soft" />
             Microphone, speaker and camera
+          </button>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setDevicesOpen(true);
+            }}
+            className={item}
+          >
+            <MonitorSmartphone size={17} className="text-ink-soft" />
+            Devices
           </button>
           <button
             role="menuitem"
@@ -208,6 +236,8 @@ function AccountMenu() {
       <ChangePasswordDialog open={changing} onClose={() => setChanging(false)} />
       <PrivacyDialog open={privacyOpen} onClose={() => setPrivacyOpen(false)} />
       <MyIdDialog open={idOpen} onClose={() => setIdOpen(false)} />
+      <PhotoEditor open={photoOpen} onClose={() => setPhotoOpen(false)} />
+      <DevicesDialog open={devicesOpen} onClose={() => setDevicesOpen(false)} />
     </div>
   );
 }

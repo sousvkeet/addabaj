@@ -24,6 +24,7 @@ function currentSession(): Session {
       callId: call.callId,
       name: call.peer.name,
       hue: call.peer.hue,
+      photo: call.peer.photo ?? null,
       video: call.cameraOn || call.peerCameraOn,
       startedAt: call.startedAt,
     };

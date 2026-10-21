@@ -52,7 +52,7 @@ export function IncomingCall() {
       >
         <span aria-hidden className="absolute -top-28 left-1/2 size-80 -translate-x-1/2 rounded-full bg-aurora opacity-35 blur-3xl" />
         <div className="ring-pulse relative mx-auto w-fit rounded-full">
-          <Avatar name={peer.name} hue={peer.hue} size={104} />
+          <Avatar name={peer.name} hue={peer.hue} photo={peer.photo} size={104} />
         </div>
         <p id="incoming-label" className="relative mt-7 text-[14px] font-medium text-on-brand/70">
           {video ? 'Incoming video call' : 'Incoming voice call'}
@@ -253,7 +253,7 @@ function CallBar() {
         aria-label={videoActive ? `Show video with ${peer.name}` : `Open chat with ${peer.name}`}
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
       >
-        <Avatar name={peer.name} hue={peer.hue} size={40} speaking={phase === 'active' && remoteSpeaking && !peerMuted} muted={peerMuted} />
+        <Avatar name={peer.name} hue={peer.hue} photo={peer.photo} size={40} speaking={phase === 'active' && remoteSpeaking && !peerMuted} muted={peerMuted} />
         <span className="min-w-0">
           <span className="block truncate font-semibold">{peer.name}</span>
           <span className={`block truncate text-[13px] tabular-nums ${noIncomingAudio && phase === 'active' ? 'text-live' : 'text-on-brand/70'}`}>
@@ -307,7 +307,7 @@ export function CallStage() {
           <VideoView stream={remoteVideo} remote className="size-full object-cover md:object-contain" />
         ) : (
           <div className="flex size-full flex-col items-center justify-center gap-4 px-6 text-center">
-            <Avatar name={peer.name} hue={peer.hue} size={112} speaking={phase === 'active' && remoteSpeaking && !peerMuted} muted={peerMuted} />
+            <Avatar name={peer.name} hue={peer.hue} photo={peer.photo} size={112} speaking={phase === 'active' && remoteSpeaking && !peerMuted} muted={peerMuted} />
             <p className="text-[14px] text-on-brand/70">
               {phase === 'active' ? `${first}'s camera is off` : phase === 'connecting' ? 'Connecting…' : `Calling ${first}…`}
             </p>

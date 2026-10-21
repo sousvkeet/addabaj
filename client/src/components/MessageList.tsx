@@ -19,7 +19,7 @@ export type ThreadItem = {
   kind: 'text' | 'call' | 'system';
   body: string;
   createdAt: string;
-  sender?: { id: string; name: string; hue: number } | null;
+  sender?: { id: string; name: string; hue: number; photo?: string | null } | null;
   /** For my messages: sent, delivered or read. */
   receipt?: Receipt;
   /** Under my latest room message: "Seen by Rahul and Mitali". */
@@ -413,7 +413,7 @@ function Message(props: MessageProps) {
     <div id={item.id ? `msg-${item.id}` : undefined} className={`group relative flex items-end gap-2 rounded-xl ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}>
       {canAct && <SwipeHint hint={touch.hint} />}
       {showSender && !item.mine && (
-        <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} size={32} />}</span>
+        <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} photo={sender.photo} size={32} />}</span>
       )}
       {item.mine && canAct && (
         <Actions
@@ -968,7 +968,7 @@ function DeletedMessage({ item, groupStart, showSender, onOpenSheet, onDelete }:
   return (
     <div id={item.id ? `msg-${item.id}` : undefined} className={`group flex items-end gap-2 ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}>
       {showSender && !item.mine && (
-        <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} size={32} />}</span>
+        <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} photo={sender.photo} size={32} />}</span>
       )}
       {item.mine && remove}
       <div className={`flex max-w-[min(78%,560px)] flex-col ${item.mine ? 'items-end' : 'items-start'}`}>

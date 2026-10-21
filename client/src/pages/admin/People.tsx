@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { KeyRound, LoaderCircle, Power, Search, ShieldCheck, ShieldOff, Trash2, UserPlus } from 'lucide-react';
+import { ImageOff, KeyRound, LoaderCircle, Power, Search, ShieldCheck, ShieldOff, Trash2, UserPlus } from 'lucide-react';
 import { api, errorMessage } from '../../lib/api';
 import { lastSeen } from '../../lib/format';
 import { useAuth } from '../../store/auth';
@@ -66,6 +66,17 @@ export function People() {
     }
   }
 
+  /** Takes down someone's profile photo (they're back to initials). */
+  async function removePhoto(u: AdminUser) {
+    try {
+      await api(`/admin/users/${u.id}/photo`, { method: 'DELETE' });
+      replace({ ...u, photo: null });
+      toast(`${u.name}'s photo was removed.`);
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
   async function remove() {
     if (!removing) return;
     setBusy(true);
@@ -88,6 +99,7 @@ export function People() {
         ? { label: 'Remove host admin', icon: <ShieldOff size={16} />, onSelect: () => void update(u, { siteAdmin: false }, `${u.name} is no longer a host admin.`) }
         : { label: 'Make host admin', icon: <ShieldCheck size={16} />, onSelect: () => void update(u, { siteAdmin: true }, `${u.name} is now a host admin.`) },
       { label: 'Set a new password', icon: <KeyRound size={16} />, onSelect: () => setResetFor(u) },
+      ...(u.photo ? [{ label: 'Remove profile photo', icon: <ImageOff size={16} />, onSelect: () => void removePhoto(u) }] : []),
       u.disabled
         ? { label: 'Switch account on', icon: <Power size={16} />, onSelect: () => void update(u, { disabled: false }, `${u.name} can log in again.`) }
         : { label: 'Switch account off', icon: <Power size={16} />, onSelect: () => void update(u, { disabled: true }, `${u.name} was logged out and can't log in.`) },
@@ -157,7 +169,7 @@ export function People() {
         <ul aria-label="People" className="rounded-[26px] border border-line/70 bg-surface/60">
           {data.items.map((u) => (
             <li key={u.id} className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-b-0">
-              <Avatar name={u.name} hue={u.hue} size={44} online={u.online} className={u.disabled ? 'opacity-50 grayscale' : ''} />
+              <Avatar name={u.name} hue={u.hue} photo={u.photo} size={44} online={u.online} className={u.disabled ? 'opacity-50 grayscale' : ''} />
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="truncate font-semibold">{u.name}</span>

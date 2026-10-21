@@ -63,7 +63,7 @@ export function ChatView() {
           kind: m.kind,
           body: m.body,
           createdAt: m.createdAt,
-          sender: who ? { id: who.id, name: who.name, hue: who.hue } : null,
+          sender: who ? { id: who.id, name: who.name, hue: who.hue, photo: who.photo } : null,
           receipt: m.readAt ? 'read' : m.deliveredAt ? 'delivered' : 'sent',
           pending: m.pending,
           callOutcome: m.meta?.outcome,
@@ -85,7 +85,7 @@ export function ChatView() {
 
   const name = partner?.name ?? '…';
   const onCallWithThem = callPhase !== 'idle' && callPeer === userId;
-  const call = (video = false) => partner && void startCall({ id: partner.id, name: partner.name, hue: partner.hue }, { video });
+  const call = (video = false) => partner && void startCall({ id: partner.id, name: partner.name, hue: partner.hue, photo: partner.photo }, { video });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -96,10 +96,10 @@ export function ChatView() {
         {partner && (
           <>
             <span className="md:hidden">
-              <Avatar name={partner.name} hue={partner.hue} size={40} online={online} />
+              <Avatar name={partner.name} hue={partner.hue} photo={partner.photo} size={40} online={online} />
             </span>
             <span className="hidden md:block">
-              <Avatar name={partner.name} hue={partner.hue} size={44} online={online} />
+              <Avatar name={partner.name} hue={partner.hue} photo={partner.photo} size={44} online={online} />
             </span>
           </>
         )}
@@ -178,7 +178,7 @@ export function ChatView() {
               {partner && (
                 <span className="relative mx-auto block w-fit">
                   <span aria-hidden className="absolute inset-0 rounded-full bg-aurora opacity-50 blur-xl" />
-                  <Avatar name={partner.name} hue={partner.hue} size={84} className="relative" />
+                  <Avatar name={partner.name} hue={partner.hue} photo={partner.photo} size={84} className="relative" />
                 </span>
               )}
               <p className="mt-5 font-display text-[22px] font-semibold">Say hello to {name}</p>

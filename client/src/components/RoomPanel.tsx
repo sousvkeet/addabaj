@@ -118,7 +118,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
             {room.members.map((m) => (
               <li key={m.id}>
                 <div className="flex items-center gap-3 rounded-2xl px-2 py-1.5 transition-colors hover:bg-subtle/70">
-                  <Avatar name={m.name} hue={m.hue} size={36} online={online[m.id]} />
+                  <Avatar name={m.name} hue={m.hue} photo={m.photo} size={36} online={online[m.id]} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14.5px] font-medium">
                       {m.name}
@@ -163,7 +163,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
             <ul>
               {room.invites.map((inv) => (
                 <li key={inv.id} className="flex items-center gap-3 rounded-xl px-2 py-1.5">
-                  <Avatar name={inv.invitee.name} hue={inv.invitee.hue} size={36} className="opacity-70" />
+                  <Avatar name={inv.invitee.name} hue={inv.invitee.hue} photo={inv.invitee.photo} size={36} className="opacity-70" />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14.5px] font-medium">{inv.invitee.name}</span>
                     <span className="block truncate text-[12.5px] text-ink-soft">Invited by {inv.invitedBy}</span>

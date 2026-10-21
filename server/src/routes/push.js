@@ -12,7 +12,7 @@ const deviceSchema = z.object({
 
 pushRouter.post('/devices', async (req, res) => {
   const { token, platform } = deviceSchema.parse(req.body);
-  await registerDevice(req.userId, token, platform);
+  await registerDevice(req.userId, token, platform, req.sessionId);
   res.status(204).end();
 });
 

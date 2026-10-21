@@ -5,12 +5,12 @@ A native app that shows the Adda Khana site full screen in Android's WebView and
 What the app adds:
 
 - **Notifications while the app is closed.**
-  - New messages arrive as one notification per chat or room, with the latest messages and each sender's picture.
+  - New messages arrive as one notification per chat or room, with the latest messages and each sender's picture: their profile photo (kept on the phone after the first download), or their initials.
   - Reply and Mark as read work right from the notification.
   - Several waiting chats are bundled together.
   - Reading a chat anywhere (phone, computer) clears its notification.
   - The phone stays quiet while you're using Adda Khana on it or on a computer.
-- **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with Answer and Decline. Calls you didn't answer leave a missed-call notification.
+- **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with the caller's photo, Answer and Decline. Calls you didn't answer leave a missed-call notification.
 - **Calls keep going in the background.**
   - Calls, room voice and live streams keep running with the screen off or another app open. A notification shows the call, its length and a hang-up button.
   - Swiping the app away doesn't end the call.
@@ -31,6 +31,7 @@ What the app adds:
   - Recent chats are kept on the phone, so the app opens straight onto them and catches up in the background. With no connection it still opens, with "Waiting for network…".
   - Messages written offline wait with a clock and send themselves when the connection is back (for up to two minutes; after that they're marked "Not sent" with a retry).
   - Coming back after Android closed the app in the background opens the latest version of the site, never a stale copy.
+  - An app left open while you update the server reloads itself the next time it's out of sight (not during a call, voice, a live stream or a message sending), so new features and the update screen arrive without closing it.
 - **Everything a browser does.**
   - Microphone and camera for calls.
   - The photo and file picker; downloads go to Downloads.

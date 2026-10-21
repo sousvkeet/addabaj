@@ -122,7 +122,7 @@ export function RoomsAdmin() {
                   )}
                 </p>
                 <p className="flex items-center gap-1.5 truncate text-[13px] text-ink-soft">
-                  <Avatar name={r.owner.name} hue={r.owner.hue} size={16} />
+                  <Avatar name={r.owner.name} hue={r.owner.hue} photo={r.owner.photo} size={16} />
                   {r.owner.name}
                   {r.watching && <span className="truncate">· “{r.watching}”</span>}
                 </p>

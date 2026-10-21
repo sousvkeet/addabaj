@@ -138,7 +138,7 @@ export function UserPicker(props: Props) {
       )}
       {found && (
         <div role="group" aria-label="Search result" className="mt-3 flex items-center gap-3 rounded-2xl border border-line/70 p-3">
-          <Avatar name={found.name} hue={found.hue} size={44} online={online[found.id] ?? found.online} />
+          <Avatar name={found.name} hue={found.hue} photo={found.photo} size={44} online={online[found.id] ?? found.online} />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-semibold">{found.name}</span>
             <span className="block truncate text-[13px] text-ink-soft">

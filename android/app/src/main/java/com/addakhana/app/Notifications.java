@@ -70,7 +70,7 @@ final class Notifications {
         try {
             JSONObject chat = load(c, key);
             if (chat == null) chat = new JSONObject().put("scope", scope).put("chatId", chatId).put("messages", new JSONArray());
-            chat.put("name", value(d, "chatName", "Adda Khana")).put("hue", value(d, "chatHue", "260"));
+            chat.put("name", value(d, "chatName", "Adda Khana")).put("hue", value(d, "chatHue", "260")).put("photo", value(d, "chatPhoto", ""));
             JSONArray old = chat.getJSONArray("messages");
             long id = Long.parseLong(value(d, "messageId", "0"));
             for (int i = 0; i < old.length(); i++) if (old.getJSONObject(i).optLong("id") == id) return; // already shown
@@ -81,6 +81,7 @@ final class Notifications {
                     .put("sender", value(d, "senderName", "Someone"))
                     .put("senderId", value(d, "senderId", ""))
                     .put("hue", value(d, "senderHue", "260"))
+                    .put("photo", value(d, "senderPhoto", ""))
                     .put("text", value(d, "text", ""))
                     .put("at", Long.parseLong(value(d, "sentAt", String.valueOf(System.currentTimeMillis())))));
             chat.put("messages", list);
@@ -137,7 +138,7 @@ final class Notifications {
             String senderKey = m.optString("senderId", sender);
             Person p = people.get(senderKey);
             if (p == null) {
-                p = new Person.Builder().setName(sender).setKey(senderKey).setIcon(Avatars.icon(sender, Avatars.hue(m.optString("hue")))).build();
+                p = new Person.Builder().setName(sender).setKey(senderKey).setIcon(Avatars.icon(c, sender, Avatars.hue(m.optString("hue")), m.optString("photo"))).build();
                 people.put(senderKey, p);
             }
             style.addMessage(m.optString("text"), last, p);
@@ -176,7 +177,7 @@ final class Notifications {
                         .setShowsUserInterface(false)
                         .build());
         // Older Android shows no sender pictures in the message list.
-        if (!room && Build.VERSION.SDK_INT < 28) b.setLargeIcon(Avatars.bitmap(name, Avatars.hue(chat.optString("hue")), 192));
+        if (!room && Build.VERSION.SDK_INT < 28) b.setLargeIcon(Avatars.bitmap(c, name, Avatars.hue(chat.optString("hue")), chat.optString("photo"), 192));
         notify(c, key, ID_CHAT, b);
     }
 
@@ -318,7 +319,7 @@ final class Notifications {
 
     // ── Missed calls ───────────────────────────────────────────────────
 
-    static synchronized void showMissedCall(Context c, String callerId, String name, int hue, boolean video) {
+    static synchronized void showMissedCall(Context c, String callerId, String name, int hue, String photo, boolean video) {
         if (callerId == null) return;
         SharedPreferences missed = c.getSharedPreferences("missed", Context.MODE_PRIVATE);
         int count = missed.getInt(callerId, 0) + 1;
@@ -329,7 +330,7 @@ final class Notifications {
         NotificationCompat.Builder b = new NotificationCompat.Builder(c, AddaApp.CH_MISSED)
                 .setSmallIcon(R.drawable.ic_missed)
                 .setColor(0xFFFF5C7A)
-                .setLargeIcon(Avatars.bitmap(name, hue, 192))
+                .setLargeIcon(Avatars.bitmap(c, name, hue, photo, 192))
                 .setContentTitle(name)
                 .setContentText(text)
                 .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)

@@ -42,7 +42,7 @@ export type AdminRoom = {
   messages: number;
   createdAt: string;
   lastActivityAt: string | null;
-  owner: { id: string; name: string; hue: number };
+  owner: { id: string; name: string; hue: number; photo?: string | null };
   watching: string | null;
   live: boolean;
   inVoice: number;

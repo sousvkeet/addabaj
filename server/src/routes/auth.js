@@ -1,15 +1,17 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { AppError, conflict, forbidden } from '../errors.js';
-import { clearAuthCookie, COOKIE_NAME, requireAuth, setAuthCookie, verifyToken } from '../auth.js';
+import { adoptLogin, clearAuthCookie, COOKIE_NAME, readToken, requireAuth, setAuthCookie } from '../auth.js';
 import { findSessionUser, HANDLE_RULES, normalizeHandle, SESSION_COLUMNS, sessionUser } from '../services/users.js';
-import { endSessions, getSettings } from '../services/site.js';
+import { endSessions, getSettings, retireLogins } from '../services/site.js';
+import { createSession, endOtherSessions, endSession, listSessions, rotateSession, touchSession } from '../services/sessions.js';
 import { savePrivacy } from '../services/privacy.js';
 import { onlineContacts, tellContacts } from '../services/presence.js';
+import { MAX_PHOTO_BYTES, removePhoto, savePhoto } from '../services/photos.js';
 import { presence } from '../realtime.js';
 import { getIO, userChannel } from '../realtime.js';
 
@@ -72,7 +74,7 @@ authRouter.post('/register', limiter, async (req, res) => {
          RETURNING ${SESSION_COLUMNS}`,
         [email, name, hash, await nextHue()],
       );
-      setAuthCookie(res, row.id);
+      setAuthCookie(res, row.id, await createSession(row.id, req));
       res.status(201).json({ user: sessionUser(row) });
       return;
     } catch (err) {
@@ -89,11 +91,14 @@ authRouter.post('/login', limiter, async (req, res) => {
   const ok = await bcrypt.compare(password, row?.password_hash ?? NO_ONE);
   if (!row || !ok) throw new AppError(401, 'Email or password is incorrect.');
   if (row.disabled_at) throw forbidden('This account has been switched off by the host.');
-  setAuthCookie(res, row.id);
+  setAuthCookie(res, row.id, await createSession(row.id, req));
   res.json({ user: sessionUser(row) });
 });
 
-authRouter.post('/logout', (_req, res) => {
+// This device's session ends for good: the cookie no longer works, even if it was copied.
+authRouter.post('/logout', async (req, res) => {
+  const login = readToken(req.cookies?.[COOKIE_NAME]);
+  if (login?.sessionId) await endSession(login.userId, login.sessionId, 'logout').catch(() => {});
   clearAuthCookie(res);
   res.status(204).end();
 });
@@ -106,9 +111,10 @@ authRouter.post('/password', limiter, requireAuth, async (req, res) => {
   }
   if (await bcrypt.compare(next, row.password_hash)) throw new AppError(400, 'Choose a password different from your current one.');
   await query('UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1', [req.userId, await bcrypt.hash(next, 10)]);
-  // Everywhere else is signed out; this device gets a fresh login and stays in.
+  // Everywhere else is signed out; this device gets a fresh login (any copy of its old one stops) and stays in.
+  await endOtherSessions(req.userId, req.sessionId, 'password');
   await endSessions(req.userId);
-  setAuthCookie(res, req.userId);
+  setAuthCookie(res, req.userId, await rotateSession(req.userId, req.sessionId, req));
   getIO()?.in(userChannel(req.userId)).disconnectSockets(true);
   res.json({ user: await findSessionUser(req.userId) });
 });
@@ -146,15 +152,50 @@ authRouter.patch('/handle', limiter, requireAuth, async (req, res) => {
   res.json({ user: await findSessionUser(req.userId) });
 });
 
+// Your profile photo: a JPEG (the app crops and shrinks it first). Your contacts see it change at once.
+authRouter.put('/photo', limiter, requireAuth, express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), async (req, res) => {
+  await savePhoto(req.userId, Buffer.isBuffer(req.body) ? req.body : null);
+  res.json({ user: await findSessionUser(req.userId) });
+});
+
+authRouter.delete('/photo', requireAuth, async (req, res) => {
+  await removePhoto(req.userId);
+  res.json({ user: await findSessionUser(req.userId) });
+});
+
 // Who's online right now (for the presence:refresh above), as this person may see it.
 authRouter.get('/presence', requireAuth, async (req, res) => {
   res.json({ online: await onlineContacts(req.userId) });
 });
 
+// ── Devices (Settings › Devices) ──────────────────────────────────────
+
+authRouter.get('/sessions', requireAuth, async (req, res) => {
+  res.json({ sessions: await listSessions(req.userId, req.sessionId) });
+});
+
+// Every other device: logged out (and logins from before devices were tracked stop too).
+authRouter.delete('/sessions/others', requireAuth, async (req, res) => {
+  await endOtherSessions(req.userId, req.sessionId);
+  await retireLogins(req.userId);
+  setAuthCookie(res, req.userId, req.sessionId);
+  res.json({ sessions: await listSessions(req.userId, req.sessionId) });
+});
+
+authRouter.delete('/sessions/:id', requireAuth, async (req, res) => {
+  const id = String(req.params.id);
+  if (id === req.sessionId) throw new AppError(400, 'To log out of this device, use Log out.');
+  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new AppError(404, 'That device is already logged out.');
+  await endSession(req.userId, id);
+  res.json({ sessions: await listSessions(req.userId, req.sessionId) });
+});
+
 // Always 200 so a logged-out visit doesn't log an error; user is null then.
+// A login from before devices were tracked becomes this device here (the app's first call).
 authRouter.get('/me', async (req, res) => {
-  const userId = verifyToken(req.cookies?.[COOKIE_NAME]);
-  const user = userId ? await findSessionUser(userId) : null;
+  const login = readToken(req.cookies?.[COOKIE_NAME]);
+  const user = login ? await findSessionUser(login.userId) : null;
   if (!user && req.cookies?.[COOKIE_NAME]) clearAuthCookie(res);
+  if (user) touchSession(login.sessionId ?? (await adoptLogin(req, res, login.userId)), req);
   res.json({ user });
 });

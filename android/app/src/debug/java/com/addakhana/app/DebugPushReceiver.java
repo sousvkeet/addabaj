@@ -27,7 +27,16 @@ public class DebugPushReceiver extends BroadcastReceiver {
                 String k = it.next();
                 data.put(k, String.valueOf(o.get(k)));
             }
-            Push.handle(context.getApplicationContext(), data);
+            // Off the main thread, like Firebase's own deliveries (which may download a sender's photo).
+            PendingResult done = goAsync();
+            Context app = context.getApplicationContext();
+            new Thread(() -> {
+                try {
+                    Push.handle(app, data);
+                } finally {
+                    done.finish();
+                }
+            }, "test-push").start();
         } catch (Exception e) {
             android.util.Log.w("AddaPush", "Bad test push", e);
         }
