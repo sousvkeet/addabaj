@@ -2,27 +2,47 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-/* Palette: Midnight Aurora. A deep navy night, a violet-to-pink aurora for
-   the brand, and cyan for anything live (online, speaking, streaming). */
+/* Two themes, two moods.
+   Light, "Ocean Mint": crisp white and pale blue, a teal-to-blue ocean
+   gradient, navy ink and mint green for anything live. Flat panels with
+   hairline borders and soft shadows, and a light navigation rail.
+   Dark, "Midnight Aurora": a deep navy night, a violet-to-pink aurora, cyan
+   for anything live, and frosted glass over a soft glow. */
 :root {
   color-scheme: light;
-  --canvas: #f3f4fb;
+  --canvas: #f4f8fb;
   --surface: #ffffff;
-  --subtle: #eceef9;
-  --line: #dfe2f1;
-  --ink: #141833;
-  --ink-soft: #5f6689;
-  --brand: #6b4dff;
-  --brand-2: #ec4899;
+  --subtle: #eaf1f6;
+  --line: #dbe5ed;
+  --ink: #0f1b2d;
+  --ink-soft: #5a6b80;
+  --brand: #0f766e;
+  --brand-2: #2563eb;
   --on-brand: #ffffff;
-  --deep: #0d1124;
-  --live: #22d3ee;
-  --on-live: #04222b;
-  --danger: #e5364f;
-  --glow-a: rgb(107 77 255 / 0.12);
-  --glow-b: rgb(236 72 153 / 0.08);
-  --glow-c: rgb(34 211 238 / 0.08);
-  --shadow: 0 18px 50px -24px rgb(28 22 80 / 0.35);
+  --deep: #0f1b2d;
+  --live: #10b981;
+  --on-live: #03281b;
+  --live-ink: #047857;
+  --danger: #e11d48;
+  --aurora: linear-gradient(135deg, #0f8b82 0%, #0e86b0 52%, #2563eb 100%);
+  --aurora-text: linear-gradient(120deg, #0d9488 0%, #2563eb 100%);
+  --glow-a: rgb(20 184 166 / 0.07);
+  --glow-b: rgb(59 130 246 / 0.06);
+  --glow-c: rgb(16 185 129 / 0.05);
+  --shadow: 0 1px 2px rgb(15 27 45 / 0.05), 0 14px 34px -20px rgb(15 27 45 / 0.22);
+  --glow-shadow: 0 6px 16px -8px rgb(37 99 235 / 0.5);
+  --glass-bg: var(--surface);
+  --glass-filter: none;
+  --rail: #ffffff;
+  --rail-image: linear-gradient(180deg, rgb(20 184 166 / 0.07) 0%, transparent 32%);
+  --rail-ink: #0f1b2d;
+  --rail-line: #dbe5ed;
+  --logo-a: #14b8a6;
+  --logo-b: #3b82f6;
+  --logo-dot: #34d399;
+  --logo-glow: rgb(13 148 136 / 0.35);
+  --blob-opacity: 0.3;
+  --tick-read: #fde047;
 }
 
 [data-theme="dark"] {
@@ -39,11 +59,27 @@
   --deep: #060814;
   --live: #22d3ee;
   --on-live: #03202a;
+  --live-ink: #22d3ee;
   --danger: #ff4d6d;
+  --aurora: linear-gradient(135deg, #7c5cff 0%, #c25ccf 55%, #ff5ca8 100%);
+  --aurora-text: linear-gradient(120deg, #7c5cff 0%, #ff5ca8 100%);
   --glow-a: rgb(124 92 255 / 0.2);
   --glow-b: rgb(255 92 168 / 0.12);
   --glow-c: rgb(34 211 238 / 0.08);
   --shadow: 0 22px 60px -24px rgb(0 0 0 / 0.7);
+  --glow-shadow: 0 10px 28px -10px rgb(124 92 255 / 0.7);
+  --glass-bg: color-mix(in srgb, var(--surface) 74%, transparent);
+  --glass-filter: blur(18px) saturate(150%);
+  --rail: #060814;
+  --rail-image: linear-gradient(180deg, rgb(124 92 255 / 0.22) 0%, transparent 38%);
+  --rail-ink: #ffffff;
+  --rail-line: rgb(255 255 255 / 0.1);
+  --logo-a: #7c5cff;
+  --logo-b: #ff5ca8;
+  --logo-dot: #22d3ee;
+  --logo-glow: rgb(124 92 255 / 0.55);
+  --blob-opacity: 0.55;
+  --tick-read: #67e8f9;
 }
 
 @theme inline {
@@ -58,6 +94,11 @@
   --color-on-brand: var(--on-brand);
   --color-deep: var(--deep);
   --color-live: var(--live);
+  --color-live-ink: var(--live-ink);
+  --color-tick-read: var(--tick-read);
+  --color-rail: var(--rail);
+  --color-rail-ink: var(--rail-ink);
+  --color-rail-line: var(--rail-line);
   --color-on-live: var(--on-live);
   --color-danger: var(--danger);
   --font-display: "Sora", "Plus Jakarta Sans", system-ui, sans-serif;
@@ -66,32 +107,32 @@
 
 /* The aurora: brand gradient for primary actions, my messages and badges. */
 @utility bg-aurora {
-  background-image: linear-gradient(135deg, var(--brand) 0%, color-mix(in srgb, var(--brand) 45%, var(--brand-2)) 55%, var(--brand-2) 100%);
+  background-image: var(--aurora);
 }
 @utility text-aurora {
-  background-image: linear-gradient(120deg, var(--brand) 0%, var(--brand-2) 100%);
+  background-image: var(--aurora-text);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
-/* Frosted panels that let the background glow through. */
+/* Panels: frosted glass in the dark theme, flat white in the light one. */
 @utility glass {
-  background-color: color-mix(in srgb, var(--surface) 74%, transparent);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-  backdrop-filter: blur(18px) saturate(150%);
+  background-color: var(--glass-bg);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
 }
 @utility glass-deep {
-  background-color: color-mix(in srgb, var(--deep) 82%, transparent);
+  background-color: color-mix(in srgb, var(--deep) 92%, transparent);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   backdrop-filter: blur(18px) saturate(150%);
 }
-/* The navigation rail: solid night with a hint of aurora at the top, in both themes. */
+/* The navigation rail: night with a hint of aurora, or white with a hint of mint. */
 @utility bg-rail {
-  background-color: var(--deep);
-  background-image: linear-gradient(180deg, color-mix(in srgb, var(--brand) 22%, transparent) 0%, transparent 38%);
+  background-color: var(--rail);
+  background-image: var(--rail-image);
 }
 @utility shadow-glow {
-  box-shadow: 0 10px 28px -10px color-mix(in srgb, var(--brand) 70%, transparent);
+  box-shadow: var(--glow-shadow);
 }
 @utility shadow-float {
   box-shadow: var(--shadow);
@@ -149,7 +190,7 @@ select:focus-visible {
   position: absolute;
   border-radius: 9999px;
   filter: blur(70px);
-  opacity: 0.55;
+  opacity: var(--blob-opacity);
   animation: drift 18s ease-in-out infinite alternate;
 }
 @keyframes drift {

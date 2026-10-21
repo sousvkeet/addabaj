@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, Phone, PhoneOff, Settings2, Video } from 'lucide-react';
 import { lastSeen } from '../lib/format';
+import { useNow } from '../lib/useMedia';
 import type { ReplyRef } from '../lib/types';
 import { socket } from '../lib/socket';
 import { useAuth } from '../store/auth';
@@ -13,6 +14,7 @@ import { Button, IconButton } from '../components/ui/Button';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { FileDrop } from '../components/FileDrop';
 import { MessageList, replyRefFor, type ThreadItem } from '../components/MessageList';
+import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
 
 export function ChatView() {
   const { userId = '' } = useParams();
@@ -21,6 +23,8 @@ export function ChatView() {
   const page = useChat((s) => s.dms[userId]);
   const online = useChat((s) => !!s.online[userId]);
   const seen = useChat((s) => s.lastSeen[userId]);
+  // Not shared by them, or by me (it works both ways): show no status at all.
+  const presenceHidden = useChat((s) => s.hiddenPresence[userId] ?? s.users[userId]?.presenceHidden ?? s.conversations[userId]?.partner.presenceHidden ?? false);
   const typing = useChat((s) => !!s.dmTyping[userId]);
   const openDm = useChat((s) => s.openDm);
   const loadDm = useChat((s) => s.loadDm);
@@ -34,6 +38,9 @@ export function ChatView() {
   const navigate = useNavigate();
   const composer = useRef<ComposerHandle>(null);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const [info, setInfo] = useState<InfoTarget | null>(null);
+  // "Last seen 5 min ago" keeps counting.
+  useNow(30_000, !online);
 
   useEffect(() => {
     openDm(userId);
@@ -54,7 +61,7 @@ export function ChatView() {
           body: m.body,
           createdAt: m.createdAt,
           sender: who ? { id: who.id, name: who.name, hue: who.hue } : null,
-          readAt: m.readAt,
+          receipt: m.readAt ? 'read' : m.deliveredAt ? 'delivered' : 'sent',
           pending: m.pending,
           callOutcome: m.meta?.outcome,
           callDuration: m.meta?.duration,
@@ -87,8 +94,10 @@ export function ChatView() {
           <p className="truncate text-[13px] text-ink-soft">
             {typing ? (
               <span className="font-medium text-brand dark:text-live">typing…</span>
+            ) : presenceHidden ? (
+              ''
             ) : online ? (
-              <span className="font-medium text-cyan-600 dark:text-live">Online</span>
+              <span className="font-medium text-live-ink">Online</span>
             ) : (
               lastSeen(seen ?? partner?.lastSeenAt ?? null)
             )}
@@ -127,10 +136,13 @@ export function ChatView() {
           hasMore={!!page?.hasMore}
           loadingMore={page?.loadingMore}
           onLoadOlder={() => void loadDm(userId, true)}
-          receipts
           meId={me?.id ?? ''}
           onRetry={(item) => void sendDm(userId, item.draft ?? { body: item.body }, item.key)}
           onReply={(item) => setReplyTo(replyRefFor(item))}
+          onInfo={(item) => {
+            const m = page?.items.find((x) => x.id === item.id);
+            if (m) setInfo({ scope: 'dm', sentAt: m.createdAt, deliveredAt: m.deliveredAt, readAt: m.readAt, partnerName: name });
+          }}
           onReact={(item, emoji) => void react('dm', item.id, emoji)}
           onCallBack={callPhase === 'idle' ? (video) => call(video) : undefined}
           empty={
@@ -156,6 +168,7 @@ export function ChatView() {
           onCancelReply={() => setReplyTo(null)}
         />
       </FileDrop>
+      <MessageInfo target={info} onClose={() => setInfo(null)} />
     </div>
   );
 }

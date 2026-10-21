@@ -547,6 +547,7 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
 function DeviceSource({ roomId, onDone }: { roomId: string; onDone: () => void }) {
   const picker = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<'' | 'file' | 'screen'>('');
+  const [status, setStatus] = useState('');
   const [error, setError] = useState('');
   const [maxViewers, setMaxViewers] = useState<number | null>(null);
   const fileOk = canStreamFile();
@@ -558,15 +559,17 @@ function DeviceSource({ roomId, onDone }: { roomId: string; onDone: () => void }
 
   async function start(kind: 'file' | 'screen', file?: File) {
     setBusy(kind);
+    setStatus('');
     setError('');
     try {
       const live = useLiveStream.getState();
-      const started = kind === 'file' ? (await live.startFile(roomId, file!), true) : await live.startScreen(roomId);
+      const started = kind === 'file' ? (await live.startFile(roomId, file!, setStatus), true) : await live.startScreen(roomId);
       if (started) onDone();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setBusy('');
+      setStatus('');
     }
   }
 
@@ -586,9 +589,10 @@ function DeviceSource({ roomId, onDone }: { roomId: string; onDone: () => void }
       <SourceOption
         icon={<FileVideo size={21} />}
         title="Stream a video file"
-        text="Plays here and streams live to the room, with your play, pause and seek. MP4 and WebM work best."
+        text="Plays here and streams live to the room, with your play, pause and seek. Movie sound browsers can't play (Dolby, DTS) is converted for you."
         unavailable={fileOk ? '' : "This browser can't stream a file. Use Chrome, Edge or Firefox on a computer or Android phone."}
         busy={busy === 'file'}
+        status={busy === 'file' ? status : ''}
         disabled={!!busy}
         onClick={() => picker.current?.click()}
       />
@@ -620,6 +624,8 @@ function SourceOption(props: {
   text: string;
   unavailable: string;
   busy: boolean;
+  /** What's happening while it starts ("Converting the sound…"). */
+  status?: string;
   disabled: boolean;
   onClick: () => void;
 }) {
@@ -635,7 +641,9 @@ function SourceOption(props: {
       </span>
       <span className={`min-w-0 ${props.unavailable ? 'opacity-60' : ''}`}>
         <span className="block font-semibold">{props.busy ? 'Starting…' : props.title}</span>
-        <span className="mt-0.5 block text-[13.5px] text-ink-soft">{props.text}</span>
+        <span className="mt-0.5 block text-[13.5px] text-ink-soft" role={props.status ? 'status' : undefined}>
+          {props.status || props.text}
+        </span>
         {props.unavailable && <span className="mt-1 block text-[13px] font-medium text-danger">{props.unavailable}</span>}
       </span>
     </button>

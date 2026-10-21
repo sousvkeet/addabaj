@@ -24,14 +24,14 @@ usersRouter.get('/', async (req, res) => {
   );
   res.json({
     users: rows.map((r) => ({
-      ...publicUser(r),
+      ...publicUser(r, req.userId),
       ...(roomId ? { roomStatus: r.is_member ? 'member' : r.is_invited ? 'invited' : null } : {}),
     })),
   });
 });
 
 usersRouter.get('/:id', async (req, res) => {
-  const user = await findUser(assertUuid(req.params.id, 'person'));
+  const user = await findUser(assertUuid(req.params.id, 'person'), req.userId);
   if (!user) throw notFound("That person doesn't exist.");
   res.json({ user });
 });

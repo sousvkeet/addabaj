@@ -62,7 +62,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
       <div className="mx-auto flex w-full max-w-[1180px] flex-col items-center gap-10 px-5 pt-[max(28px,env(safe-area-inset-top))] pb-10 lg:flex-row lg:gap-16 lg:px-10">
         <section className="w-full max-w-[560px] lg:flex-1">
           <div className="flex items-center gap-3">
-            <Logo size={48} className="drop-shadow-[0_10px_24px_rgb(124_92_255/0.55)]" />
+            <Logo size={48} className="drop-shadow-[0_10px_24px_var(--logo-glow)]" />
             <Wordmark className="text-[24px]" />
           </div>
           <h1 className="mt-6 font-display text-[clamp(2rem,4.2vw,3.6rem)] leading-[1.05] font-bold tracking-[-0.035em] lg:mt-8">
@@ -83,7 +83,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
             ))}
           </ul>
           <div aria-hidden className="mt-8 hidden items-center gap-3 lg:flex">
-            <span className="flex items-center gap-2 rounded-full border border-live/40 bg-live/10 px-3 py-1.5 text-[12.5px] font-bold text-cyan-700 dark:text-live">
+            <span className="flex items-center gap-2 rounded-full border border-live/40 bg-live/10 px-3 py-1.5 text-[12.5px] font-bold text-live-ink">
               <Radio size={14} />
               LIVE in Friday Night Adda
             </span>

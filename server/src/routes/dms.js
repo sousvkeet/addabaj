@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { query } from '../db.js';
 import { assertUuid } from '../errors.js';
-import { DM_COLUMNS, dmMessage } from '../services/dms.js';
+import { DM_COLUMNS, dmForViewer, dmMessage } from '../services/dms.js';
 import { enrich } from '../services/messages.js';
 import { publicUser } from '../services/users.js';
 
@@ -26,8 +26,8 @@ dmsRouter.get('/', async (req, res) => {
     [req.userId],
   );
   const conversations = rows.map((r) => ({
-      partner: publicUser({ id: r.partner, email: r.email, name: r.name, avatar_hue: r.avatar_hue, last_seen_at: r.last_seen_at }),
-      lastMessage: dmMessage(r),
+      partner: publicUser({ id: r.partner, email: r.email, name: r.name, avatar_hue: r.avatar_hue, last_seen_at: r.last_seen_at }, req.userId),
+      lastMessage: dmForViewer(dmMessage(r), req.userId),
       unread: r.unread,
     }));
   await enrich('dm', conversations.map((c) => c.lastMessage));
@@ -46,5 +46,6 @@ dmsRouter.get('/:userId/messages', async (req, res) => {
     [req.userId, partner, before, limit + 1],
   );
   const hasMore = rows.length > limit;
-  res.json({ messages: await enrich('dm', rows.slice(0, limit).reverse().map(dmMessage)), hasMore });
+  const messages = rows.slice(0, limit).reverse().map((r) => dmForViewer(dmMessage(r), req.userId));
+  res.json({ messages: await enrich('dm', messages), hasMore });
 });

@@ -126,7 +126,7 @@ export async function roomDetail(roomId, userId) {
   const base = await roomSummary(roomId, userId);
   if (!base) throw notFound("That room doesn't exist or you're not a member.");
   const { rows: members } = await query(
-    `SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at
+    `SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id
      FROM room_members rm JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = $1
      ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,
@@ -149,12 +149,19 @@ export async function roomDetail(roomId, userId) {
       id: r.id,
       createdAt: r.created_at,
       invitedBy: r.by_name,
-      invitee: publicUser({ id: r.u_id, email: r.u_email, name: r.u_name, avatar_hue: r.u_hue, last_seen_at: r.u_seen }),
+      invitee: publicUser({ id: r.u_id, email: r.u_email, name: r.u_name, avatar_hue: r.u_hue, last_seen_at: r.u_seen }, userId),
     }));
   }
   return {
     ...base,
-    members: members.map((m) => ({ ...publicUser(m), role: m.role, joinedAt: m.joined_at })),
+    // How far each member has received and read, for "delivered" and "seen by".
+    members: members.map((m) => ({
+      ...publicUser(m, userId),
+      role: m.role,
+      joinedAt: m.joined_at,
+      lastReadId: Number(m.last_read_id),
+      lastDeliveredId: Math.max(Number(m.last_delivered_id), Number(m.last_read_id)),
+    })),
     invites,
     voice: voice.participants(roomId),
     watch: publicWatch((await one('SELECT watch FROM rooms WHERE id = $1', [roomId]))?.watch ?? null),

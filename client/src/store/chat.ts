@@ -14,6 +14,8 @@ type ChatState = {
   bootstrapped: boolean;
   online: Record<string, boolean>;
   lastSeen: Record<string, string | null>;
+  /** People whose online status and last seen aren't shared with me (live updates). */
+  hiddenPresence: Record<string, boolean>;
   users: Record<string, User>;
   conversations: Record<string, Conversation>;
   dms: Record<string, Paged<DmMessage>>;
@@ -36,6 +38,8 @@ type ChatState = {
   receiveDm: (message: DmMessage, partner: User) => void;
   markDmRead: (partnerId: string) => void;
   applyDmRead: (e: { readerId: string; partnerId: string; readAt: string }) => void;
+  applyDmDelivered: (e: { partnerId: string; ids: number[]; deliveredAt: string }) => void;
+  applyRoomReceipts: (e: { roomId: string; members: { userId: string; lastReadId: number; lastDeliveredId: number }[] }) => void;
   setDmTyping: (from: string, typing: boolean) => void;
 
   openRoom: (roomId: string | null) => void;
@@ -127,6 +131,7 @@ const initial = {
   bootstrapped: false,
   online: {},
   lastSeen: {},
+  hiddenPresence: {},
   users: {},
   conversations: {},
   dms: {},
@@ -223,7 +228,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     const tid = tempId();
     const temp: DmMessage = {
       id: 0, tempId: tid, senderId: me, recipientId: partnerId, kind: 'text', body: draft.body, meta: null,
-      createdAt: new Date().toISOString(), readAt: null, pending: 'sending', draft,
+      createdAt: new Date().toISOString(), deliveredAt: null, readAt: null, pending: 'sending', draft,
       attachment: draft.file ? localAttachment(draft.file) : null,
       replyTo: draft.replyTo ?? null,
       reactions: [],
@@ -322,12 +327,50 @@ export const useChat = create<ChatState>()((set, get) => ({
     set((s) => {
       const page = s.dms[readerId];
       const conv = s.conversations[readerId];
-      const stamp = (m: DmMessage) => (m.senderId === me && !m.readAt && !m.pending ? { ...m, readAt } : m);
+      const stamp = (m: DmMessage) =>
+        m.senderId === me && !m.readAt && !m.pending ? { ...m, readAt, deliveredAt: m.deliveredAt ?? readAt } : m;
       return {
         dms: page ? { ...s.dms, [readerId]: { ...page, items: page.items.map(stamp) } } : s.dms,
         conversations: conv?.lastMessage
           ? { ...s.conversations, [readerId]: { ...conv, lastMessage: stamp(conv.lastMessage) } }
           : s.conversations,
+      };
+    });
+  },
+
+  // The other person's app now has these messages of mine.
+  applyDmDelivered: ({ partnerId, ids, deliveredAt }) => {
+    const done = new Set(ids);
+    const stamp = (m: DmMessage) => (done.has(m.id) && !m.deliveredAt ? { ...m, deliveredAt } : m);
+    set((s) => {
+      const page = s.dms[partnerId];
+      const conv = s.conversations[partnerId];
+      return {
+        dms: page ? { ...s.dms, [partnerId]: { ...page, items: page.items.map(stamp) } } : s.dms,
+        conversations: conv?.lastMessage
+          ? { ...s.conversations, [partnerId]: { ...conv, lastMessage: stamp(conv.lastMessage) } }
+          : s.conversations,
+      };
+    });
+  },
+
+  // Room members' apps received / showed messages up to new points.
+  applyRoomReceipts: ({ roomId, members }) => {
+    set((s) => {
+      const detail = s.roomDetails[roomId];
+      if (!detail) return s;
+      const by = new Map(members.map((m) => [m.userId, m]));
+      return {
+        roomDetails: {
+          ...s.roomDetails,
+          [roomId]: {
+            ...detail,
+            members: detail.members.map((m) => {
+              const r = by.get(m.id);
+              return r ? { ...m, lastReadId: Math.max(m.lastReadId, r.lastReadId), lastDeliveredId: Math.max(m.lastDeliveredId, r.lastDeliveredId) } : m;
+            }),
+          },
+        },
       };
     });
   },

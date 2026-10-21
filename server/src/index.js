@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import express from 'express';
 import cookieParser from 'cookie-parser';
@@ -19,6 +20,7 @@ import { streamRouter } from './routes/stream.js';
 import { filesRouter, uploadsRouter } from './routes/uploads.js';
 import { cleanUploads, maxUploadBytes } from './services/uploads.js';
 import { ensureHostAdmin, loadSite, publicSite } from './services/site.js';
+import { loadPrivacy } from './services/privacy.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
 import { ytdlpPath } from './stream/ytdlp.js';
@@ -29,10 +31,55 @@ import { live } from './socket/live.js';
 await migrate();
 await ensureHostAdmin();
 await loadSite();
+await loadPrivacy();
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// Believe a proxy's "the visitor's address is…" only from a proxy on this machine
+// (nginx in front), so nobody can fake their address to dodge rate limits.
+// Set TRUST_PROXY (e.g. 1) when the proxy runs elsewhere.
+const trustProxy = process.env.TRUST_PROXY;
+app.set('trust proxy', trustProxy === undefined || trustProxy === '' ? 'loopback' : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy === 'true' || trustProxy);
+
+/**
+ * Is this request from our own pages? Browsers say where a request comes from,
+ * and another site's page can't pretend otherwise. `Sec-Fetch-Site` is the most
+ * reliable signal (it doesn't depend on proxies keeping the Host header); older
+ * browsers only send Origin, which is compared with the host. Requests with
+ * neither (apps, curl) don't carry a visitor's cookies by accident, so they pass.
+ */
+const extraOrigins = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+function sameOrigin(req) {
+  const site = req.headers['sec-fetch-site'];
+  if (site === 'same-origin' || site === 'none') return true;
+  if (site === 'cross-site') return false;
+  const origin = req.headers.origin;
+  if (!origin) return true;
+  if (extraOrigins.includes(origin)) return true;
+  try {
+    const hosts = [req.headers['x-forwarded-host'], req.headers.host].filter(Boolean).map((h) => String(h).split(',')[0].trim());
+    return hosts.includes(new URL(origin).host);
+  } catch {
+    return false;
+  }
+}
+
+// Security headers on everything.
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Permissions-Policy', 'camera=(self), microphone=(self), display-capture=(self), geolocation=(), payment=(), usb=()');
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=15552000; includeSubDomains');
+  next();
+});
+
+// Another website can't make changes with a visitor's login (cross-site request forgery).
+app.use('/api', (req, res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method) || sameOrigin(req)) return next();
+  res.status(403).json({ error: 'This request came from another website, so it was refused.' });
+});
 app.use(express.json({ limit: '32kb' }));
 app.use(cookieParser());
 
@@ -55,8 +102,34 @@ app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
 // In production the server also hosts the built client.
 const dist = resolve(rootDir, 'client/dist');
 if (existsSync(dist)) {
+  // Built files have a content hash in their name, so they can be cached for good
+  // (this matters for the 32 MB sound converter).
+  app.use('/assets', express.static(resolve(dist, 'assets'), { index: false, immutable: true, maxAge: '1y' }));
   app.use(express.static(dist, { index: false, maxAge: '1h' }));
-  app.get('/{*splat}', (_req, res) => res.sendFile(resolve(dist, 'index.html')));
+  // The page's content security policy: only our own scripts (plus the tiny theme
+  // script inline in index.html, allowed by its hash), YouTube's player, and media
+  // from anywhere (watch together plays links straight from their sites).
+  const html = readFileSync(resolve(dist, 'index.html'), 'utf8');
+  const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${createHash('sha256').update(m[1]).digest('base64')}'`);
+  const csp = [
+    "default-src 'self'",
+    `script-src 'self' 'wasm-unsafe-eval' https://www.youtube.com https://s.ytimg.com ${inline.join(' ')}`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: blob: https: http:",
+    "media-src 'self' data: blob: https: http:",
+    "connect-src 'self' ws: wss: https: http: blob: data:",
+    'frame-src https://www.youtube.com https://www.youtube-nocookie.com',
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+  app.get('/{*splat}', (_req, res) => {
+    res.setHeader('Content-Security-Policy', csp);
+    res.sendFile(resolve(dist, 'index.html'));
+  });
 }
 
 app.use((err, _req, res, _next) => {
@@ -72,7 +145,15 @@ app.use((err, _req, res, _next) => {
 const server = createServer(app);
 // A short heartbeat notices phones whose connection died silently within
 // ~16 s (default ~45 s); clients also probe when the person comes back.
-const io = new Server(server, { serveClient: false, pingInterval: 8000, pingTimeout: 8000 });
+const io = new Server(server, {
+  serveClient: false,
+  pingInterval: 8000,
+  pingTimeout: 8000,
+  // Connection setup and messages are small; this caps what one event can carry.
+  maxHttpBufferSize: 256 * 1024,
+  // Another website's page can't open a live connection with a visitor's login.
+  allowRequest: (req, callback) => callback(null, sameOrigin(req)),
+});
 setIO(io);
 initSocket(io);
 

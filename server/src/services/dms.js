@@ -1,3 +1,5 @@
+import { receiptsShared } from './privacy.js';
+
 export function dmMessage(row) {
   return {
     id: row.id,
@@ -7,6 +9,7 @@ export function dmMessage(row) {
     body: row.body,
     meta: row.meta ?? null,
     createdAt: row.created_at,
+    deliveredAt: row.delivered_at ?? null,
     readAt: row.read_at,
     replyToId: row.reply_to_id ?? null,
     attachment: null,
@@ -15,4 +18,12 @@ export function dmMessage(row) {
   };
 }
 
-export const DM_COLUMNS = 'id, sender_id, recipient_id, kind, body, meta, created_at, read_at, reply_to_id';
+/** A message as `viewerId` sees it: the read time of their own messages only if both share read receipts. */
+export function dmForViewer(message, viewerId) {
+  if (message && message.senderId === viewerId && message.readAt && !receiptsShared(message.senderId, message.recipientId)) {
+    return { ...message, readAt: null };
+  }
+  return message;
+}
+
+export const DM_COLUMNS = 'id, sender_id, recipient_id, kind, body, meta, created_at, delivered_at, read_at, reply_to_id';

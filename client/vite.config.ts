@@ -12,6 +12,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react(), tailwindcss()],
+    // ffmpeg.wasm starts its own worker from its package files; pre-bundling breaks that.
+    optimizeDeps: { exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util'] },
+    worker: { format: 'es' },
     server: {
       port: clientPort,
       strictPort: true,

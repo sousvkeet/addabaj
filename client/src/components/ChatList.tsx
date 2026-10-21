@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router';
-import { MessageCircle, PhoneMissed, Phone, SquarePen, Video } from 'lucide-react';
+import { Check, CheckCheck, Clock, MessageCircle, PhoneMissed, Phone, SquarePen, Video } from 'lucide-react';
 import { listStamp, messagePreview } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -70,10 +70,20 @@ export function ChatList() {
                           <span className="truncate">{m.body}</span>
                         </>
                       ) : (
-                        <span className="truncate">
-                          {mine && 'You: '}
-                          {messagePreview(m)}
-                        </span>
+                        <>
+                          {/* Where my last message has got to: sending, sent, delivered, read. */}
+                          {mine &&
+                            (m.pending === 'sending' ? (
+                              <Clock size={14} className="shrink-0" aria-label="Sending" />
+                            ) : m.readAt ? (
+                              <CheckCheck size={15} className="shrink-0 text-live-ink" aria-label="Read" />
+                            ) : m.deliveredAt ? (
+                              <CheckCheck size={15} className="shrink-0" aria-label="Delivered" />
+                            ) : m.pending !== 'failed' ? (
+                              <Check size={14} className="shrink-0" aria-label="Sent" />
+                            ) : null)}
+                          <span className="truncate">{messagePreview(m)}</span>
+                        </>
                       )}
                     </span>
                     <UnreadBadge count={unread} />

@@ -15,6 +15,8 @@ export const isWeakAdminPassword = (password) => password === 'admin' || passwor
 const DEFAULTS = { allowSignups: true, announcement: null };
 let settings = { ...DEFAULTS };
 const disabled = new Set();
+/** userId -> seconds: logins issued before then were signed out by a password change. */
+const validAfter = new Map();
 
 /** Creates the host admin account if there is no host admin yet. */
 export async function ensureHostAdmin() {
@@ -45,6 +47,10 @@ export async function loadSite() {
   settings = { ...DEFAULTS, ...Object.fromEntries(rows.map((r) => [r.key, r.value])) };
   disabled.clear();
   for (const r of (await query('SELECT id FROM users WHERE disabled_at IS NOT NULL')).rows) disabled.add(r.id);
+  validAfter.clear();
+  for (const r of (await query('SELECT id, sessions_valid_after FROM users WHERE sessions_valid_after IS NOT NULL')).rows) {
+    validAfter.set(r.id, Math.floor(r.sessions_valid_after.getTime() / 1000));
+  }
 }
 
 export const getSettings = () => settings;
@@ -74,6 +80,17 @@ export async function saveSettings(patch) {
 }
 
 export const isDisabled = (userId) => disabled.has(userId);
+
+/** Whether a login issued at `issuedAt` (seconds) still counts for this person. */
+export const sessionValid = (userId, issuedAt) => !disabled.has(userId) && (issuedAt ?? 0) >= (validAfter.get(userId) ?? 0);
+
+/** Signs a person out everywhere (their password changed); returns when it took effect. */
+export async function endSessions(userId) {
+  // This server's clock, the same one that dates new logins.
+  const seconds = Math.floor(Date.now() / 1000);
+  await query('UPDATE users SET sessions_valid_after = to_timestamp($2) WHERE id = $1', [userId, seconds]);
+  validAfter.set(userId, seconds);
+}
 export function markDisabled(userId, off) {
   if (off) disabled.add(userId);
   else disabled.delete(userId);

@@ -35,14 +35,14 @@
 - **Hang out** in rooms with a live voice table for up to 12 people, where whoever speaks lights up.
 - **Watch together:** paste a link from almost any site, and the server finds the video and keeps everyone in sync. You can also stream a file or your screen live from your device.
 - **Run the site** from a host admin panel with live numbers, people, rooms, sign-ups and announcements.
-- **Look good** with a dark-first "Midnight Aurora" design, a light theme, and layouts made for phones too.
+- **Look good** in two themes: "Midnight Aurora" (dark, the default) and "Ocean Mint" (light), with layouts made for phones too.
 
 ## Screenshots
 
 | Room with live voice | Host admin |
 |---|---|
 | ![A room with three people at the voice table](docs/screenshots/03-room-voice.jpg) | ![The host admin overview](docs/screenshots/04-admin.jpg) |
-| **Light theme** | **Sign in** |
+| **Light theme (Ocean Mint)** | **Sign in** |
 | ![The chat in the light theme](docs/screenshots/05-light.jpg) | ![The sign-in page](docs/screenshots/01-login.jpg) |
 
 <p align="center">
@@ -78,11 +78,14 @@ To try calls by yourself, open a second browser profile or an incognito window a
 ### Accounts and presence
 
 - Sign up and log in with email and password, and stay logged in for 30 days. Change your password from the account menu.
-- See who's online and when they were last seen.
+- **Online and last seen:** see who's online and when they were last seen ("Last seen 5 min ago", kept up to date) in chats, room member lists and the people picker.
+- **Privacy** (account menu): hide when you're online and last seen, and turn off read receipts. Both work both ways, like most chat apps: if you hide yours, you don't see other people's.
 
 ### One-to-one chat
 
-- Instant delivery, typing indicator, read ticks, unread counts and message history.
+- Instant delivery, typing indicator, unread counts and message history.
+- **Ticks** on your messages: a clock while sending, one tick when the server has it, two ticks when it's on their device (delivered, even if they were offline and came back later), and two coloured ticks when they've read it. The chat list shows the ticks of your last message too.
+- **Message info:** hover one of your messages (or press and hold it on a phone) and choose Message info to see exactly when it was delivered and read.
 - **Photos, files and voice messages** (in rooms too):
   - Attach with the paperclip, paste a picture, or drag files onto the chat. Send up to 10 at once; the caption goes with the first.
   - Photos are shrunk to 2048 px on the long side before sending, which also strips hidden details such as where they were taken. Tap a photo to see it full screen and download it.
@@ -108,6 +111,7 @@ To try calls by yourself, open a second browser profile or an incognito window a
 - Admins can **add** people straight in, or **invite** them so they can accept or decline. Admins can also cancel invites and remove members.
 - The room's creator can make other members admins and can delete the room.
 - The member limit is enforced on the server, even when two people join at the same moment, and can't be lowered below the current member count.
+- **Seen by:** your room messages get ticks too (delivered when everyone's device has it, coloured when everyone has seen it), and your latest one says who has seen it ("Seen by Rahul and Mitali"). Message info lists who has read it, who has it, and who hasn't received it yet. Rooms always show who has seen a message, like group chats elsewhere.
 - **Room voice (the adda table):** members join a voice channel and sit around a table. Each person's avatar lights up while they speak, and mute shows for everyone. Up to 12 people can talk at once.
 
 ### Watch together
@@ -135,6 +139,8 @@ How linked videos play:
 **Live from your device.** Instead of a link, an admin can pick **From your device**:
 
 - **Stream a video file** from a computer or Android phone. It plays on their device and streams live to the room. They play, pause and seek with their own controls; viewers see a "Paused" note and a progress bar. Muting their own speakers doesn't mute the stream.
+- **Movie sound is fixed automatically.** Many movie files have Dolby Digital (AC-3), Dolby Digital Plus (E-AC-3), DTS or Dolby TrueHD sound, which browsers can't play, so they'd stream in silence. The host's browser converts that sound itself, without uploading anything: it uses FFmpeg built for the browser (a 32 MB download, only the first time it's needed), converts a minute at a time a few minutes ahead of the picture, and keeps it in sync. Sound starts about a second after the picture, and about two seconds after a jump. The host sees "Sound converted from Dolby Digital 5.1" (or similar) on their preview.
+- The stream's sound plays on the speaker chosen in settings, like calls.
 - **Share your screen or a tab** from a computer. To include sound, share a tab and turn on "Share tab audio".
 - Nothing is uploaded: picture and sound go straight from the host's browser to each viewer (through the TURN relay when a direct route is blocked). It starts at once, in HD with stereo sound, and up to `LIVE_MAX_VIEWERS` (default 10) people can watch.
 - The stream keeps going while the host looks at other pages, with a "Live in…" bar to get back. It survives a short connection drop, ends when the host closes the tab, and ends after 15 seconds if their connection doesn't come back. Any admin can stop it.
@@ -148,9 +154,13 @@ How linked videos play:
 
 ### Design
 
-- **Midnight Aurora:** a dark-first look with a deep navy background, a violet-to-pink "aurora" gradient for the brand, your messages and main actions, and cyan for anything live (online, speaking, streaming).
-- On computers the app is three floating panels: a navigation rail, the list and the conversation, with frosted glass over a soft glow. On phones the list and conversation fill the screen, and the navigation floats at the bottom.
-- The light theme is one click away (the sun button on the rail, or the account menu) and is remembered. Fonts are Plus Jakarta Sans for text and Sora for headings.
+Two themes, each with its own colours and style. Switch with the sun or moon button on the rail, or from the account menu; your choice is remembered.
+
+- **Midnight Aurora (dark, the default):** a deep navy background, a violet-to-pink "aurora" gradient for the brand, your messages and main actions, and cyan for anything live (online, speaking, streaming). Panels are frosted glass over a soft glow, and the navigation rail is night blue.
+- **Ocean Mint (light):** crisp white and pale-blue surfaces, a teal-to-blue ocean gradient, navy text, and mint green for anything live. Panels are flat white with hairline borders and soft shadows, and the navigation rail is light.
+- The logo, the browser tab icon and the phone's address bar take on the theme's colours.
+- On computers the app is three floating panels: the navigation rail, the list and the conversation. On phones the list and conversation fill the screen, and the navigation floats at the bottom.
+- Fonts are Plus Jakarta Sans for text and Sora for headings.
 
 ## Host admin
 
@@ -187,7 +197,7 @@ Server settings:
 | Setting | What it does |
 |---|---|
 | `DATABASE_URL` | PostgreSQL connection string |
-| `JWT_SECRET` | Signs login cookies; use a long random string |
+| `JWT_SECRET` | Signs login cookies. Use a long random string (`openssl rand -hex 32`); in production the server won't start with the example value or anything under 32 characters |
 | `PORT`, `NODE_ENV` | API port (and in production, the whole app); `production` turns on secure cookies and the admin password lock |
 | `CF_TURN_KEY_ID`, `CF_TURN_KEY_API_TOKEN` | Cloudflare Realtime TURN key for calls, voice and live streams |
 | `FORCE_TURN_RELAY` | `true` sends all media through TURN, which hides people's IP addresses from each other |
@@ -200,6 +210,8 @@ Server settings:
 | `LIVE_MAX_VIEWERS` | Most viewers of a live stream from a device (default 10) |
 | `UPLOAD_DIR`, `UPLOAD_MAX_MB` | Where attachments are kept and the largest upload (default 25 MB) |
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | The host admin login created on first start (default `admin` / `admin`) |
+| `TRUST_PROXY` | Which proxies may report the visitor's address (default: one on the same machine, like nginx; set `1` if your proxy runs elsewhere) |
+| `ALLOWED_ORIGINS` | Extra web addresses allowed to use the app, only if it's reached under a different address than it runs on |
 
 To change the API port, change `PORT` in `server/.env` and the port in `API_URL` in `client/.env` to match. Values set in the shell override both files. Only `VITE_`-prefixed variables in `client/.env` reach browser code, so never put secrets there.
 
@@ -258,6 +270,8 @@ server {
 - Calls connect directly when they can, and fall back to Cloudflare's relay over UDP, TCP or TLS on ports 3478, 5349, 443 and 80.
 - To use another TURN server, leave the Cloudflare keys empty and set `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL`.
 
+**Compression:** the built app includes the 32 MB sound converter, which compresses to about 10 MB. Turn on gzip for it in your proxy (in nginx: `gzip on; gzip_types application/wasm application/javascript text/css;`). Built files are cached by browsers for a year, so each person downloads it at most once.
+
 **Back up** the database and the attachments folder (`server/uploads`, or `UPLOAD_DIR`) together.
 
 ## Scripts
@@ -283,7 +297,9 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 | `npm run test:attachments` | A large photo shrunk and delivered live; a file that only downloads; video in the chat; paste and drag; voice messages; replies and reactions; retrying a failed upload; the size limit; history after reload; files private to their chat or room; the phone's press-and-hold menu. |
 | `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses. Needs internet. |
 | `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. |
-| `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; pause and seek for viewers; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
+| `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; a movie with Dolby Digital 5.1 sound converted in the host's browser and heard by viewers, in sync after a jump; pause and seek for viewers; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
+| `npm run test:receipts` | One tick to someone offline, two ticks the moment they come back (for every waiting message), two at once when they're online, coloured when they open the chat; message info times; "Last seen just now" and back to "Online"; read receipts off (the sender only sees delivered, both ways, even after a reload); last seen hidden (no status either way, and the API doesn't reveal it); room ticks and "Seen by", room message info and member status; a faked read-ahead and someone else's message info refused. |
+| `npm run test:security` | Logged-out access; forged login cookies; requests and live connections from other websites; security headers; outsiders reaching other people's rooms, chats and files; members running a room; admin pages; relay links; signing out other sessions after a password change; bad input to every endpoint (no 500s); all 30 live events × 9 kinds of garbage (the server stays up); message limits and flooding; HTML and scripts in messages, names and rooms showing as plain text. |
 | `npm run test:admin` | The `admin` / `admin` login; the Admin tab and API only for host admins; the overview; roles, switching accounts off and on, new passwords, adding and removing people; deleting rooms; closing sign-ups; announcements; changing your own password; the admin pages on a phone. The admin must still have its default password (`npm run admin:reset`). |
 
 ## Project layout
@@ -311,11 +327,15 @@ docs/                   The logo and README screenshots
 
 ## Security
 
-- **Passwords and logins:** passwords are hashed with bcrypt. Logins use an httpOnly JWT cookie, and login and sign-up are rate-limited. Switched-off accounts are refused everywhere at once.
-- **Private files:** attachments are only served to the people in their chat or room. A file's type is decided from its contents, not its name, so only real photos, videos and audio show inside the page; everything else is served as a download with a restrictive content policy.
-- **Fetching links:** the server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. Relay links are signed.
-- **TURN key:** the Cloudflare TURN key stays on the server; browsers only get short-lived credentials.
-- **Admin password:** the default admin password must be changed before the admin API works in production.
+- **Logins:** passwords are hashed with bcrypt. Logins use an httpOnly, SameSite login cookie signed with `JWT_SECRET` (only HS256 is accepted). Sign-in and sign-up are rate-limited, and a sign-in takes as long for an unknown email as for a wrong password, so it can't reveal who has an account.
+- **Sessions:** changing your password signs you out everywhere else; a host admin setting a new password for someone signs them out everywhere. Switched-off accounts are refused at once, including their live connection.
+- **Other websites:** requests that change something, and live connections, are refused when the browser says they come from another site (`Sec-Fetch-Site`, or `Origin` on older browsers). Pages can't be framed by other sites (clickjacking), and the built app sends a content security policy that only allows its own scripts (plus YouTube's player).
+- **Private data:** rooms, their messages and files are only served to members; chats only to the two people in them; the admin API only to host admins. A message is always sent as the person whose login sent it.
+- **Files:** a file's type is decided from its contents, not its name, so only real photos, videos and audio show inside the page; everything else (including SVG and HTML) is only downloaded, with a sandboxing content policy.
+- **Input:** every endpoint validates its input and answers bad input with a clear error. Every live event is guarded, so no payload can crash the server, and messages and reactions are rate-limited against flooding. Queries are parameterised throughout.
+- **Fetching links:** the server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. Relay links are signed and only work for the room's members.
+- **Secrets:** the Cloudflare TURN key stays on the server; browsers only get short-lived credentials. The default `admin` password must be changed before the admin API works in production.
+- **Checking it:** `npm run test:security` tries all of the above against a running server, and `npm audit` reports no known vulnerabilities in the dependencies.
 
 ## Limits to know about
 

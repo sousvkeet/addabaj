@@ -1,17 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
-import { KeyRound, LogOut, Mail, MessageCircle, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
+import { EyeOff, KeyRound, LogOut, Mail, MessageCircle, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { useUi } from '../store/ui';
 import { Avatar } from './ui/Avatar';
 import { Logo } from './ui/Logo';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
+import { PrivacyDialog } from './PrivacyDialog';
 
 function Badge({ count }: { count: number }) {
   if (!count) return null;
   return (
-    <span className="absolute -top-1 -right-1.5 min-w-[19px] rounded-full bg-brand-2 px-1 text-center text-[11px] leading-[19px] font-bold text-white shadow-[0_0_0_2px_var(--deep),0_4px_12px_-2px_var(--brand-2)]">
+    <span className="absolute -top-1 -right-1.5 min-w-[19px] rounded-full bg-brand-2 px-1 text-center text-[11px] leading-[19px] font-bold text-white shadow-[0_0_0_2px_var(--rail),0_4px_12px_-2px_var(--brand-2)]">
       {count > 99 ? '99+' : count}
     </span>
   );
@@ -35,9 +36,9 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
   return (
     <nav
       aria-label="Main"
-      className={`${hiddenOnMobile ? 'hidden md:flex' : 'flex'} bg-rail fixed inset-x-3 bottom-[max(12px,env(safe-area-inset-bottom))] z-30 h-[68px] items-center justify-around rounded-[26px] border border-white/10 px-2 text-on-brand shadow-float md:relative md:inset-auto md:z-[44] md:h-full md:w-[84px] md:flex-col md:justify-start md:gap-2 md:rounded-[28px] md:px-0 md:pt-5 md:pb-4`}
+      className={`${hiddenOnMobile ? 'hidden md:flex' : 'flex'} bg-rail fixed inset-x-3 bottom-[max(12px,env(safe-area-inset-bottom))] z-30 h-[68px] items-center justify-around rounded-[26px] border border-rail-line px-2 text-rail-ink shadow-float md:relative md:inset-auto md:z-[44] md:h-full md:w-[84px] md:flex-col md:justify-start md:gap-2 md:rounded-[28px] md:px-0 md:pt-5 md:pb-4`}
     >
-      <Logo size={44} className="mb-5 hidden drop-shadow-[0_8px_18px_rgb(124_92_255/0.55)] md:block" />
+      <Logo size={44} className="mb-5 hidden drop-shadow-[0_8px_18px_var(--logo-glow)] md:block" />
       {items.map(({ to, label, Icon, badge }) => (
         <NavLink
           key={to}
@@ -49,13 +50,13 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
             <>
               <span
                 className={`relative flex h-10 w-12 items-center justify-center rounded-2xl transition-all ${
-                  isActive ? 'bg-aurora text-white shadow-glow' : 'text-on-brand/60 group-hover:bg-white/8 group-hover:text-on-brand'
+                  isActive ? 'bg-aurora text-white shadow-glow' : 'text-rail-ink/60 group-hover:bg-rail-ink/8 group-hover:text-rail-ink'
                 }`}
               >
                 <Icon size={21} strokeWidth={2} />
                 <Badge count={badge} />
               </span>
-              <span className={isActive ? 'text-on-brand' : 'text-on-brand/55 group-hover:text-on-brand/85'}>{label}</span>
+              <span className={isActive ? 'text-rail-ink' : 'text-rail-ink/55 group-hover:text-rail-ink/85'}>{label}</span>
             </>
           )}
         </NavLink>
@@ -66,7 +67,7 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
         onClick={toggleTheme}
         aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
         title={theme === 'dark' ? 'Light theme' : 'Dark theme'}
-        className="mb-2 hidden size-11 items-center justify-center rounded-2xl text-on-brand/60 transition-colors hover:bg-white/8 hover:text-on-brand md:flex"
+        className="mb-2 hidden size-11 items-center justify-center rounded-2xl text-rail-ink/60 transition-colors hover:bg-rail-ink/8 hover:text-rail-ink md:flex"
       >
         {theme === 'dark' ? <Sun size={19} /> : <Moon size={19} />}
       </button>
@@ -83,6 +84,7 @@ function AccountMenu() {
   const openDevices = useUi((s) => s.setDevicesOpen);
   const [open, setOpen] = useState(false);
   const [changing, setChanging] = useState(false);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -110,7 +112,7 @@ function AccountMenu() {
         className="rounded-full p-[2px] transition-transform hover:scale-105"
         style={{ background: 'linear-gradient(135deg, var(--brand), var(--brand-2))' }}
       >
-        <span className="block rounded-full bg-deep p-[2px]">
+        <span className="block rounded-full bg-rail p-[2px]">
           <Avatar name={user.name} hue={user.hue} size={38} />
         </span>
       </button>
@@ -150,6 +152,18 @@ function AccountMenu() {
             <KeyRound size={17} className="text-ink-soft" />
             Change password
           </button>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setPrivacyOpen(true);
+            }}
+            className={item}
+          >
+            <EyeOff size={17} className="text-ink-soft" />
+            Privacy: last seen and read receipts
+          </button>
           <button role="menuitem" type="button" onClick={toggleTheme} className={item}>
             {theme === 'dark' ? <Sun size={17} className="text-ink-soft" /> : <Moon size={17} className="text-ink-soft" />}
             {theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
@@ -161,6 +175,7 @@ function AccountMenu() {
         </div>
       )}
       <ChangePasswordDialog open={changing} onClose={() => setChanging(false)} />
+      <PrivacyDialog open={privacyOpen} onClose={() => setPrivacyOpen(false)} />
     </div>
   );
 }

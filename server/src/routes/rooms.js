@@ -5,7 +5,7 @@ import { limits } from '../config.js';
 import { assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, userChannel } from '../realtime.js';
 import { announceRoomChanged, attachMember, detachMember, inviteForInvitee, listRooms, lockSeat, postSystemMessage, requireAdmin, requireMember, roomDetail, roomMessage, ROOM_MESSAGE_SELECT, deleteRoom } from '../services/rooms.js';
-import { findUser } from '../services/users.js';
+import { findUser, publicUser } from '../services/users.js';
 import { enrich } from '../services/messages.js';
 
 export const roomsRouter = Router();
@@ -109,6 +109,31 @@ roomsRouter.get('/:id/messages', async (req, res) => {
     [roomId, before, limit + 1],
   );
   res.json({ messages: await enrich('room', rows.slice(0, limit).reverse().map(roomMessage)), hasMore: rows.length > limit });
+});
+
+// "Message info" for your own message: who in the room has it and who has seen it.
+roomsRouter.get('/:id/messages/:messageId/info', async (req, res) => {
+  const roomId = req.params.id;
+  await requireMember(roomId, req.userId);
+  const messageId = Number(req.params.messageId);
+  if (!Number.isSafeInteger(messageId) || messageId <= 0) throw notFound("That message doesn't exist.");
+  const message = await one('SELECT sender_id FROM room_messages WHERE id = $1 AND room_id = $2', [messageId, roomId]);
+  if (!message) throw notFound("That message doesn't exist.");
+  if (message.sender_id !== req.userId) throw forbidden('You can only see who read your own messages.');
+  const { rows } = await query(
+    `SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, rm.last_read_id, rm.last_delivered_id, rm.last_read_at
+     FROM room_members rm JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = $1 AND rm.user_id <> $2
+     ORDER BY lower(u.name)`,
+    [roomId, req.userId],
+  );
+  res.json({
+    members: rows.map((r) => ({
+      user: publicUser(r, req.userId),
+      read: Number(r.last_read_id) >= messageId,
+      delivered: Math.max(Number(r.last_delivered_id), Number(r.last_read_id)) >= messageId,
+    })),
+  });
 });
 
 // Admin adds someone straight into the room.

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { Search } from 'lucide-react';
 import { api, errorMessage } from '../lib/api';
 import type { PickerUser } from '../lib/types';
+import { lastSeen } from '../lib/format';
 import { useChat } from '../store/chat';
 import { toast } from '../store/ui';
 import { Avatar } from './ui/Avatar';
@@ -118,7 +119,12 @@ export function UserPicker(props: Props) {
               <Avatar name={u.name} hue={u.hue} size={40} online={online[u.id]} />
               <span className="min-w-0">
                 <span className="block truncate font-semibold">{u.name}</span>
-                <span className="block truncate text-[13px] text-ink-soft">{u.email}</span>
+                <span className="block truncate text-[13px] text-ink-soft">
+                  {u.email}
+                  {!u.presenceHidden && (online[u.id] || u.lastSeenAt) && (
+                    <span className={online[u.id] ? 'font-medium text-live-ink' : ''}> · {online[u.id] ? 'Online' : lastSeen(u.lastSeenAt).replace('Last seen ', 'seen ')}</span>
+                  )}
+                </span>
               </span>
             </button>
             {props.mode === 'room' &&

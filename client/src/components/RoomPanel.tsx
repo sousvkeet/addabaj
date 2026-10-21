@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Crown, LogOut, MessageCircle, Settings, ShieldCheck, UserMinus, UserPlus, X } from 'lucide-react';
 import { errorMessage } from '../lib/api';
+import { lastSeen } from '../lib/format';
+import { useNow } from '../lib/useMedia';
 import type { RoomDetail, RoomMember } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -23,6 +25,15 @@ type Props = {
 export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
   const me = useAuth((s) => s.user);
   const online = useChat((s) => s.online);
+  const seen = useChat((s) => s.lastSeen);
+  const hidden = useChat((s) => s.hiddenPresence);
+  // "Last seen 5 min ago" keeps counting.
+  useNow(60_000);
+  /** "Online", "Last seen 5 min ago", or nothing when they (or I) don't share it. */
+  const status = (m: RoomMember) => {
+    if (m.id === me?.id || (hidden[m.id] ?? m.presenceHidden)) return null;
+    return online[m.id] ? 'Online' : lastSeen(seen[m.id] ?? m.lastSeenAt);
+  };
   const removeMember = useChat((s) => s.removeMember);
   const setRole = useChat((s) => s.setRole);
   const cancelInvite = useChat((s) => s.cancelInvite);
@@ -111,10 +122,16 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
                       {m.name}
                       {m.id === me?.id && <span className="font-normal text-ink-soft"> (you)</span>}
                     </span>
-                    {(m.id === room.ownerId || m.role === 'admin') && (
-                      <span className="flex items-center gap-1 text-[12.5px] text-ink-soft">
-                        {m.id === room.ownerId ? <Crown size={12} /> : <ShieldCheck size={12} />}
-                        {m.id === room.ownerId ? 'Admin, started the room' : 'Admin'}
+                    {(m.id === room.ownerId || m.role === 'admin' || status(m)) && (
+                      <span className="flex min-w-0 items-center gap-1 text-[12.5px] text-ink-soft">
+                        {(m.id === room.ownerId || m.role === 'admin') && (
+                          <>
+                            {m.id === room.ownerId ? <Crown size={12} className="shrink-0" /> : <ShieldCheck size={12} className="shrink-0" />}
+                            <span className="shrink-0">{m.id === room.ownerId ? 'Admin, started the room' : 'Admin'}</span>
+                            {status(m) && <span aria-hidden>·</span>}
+                          </>
+                        )}
+                        {status(m) && <span className={`truncate ${online[m.id] ? 'font-medium text-live-ink' : ''}`}>{status(m)}</span>}
                       </span>
                     )}
                   </span>

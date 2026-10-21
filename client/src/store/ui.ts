@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { paintChrome } from '../lib/chrome';
 
 export type Toast = { id: number; text: string; tone: 'info' | 'error' | 'live' };
 type Theme = 'light' | 'dark';
@@ -35,7 +36,7 @@ export const useUi = create<UiState>()((set, get) => ({
   toggleTheme: () => {
     const theme: Theme = get().theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#090C1A' : '#F3F4FB');
+    paintChrome(theme);
     try {
       localStorage.setItem('adda-theme', theme);
     } catch {

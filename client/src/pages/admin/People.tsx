@@ -182,7 +182,7 @@ export function People() {
                   <dd className="font-semibold tabular-nums">{u.messages.toLocaleString()}</dd>
                 </div>
               </dl>
-              <span className={`hidden w-[150px] shrink-0 text-right text-[12.5px] sm:block ${u.online ? 'font-semibold text-cyan-700 dark:text-live' : 'text-ink-soft'}`}>
+              <span className={`hidden w-[150px] shrink-0 text-right text-[12.5px] sm:block ${u.online ? 'font-semibold text-live-ink' : 'text-ink-soft'}`}>
                 {u.online ? 'Online now' : lastSeen(u.lastSeenAt).replace('Last seen ', 'Seen ')}
               </span>
               <span className="w-8 shrink-0">

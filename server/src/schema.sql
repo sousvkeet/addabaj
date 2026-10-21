@@ -126,6 +126,8 @@ CREATE TABLE IF NOT EXISTS room_reactions (
 ALTER TABLE users ADD COLUMN IF NOT EXISTS site_role text NOT NULL DEFAULT 'user';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at timestamptz;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password boolean NOT NULL DEFAULT false;
+-- Logins issued before this moment no longer count (set when a password changes).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS sessions_valid_after timestamptz;
 DO $$ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_site_role_check') THEN
     ALTER TABLE users ADD CONSTRAINT users_site_role_check CHECK (site_role IN ('user', 'admin'));
@@ -137,3 +139,14 @@ CREATE TABLE IF NOT EXISTS site_settings (
   value      jsonb NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Delivery and read receipts, and privacy. A chat message is delivered once the
+-- recipient's app has it; a room member's delivered / read points move forward
+-- as their app receives and shows messages.
+ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS delivered_at timestamptz;
+UPDATE dm_messages SET delivered_at = read_at WHERE delivered_at IS NULL AND read_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS dm_undelivered_idx ON dm_messages (recipient_id) WHERE delivered_at IS NULL;
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS last_delivered_id bigint NOT NULL DEFAULT 0;
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS last_read_at timestamptz;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS share_presence boolean NOT NULL DEFAULT true;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts boolean NOT NULL DEFAULT true;

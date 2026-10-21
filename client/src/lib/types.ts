@@ -11,6 +11,10 @@ export type User = {
   mustChangePassword?: boolean;
   /** On a public server that default must be changed before anything else. */
   passwordChangeRequired?: boolean;
+  /** Online status and last seen aren't shared (by them, or by you, which works both ways). */
+  presenceHidden?: boolean;
+  /** Only on your own account: your privacy choices. */
+  privacy?: { sharePresence: boolean; readReceipts: boolean };
 };
 
 export type Announcement = { id: string; text: string; at: string };
@@ -73,6 +77,8 @@ export type DmMessage = MessageExtras & {
   body: string;
   meta: { outcome?: 'completed' | 'missed' | 'declined'; duration?: number; video?: boolean } | null;
   createdAt: string;
+  /** When the other person's app got it (null: not yet). */
+  deliveredAt: string | null;
   readAt: string | null;
   /** Client-only: optimistic send state. */
   pending?: 'sending' | 'failed';
@@ -176,7 +182,16 @@ export type RoomSummary = {
   watching?: string | null;
 };
 
-export type RoomMember = User & { role: Role; joinedAt: string };
+export type RoomMember = User & {
+  role: Role;
+  joinedAt: string;
+  /** The newest message this member has seen, and the newest their app has received. */
+  lastReadId: number;
+  lastDeliveredId: number;
+};
+
+/** Where a message of mine has got to. */
+export type Receipt = 'sent' | 'delivered' | 'read';
 
 export type RoomInviteAdminView = {
   id: string;

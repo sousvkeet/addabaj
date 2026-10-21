@@ -18,7 +18,9 @@
     "test:live": "node tests/live-stream.mjs",
     "setup:ffmpeg": "npm run setup:ffmpeg -w server",
     "admin:reset": "npm run admin:reset -w server",
-    "test:admin": "node tests/admin.mjs"
+    "test:admin": "node tests/admin.mjs",
+    "test:security": "node tests/security.mjs",
+    "test:receipts": "node tests/receipts.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

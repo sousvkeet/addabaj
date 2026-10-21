@@ -10,6 +10,8 @@ const SHOTS = new URL('./screenshots/', import.meta.url).pathname;
 mkdirSync(SHOTS, { recursive: true });
 const stamp = Date.now().toString(36);
 const clip = readFileSync(new URL('./fixtures/tone-60s.webm', import.meta.url)); // 640×360, 440 Hz tone, 60 s
+// H.264 picture with Dolby Digital 5.1 sound, which browsers can't play: the host's browser converts it.
+const dolby = readFileSync(new URL('./fixtures/dolby-24s.mkv', import.meta.url));
 
 const browser = await chromium.launch({
   // No autoplay override: viewers must work under Chrome's real autoplay rules.
@@ -221,6 +223,34 @@ await check('Asha stops streaming; everyone’s player goes away', async () => {
   await stage(B.page).waitFor({ state: 'detached', timeout: 5000 });
   await stage(C.page).waitFor({ state: 'detached', timeout: 5000 });
   await B.page.getByRole('log').getByText('Asha Sen ended the live stream').waitFor({ timeout: 5000 });
+});
+
+await check('a movie with Dolby Digital 5.1 sound is converted in Asha’s browser, and everyone hears it, also after a jump', async () => {
+  await A.page.getByRole('button', { name: 'Watch together' }).click();
+  const dlg = A.page.getByRole('dialog');
+  await dlg.getByRole('tab', { name: 'From your device' }).click();
+  await dlg.locator('input[type=file]').setInputFiles({ name: 'Dolby movie.mkv', mimeType: 'video/x-matroska', buffer: dolby });
+  // The first time, this includes downloading the sound converter.
+  await dlg.waitFor({ state: 'detached', timeout: 90_000 });
+  await stage(A.page).getByText('Sound converted from Dolby Digital 5.1').waitFor({ timeout: 10_000 });
+  const before = await seesStream(B);
+  console.log(`     converted sound: ${JSON.stringify(before)}`);
+  await A.page.screenshot({ path: `${SHOTS}live-07-dolby-host.png` });
+  await stage(A.page).getByRole('slider', { name: 'Position' }).fill('15');
+  await B.page.waitForTimeout(3500);
+  await seesStream(B);
+  const drift = await A.page.evaluate(() => {
+    const [video, audio] = [document.querySelector('video[src^="blob:"]'), document.querySelector('audio[data-sound-fix]')];
+    return audio && video ? Math.abs(audio.currentTime - video.currentTime) : null;
+  });
+  if (drift === null || drift > 0.35) throw new Error(`sound is ${drift}s off the picture`);
+  // Muting her own speakers must not mute the converted sound for viewers.
+  await stage(A.page).getByRole('button', { name: 'Mute (only for you)' }).click();
+  await A.page.waitForTimeout(800);
+  await seesStream(B);
+  await stage(A.page).getByRole('button', { name: 'Unmute (only for you)' }).click();
+  await stage(A.page).getByRole('button', { name: 'Stop streaming' }).click();
+  await stage(B.page).waitFor({ state: 'detached', timeout: 5000 });
 });
 
 await check('Asha shares her screen; Rahul sees it with sound', async () => {

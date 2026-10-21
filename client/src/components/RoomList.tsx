@@ -69,7 +69,7 @@ export function RoomList() {
                     )}
                     {talking > 0 && (
                       <span
-                        className="inline-flex items-center gap-1 rounded-full bg-live/15 px-1.5 text-[12px] leading-5 font-semibold text-cyan-700 dark:text-live"
+                        className="inline-flex items-center gap-1 rounded-full bg-live/15 px-1.5 text-[12px] leading-5 font-semibold text-live-ink"
                         title={`${talking} in voice`}
                       >
                         <AudioLines size={12} />

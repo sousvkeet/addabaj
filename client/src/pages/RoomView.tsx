@@ -3,7 +3,7 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, AudioLines, Headphones, LoaderCircle, MonitorPlay, Users } from 'lucide-react';
 import { socket } from '../lib/socket';
 import { useMedia } from '../lib/useMedia';
-import type { ReplyRef, VoiceParticipant } from '../lib/types';
+import type { Receipt, ReplyRef, RoomMember, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
 import { useChat } from '../store/chat';
@@ -13,10 +13,20 @@ import { Button, IconButton } from '../components/ui/Button';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { FileDrop } from '../components/FileDrop';
 import { MessageList, TypingLine, replyRefFor, type ThreadItem } from '../components/MessageList';
+import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
 import { RoomPanel } from '../components/RoomPanel';
 import { WatchDialog, WatchStage } from '../components/watch/WatchStage';
 
 const EMPTY: VoiceParticipant[] = [];
+
+/** "Seen by Rahul and Mitali", "Seen by Rahul, Mitali and 3 others", "Seen by everyone". */
+function seenText(readers: RoomMember[], audience: number) {
+  if (!readers.length) return undefined;
+  if (readers.length === audience && audience > 2) return 'Seen by everyone';
+  const names = readers.map((r) => r.name.split(' ')[0]);
+  if (names.length <= 2) return `Seen by ${names.join(' and ')}`;
+  return `Seen by ${names.slice(0, 2).join(', ')} and ${names.length - 2} ${names.length - 2 === 1 ? 'other' : 'others'}`;
+}
 
 function typingText(names: string[]) {
   if (names.length === 0) return null;
@@ -49,6 +59,7 @@ export function RoomView() {
   const [addOpen, setAddOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const [info, setInfo] = useState<InfoTarget | null>(null);
   const composer = useRef<ComposerHandle>(null);
 
   useEffect(() => {
@@ -67,25 +78,42 @@ export function RoomView() {
     }
   }, [location.state, location.pathname, detail, wide, navigate]);
 
-  const items = useMemo<ThreadItem[]>(
-    () =>
-      (page?.items ?? []).map((m) => ({
+  const members = detail?.members;
+  const items = useMemo<ThreadItem[]>(() => {
+    const list = page?.items ?? [];
+    const others = (members ?? []).filter((x) => x.id !== me?.id);
+    const isMine = (m: (typeof list)[number]) => m.sender?.id === me?.id && m.kind === 'text';
+    const latestMine = list.reduce((id, m) => (isMine(m) && !m.pending && m.id > id ? m.id : id), 0);
+    return list.map((m) => {
+      const mine = isMine(m);
+      let receipt: Receipt | undefined;
+      let seenBy: string | undefined;
+      if (mine && m.id > 0) {
+        // Who was in the room when it was sent: delivered / read once all of them have it / saw it.
+        const audience = others.filter((o) => new Date(o.joinedAt).getTime() <= new Date(m.createdAt).getTime());
+        const readers = audience.filter((o) => o.lastReadId >= m.id);
+        receipt = !audience.length ? 'sent' : readers.length === audience.length ? 'read' : audience.every((o) => o.lastDeliveredId >= m.id) ? 'delivered' : 'sent';
+        if (m.id === latestMine) seenBy = seenText(readers, audience.length);
+      }
+      return {
         key: m.tempId ?? String(m.id),
         id: m.id,
-        mine: m.sender?.id === me?.id && m.kind === 'text',
+        mine,
         kind: m.kind,
         body: m.body,
         createdAt: m.createdAt,
         sender: m.sender,
         pending: m.pending,
+        receipt,
+        seenBy,
         attachment: m.attachment,
         replyTo: m.replyTo,
         reactions: m.reactions,
         upload: m.upload,
         draft: m.draft,
-      })),
-    [page?.items, me?.id],
-  );
+      };
+    });
+  }, [page?.items, me?.id, members]);
 
   if (!room) {
     return (
@@ -126,7 +154,7 @@ export function RoomView() {
                 {room.memberCount} of {room.maxMembers} members
               </span>
               {voiceList.length > 0 && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-cyan-700 dark:text-live">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-live-ink">
                   <AudioLines size={12} />
                   {voiceList.length} in voice
                 </span>
@@ -173,6 +201,7 @@ export function RoomView() {
             meId={me?.id ?? ''}
             onRetry={(item) => void sendRoomMessage(roomId, item.draft ?? { body: item.body }, item.key)}
             onReply={(item) => setReplyTo(replyRefFor(item))}
+            onInfo={(item) => setInfo({ scope: 'room', roomId, messageId: item.id, sentAt: item.createdAt })}
             onReact={(item, emoji) => void react('room', item.id, emoji)}
           />
           <TypingLine text={typingText(typingNames)} />
@@ -186,6 +215,7 @@ export function RoomView() {
             onCancelReply={() => setReplyTo(null)}
           />
         </FileDrop>
+        <MessageInfo target={info} onClose={() => setInfo(null)} />
       </div>
 
       {room.myRole === 'admin' && (

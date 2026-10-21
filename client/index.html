@@ -14,10 +14,15 @@
     />
     <script>
       try {
-        // Dark first: light only when someone picks it.
-        var t = localStorage.getItem('adda-theme');
-        document.documentElement.dataset.theme = t === 'light' ? 'light' : 'dark';
-        document.querySelector('meta[name="theme-color"]').setAttribute('content', t === 'light' ? '#F3F4FB' : '#090C1A');
+        // Dark first: light only when someone picks it. The tab icon and
+        // address bar follow (src/lib/chrome.ts does the same after a switch).
+        var t = localStorage.getItem('adda-theme') === 'light' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = t;
+        var c = t === 'light' ? ['%2314B8A6', '%233B82F6', '%2334D399', '#F4F8FB'] : ['%237C5CFF', '%23FF5CA8', '%2322D3EE', '#090C1A'];
+        document.querySelector('meta[name="theme-color"]').setAttribute('content', c[3]);
+        document.querySelector('link[rel="icon"]').href =
+          "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='" + c[0] +
+          "'/><stop offset='1' stop-color='" + c[1] + "'/></linearGradient></defs><rect width='64' height='64' rx='18' fill='url(%23g)'/><path d='M20 46 32 16l12 30M24.5 36h15' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/><circle cx='49' cy='15' r='6' fill='" + c[2] + "'/></svg>";
       } catch (e) {}
     </script>
   </head>

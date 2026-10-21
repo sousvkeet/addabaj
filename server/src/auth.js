@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { AppError } from './errors.js';
-import { isDisabled } from './services/site.js';
+import { isDisabled, sessionValid } from './services/site.js';
 
 export const COOKIE_NAME = 'adda_token';
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -10,10 +10,12 @@ export function signToken(userId) {
   return jwt.sign({ sub: userId }, config.jwtSecret, { expiresIn: '30d' });
 }
 
+/** The person a login cookie belongs to, or null if it's invalid, expired or signed out. */
 export function verifyToken(token) {
   try {
-    const payload = jwt.verify(token, config.jwtSecret);
-    return typeof payload.sub === 'string' ? payload.sub : null;
+    const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] });
+    if (typeof payload.sub !== 'string') return null;
+    return sessionValid(payload.sub, payload.iat) ? payload.sub : null;
   } catch {
     return null;
   }
@@ -35,8 +37,10 @@ export function clearAuthCookie(res) {
 
 export function requireAuth(req, _res, next) {
   const userId = verifyToken(req.cookies?.[COOKIE_NAME]);
-  if (!userId) return next(new AppError(401, 'Log in to continue.'));
-  if (isDisabled(userId)) return next(new AppError(401, 'This account has been switched off by the host.'));
+  if (!userId) {
+    const switchedOff = isDisabled(jwt.decode(req.cookies?.[COOKIE_NAME] ?? '')?.sub);
+    return next(new AppError(401, switchedOff ? 'This account has been switched off by the host.' : 'Log in to continue.'));
+  }
   req.userId = userId;
   next();
 }

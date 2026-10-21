@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  ArrowDown, Check, CheckCheck, Clock, Download, FileText, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Video, X,
+  ArrowDown, Check, CheckCheck, Clock, Download, FileText, Info, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Video, X,
 } from 'lucide-react';
 import { attachmentLabel, clock, dayLabel, duration, formatBytes, sameDay } from '../lib/format';
-import type { Attachment, Draft, Reaction, ReplyRef } from '../lib/types';
+import type { Attachment, Draft, Reaction, Receipt, ReplyRef } from '../lib/types';
 import { Avatar } from './ui/Avatar';
 import { VoicePlayer } from './VoicePlayer';
 
@@ -16,7 +16,10 @@ export type ThreadItem = {
   body: string;
   createdAt: string;
   sender?: { id: string; name: string; hue: number } | null;
-  readAt?: string | null;
+  /** For my messages: sent, delivered or read. */
+  receipt?: Receipt;
+  /** Under my latest room message: "Seen by Rahul and Mitali". */
+  seenBy?: string;
   pending?: 'sending' | 'failed';
   callOutcome?: 'completed' | 'missed' | 'declined';
   callDuration?: number;
@@ -35,11 +38,12 @@ type Props = {
   loadingMore?: boolean;
   onLoadOlder: () => void;
   showSenders?: boolean;
-  receipts?: boolean;
   meId: string;
   onRetry: (item: ThreadItem) => void;
   onReply: (item: ThreadItem) => void;
   onReact: (item: ThreadItem, emoji: string) => void;
+  /** "Message info" for my messages: when it was delivered and read, and by whom. */
+  onInfo?: (item: ThreadItem) => void;
   onCallBack?: (video: boolean) => void;
   empty?: ReactNode;
 };
@@ -60,7 +64,7 @@ export function replyRefFor(item: ThreadItem): ReplyRef {
 }
 
 export function MessageList({
-  items, loaded, hasMore, loadingMore, onLoadOlder, showSenders, receipts, meId, onRetry, onReply, onReact, onCallBack, empty,
+  items, loaded, hasMore, loadingMore, onLoadOlder, showSenders, meId, onRetry, onReply, onReact, onInfo, onCallBack, empty,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -148,10 +152,10 @@ export function MessageList({
                   item={item}
                   groupStart={groupStart}
                   showSender={!!showSenders}
-                  receipts={!!receipts}
                   meId={meId}
                   onRetry={onRetry}
                   onReply={onReply}
+                  onInfo={onInfo}
                   onReact={onReact}
                   onOpenSheet={setSheetFor}
                   onView={setViewing}
@@ -182,6 +186,14 @@ export function MessageList({
             onReply(sheetFor);
             setSheetFor(null);
           }}
+          onInfo={
+            onInfo && sheetFor.mine
+              ? () => {
+                  onInfo(sheetFor);
+                  setSheetFor(null);
+                }
+              : undefined
+          }
           onReact={(emoji) => {
             onReact(sheetFor, emoji);
             setSheetFor(null);
@@ -198,10 +210,10 @@ type MessageProps = {
   item: ThreadItem;
   groupStart: boolean;
   showSender: boolean;
-  receipts: boolean;
   meId: string;
   onRetry: (item: ThreadItem) => void;
   onReply: (item: ThreadItem) => void;
+  onInfo?: (item: ThreadItem) => void;
   onReact: (item: ThreadItem, emoji: string) => void;
   onOpenSheet: (item: ThreadItem) => void;
   onView: (a: Attachment) => void;
@@ -210,7 +222,7 @@ type MessageProps = {
 };
 
 function Message(props: MessageProps) {
-  const { item, groupStart, showSender, receipts, meId, onRetry, onReply, onReact, onOpenSheet, onView, onJump, onCallBack } = props;
+  const { item, groupStart, showSender, meId, onRetry, onReply, onInfo, onReact, onOpenSheet, onView, onJump, onCallBack } = props;
   const [picking, setPicking] = useState(false);
   const pressTimer = useRef(0);
 
@@ -278,10 +290,12 @@ function Message(props: MessageProps) {
       {showSender && !item.mine && (
         <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} size={32} />}</span>
       )}
-      {item.mine && canAct && <Actions picking={picking} setPicking={setPicking} onReply={() => onReply(item)} onReact={(e) => onReact(item, e)} />}
+      {item.mine && canAct && (
+        <Actions picking={picking} setPicking={setPicking} onReply={() => onReply(item)} onReact={(e) => onReact(item, e)} onInfo={onInfo ? () => onInfo(item) : undefined} />
+      )}
       <div className={`flex max-w-[min(78%,560px)] flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
         {showName && (
-          <span style={nameStyle} className="mb-1 ml-1 text-[12.5px] font-bold text-[hsl(var(--h)_70%_44%)] dark:text-[hsl(var(--h)_90%_74%)]">
+          <span style={nameStyle} className="mb-1 ml-1 text-[12.5px] font-bold text-[hsl(var(--h)_75%_32%)] dark:text-[hsl(var(--h)_90%_74%)]">
             {sender.name}
           </span>
         )}
@@ -311,18 +325,18 @@ function Message(props: MessageProps) {
             <div className="relative">
               <AttachmentView attachment={a} mine={item.mine} upload={item.pending === 'sending' ? item.upload : undefined} onView={onView} />
               {/* A photo without a caption carries its time on the picture. */}
-              {a.kind === 'image' && !item.body && <Meta item={item} receipts={receipts} overlay />}
+              {a.kind === 'image' && !item.body && <Meta item={item} overlay />}
             </div>
           )}
           {(item.body || !a) && (
             <div className={media ? 'px-2.5 pt-1.5 pb-1' : a ? 'pt-1.5' : ''}>
               <span className="break-words whitespace-pre-wrap">{item.body}</span>
-              <Meta item={item} receipts={receipts} />
+              <Meta item={item} />
             </div>
           )}
           {a && a.kind !== 'image' && !item.body && (
             <div className={`flex justify-end ${media ? 'px-2 pb-0.5' : ''}`}>
-              <Meta item={item} receipts={receipts} />
+              <Meta item={item} />
             </div>
           )}
         </div>
@@ -353,13 +367,23 @@ function Message(props: MessageProps) {
             Not sent. Tap to retry
           </button>
         )}
+        {item.seenBy && (
+          <button
+            type="button"
+            onClick={() => onInfo?.(item)}
+            className="mt-1 flex items-center gap-1 text-[12px] font-medium text-ink-soft hover:text-ink hover:underline"
+          >
+            <CheckCheck size={13} className="text-live-ink" />
+            {item.seenBy}
+          </button>
+        )}
       </div>
       {!item.mine && canAct && <Actions picking={picking} setPicking={setPicking} onReply={() => onReply(item)} onReact={(e) => onReact(item, e)} />}
     </div>
   );
 }
 
-function Meta({ item, receipts, overlay }: { item: ThreadItem; receipts: boolean; overlay?: boolean }) {
+function Meta({ item, overlay }: { item: ThreadItem; overlay?: boolean }) {
   const place = overlay
     ? 'pointer-events-none absolute right-2 bottom-2 rounded-full bg-black/50 px-2 py-[3px] text-white'
     : `float-right mt-[7px] ml-3 ${item.mine ? 'text-white/75' : 'text-ink-soft'}`;
@@ -369,17 +393,34 @@ function Meta({ item, receipts, overlay }: { item: ThreadItem; receipts: boolean
       {item.mine &&
         (item.pending === 'sending' ? (
           <Clock size={13} aria-label="Sending" />
-        ) : item.pending === 'failed' ? null : receipts && item.readAt ? (
-          <CheckCheck size={15} className="text-white drop-shadow-[0_0_4px_var(--live)]" aria-label="Read" />
-        ) : (
-          <Check size={14} aria-label="Sent" />
+        ) : item.pending === 'failed' ? null : (
+          <Ticks receipt={item.receipt ?? 'sent'} />
         ))}
     </span>
   );
 }
 
+/** One tick: sent. Two: delivered to their device. Two in colour: read. */
+function Ticks({ receipt }: { receipt: Receipt }) {
+  if (receipt === 'read') return <CheckCheck size={15} strokeWidth={2.6} className="text-tick-read" aria-label="Read" />;
+  if (receipt === 'delivered') return <CheckCheck size={15} aria-label="Delivered" />;
+  return <Check size={14} aria-label="Sent" />;
+}
+
 /** Reply and react buttons beside a message (shown on hover or keyboard focus). */
-function Actions({ picking, setPicking, onReply, onReact }: { picking: boolean; setPicking: (v: boolean) => void; onReply: () => void; onReact: (emoji: string) => void }) {
+function Actions({
+  picking,
+  setPicking,
+  onReply,
+  onReact,
+  onInfo,
+}: {
+  picking: boolean;
+  setPicking: (v: boolean) => void;
+  onReply: () => void;
+  onReact: (emoji: string) => void;
+  onInfo?: () => void;
+}) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!picking) return;
@@ -406,6 +447,11 @@ function Actions({ picking, setPicking, onReply, onReact }: { picking: boolean; 
       <button type="button" aria-label="Reply" onClick={onReply} className="rounded-full p-1.5 text-ink-soft hover:bg-subtle hover:text-ink">
         <Reply size={16} />
       </button>
+      {onInfo && (
+        <button type="button" aria-label="Message info" onClick={onInfo} className="rounded-full p-1.5 text-ink-soft hover:bg-subtle hover:text-ink">
+          <Info size={16} />
+        </button>
+      )}
       {picking && (
         <div role="menu" className="pop-in absolute bottom-9 left-1/2 z-20 flex -translate-x-1/2 gap-0.5 rounded-full border border-line bg-surface p-1 shadow-float">
           {QUICK_REACTIONS.map((e) => (
@@ -527,7 +573,19 @@ function Lightbox({ attachment, onClose }: { attachment: Attachment; onClose: ()
 }
 
 /** Press-and-hold menu on phones: react, reply, download. */
-function ActionSheet({ item, onClose, onReply, onReact }: { item: ThreadItem; onClose: () => void; onReply: () => void; onReact: (emoji: string) => void }) {
+function ActionSheet({
+  item,
+  onClose,
+  onReply,
+  onReact,
+  onInfo,
+}: {
+  item: ThreadItem;
+  onClose: () => void;
+  onReply: () => void;
+  onReact: (emoji: string) => void;
+  onInfo?: () => void;
+}) {
   return (
     <div className="fixed inset-0 z-[65] flex items-end bg-[rgb(6_8_22/0.55)] backdrop-blur-[3px]" onClick={onClose}>
       <div
@@ -548,6 +606,12 @@ function ActionSheet({ item, onClose, onReply, onReact }: { item: ThreadItem; on
             <Reply size={19} />
             Reply
           </button>
+          {onInfo && (
+            <button type="button" onClick={onInfo} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
+              <Info size={19} />
+              Message info
+            </button>
+          )}
           {item.attachment && item.attachment.kind !== 'voice' && (
             <a
               href={`${item.attachment.url}?download=1`}

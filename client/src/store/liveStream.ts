@@ -2,7 +2,9 @@ import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
 import { CandidateQueue, createPeer, loadIceServers, stopStream } from '../lib/rtc';
 import { emitAck, socket } from '../lib/socket';
+import { probeSound, SoundFix, type LocalOutput } from '../lib/soundFix';
 import { onLogout, useAuth } from './auth';
+import { canPickSpeaker, chosen, onDeviceChoice } from './devices';
 import { toast } from './ui';
 
 // Live streams from an admin's device. The host's browser plays a video file
@@ -28,6 +30,10 @@ export type HostSession = {
   duration: number;
   volume: number;
   muted: boolean;
+  /** "Sound converted from Dolby Digital 5.1", or why there's no sound. */
+  soundNote: string | null;
+  /** The converted sound is catching up after a jump. */
+  soundWaiting: boolean;
 };
 
 export type ViewerSession = {
@@ -42,7 +48,7 @@ type LiveState = {
   host: HostSession | null;
   viewer: ViewerSession | null;
 
-  startFile: (roomId: string, file: File) => Promise<void>;
+  startFile: (roomId: string, file: File, onStatus?: (text: string) => void) => Promise<void>;
   startScreen: (roomId: string) => Promise<boolean>;
   stop: () => Promise<void>;
   play: () => void;
@@ -104,6 +110,22 @@ function tune(sdp: string | undefined) {
   return out;
 }
 
+/** Firefox's capture takes the sound away from the page; this plays it back to the host. */
+function audible(stream: MediaStream) {
+  const out = new Audio();
+  out.srcObject = new MediaStream(stream.getAudioTracks());
+  void out.play().catch(() => {});
+  return out;
+}
+
+/** Where the host hears the file: the converted sound, Firefox's playback copy, or the video itself. */
+const localOutput = (): LocalOutput | null => soundFix?.local ?? echo ?? source;
+
+/** The host hears the file on the speaker chosen in settings, like calls. */
+function toChosenSpeaker(out: LocalOutput | null) {
+  if (canPickSpeaker) void out?.setSinkId?.(chosen('audiooutput')).catch(() => {});
+}
+
 // ── Host resources ──
 let source: HTMLVideoElement | null = null;
 let sourceUrl = '';
@@ -111,6 +133,8 @@ let sending: MediaStream | null = null;
 let display: MediaStream | null = null;
 /** Firefox's capture takes the sound away from the page, so it's played back here. */
 let echo: HTMLAudioElement | null = null;
+/** Sound the browser can't play itself (Dolby, DTS), converted in this browser. */
+let soundFix: SoundFix | null = null;
 const hostPeers = new Map<string, { pc: RTCPeerConnection; queue: CandidateQueue }>();
 let reportTimer = 0;
 let anchorTimer = 0;
@@ -172,6 +196,8 @@ export const useLiveStream = create<LiveState>()((set, get) => {
     sourceUrl = '';
     echo?.pause();
     echo = null;
+    soundFix?.stop();
+    soundFix = null;
     stopStream(display);
     display = null;
     sending = null;
@@ -190,7 +216,7 @@ export const useLiveStream = create<LiveState>()((set, get) => {
   }
 
   /** Shared setup once there is something to send. */
-  async function begin(roomId: string, mode: 'file' | 'screen', title: string, duration: number | null) {
+  async function begin(roomId: string, mode: 'file' | 'screen', title: string, duration: number | null, soundNote: string | null = null) {
     const stream = sending!;
     const audio = stream.getAudioTracks().length > 0;
     // In place before the server announces the stream, so this tab knows it's the host
@@ -207,8 +233,10 @@ export const useLiveStream = create<LiveState>()((set, get) => {
         playing: source ? !source.paused : true,
         time: source?.currentTime ?? 0,
         duration: duration ?? 0,
-        volume: source?.volume ?? 1,
-        muted: source?.muted ?? false,
+        volume: localOutput()?.volume ?? 1,
+        muted: localOutput()?.muted ?? false,
+        soundNote,
+        soundWaiting: false,
       },
     });
     const { sessionId } = await emitAck<{ sessionId: string }>('live:start', { roomId, mode, title, duration, audio });
@@ -265,7 +293,7 @@ export const useLiveStream = create<LiveState>()((set, get) => {
     host: null,
     viewer: null,
 
-    startFile: async (roomId, file) => {
+    startFile: async (roomId, file, onStatus) => {
       if (!canStreamFile()) {
         throw new Error("This browser can't stream a video file. Use Chrome, Edge or Firefox on a computer or Android phone.");
       }
@@ -294,13 +322,37 @@ export const useLiveStream = create<LiveState>()((set, get) => {
         for (let i = 0; i < 30 && capture.getTracks().length === 0; i++) await new Promise((r) => setTimeout(r, 100));
         if (!capture.getTracks().length) throw new Error("This file can't be played in your browser. MP4 (H.264) and WebM files work best.");
         for (const t of capture.getVideoTracks()) t.contentHint = 'motion';
-        for (const t of capture.getAudioTracks()) t.contentHint = 'music';
-        if (!el.captureStream && capture.getAudioTracks().length) {
-          echo = new Audio();
-          echo.srcObject = new MediaStream(capture.getAudioTracks());
-          void echo.play().catch(() => {});
+        let soundNote: string | null = null;
+        if (capture.getAudioTracks().length) {
+          if (!el.captureStream) echo = audible(capture);
+          sending = capture;
+        } else {
+          // No sound from the browser: the file has none, or its sound is a kind browsers
+          // can't play (most movies: Dolby Digital, DTS). Then convert it right here.
+          sending = capture;
+          if (!SoundFix.supported()) {
+            soundNote = 'No sound: this browser can’t play or convert this file’s sound';
+          } else {
+            try {
+              const info = await probeSound(file, onStatus);
+              soundNote = info ? `Sound converted from ${info.label}` : 'This video has no sound';
+              if (info) {
+                soundFix = await SoundFix.start(file, el, onStatus);
+                soundFix.onWaiting = (waiting) =>
+                  set((s) => (s.host && s.host.soundWaiting !== waiting ? { host: { ...s.host, soundWaiting: waiting } } : s));
+                sending = new MediaStream([...capture.getVideoTracks(), soundFix.track]);
+              }
+            } catch (err) {
+              // Stream the picture anyway, and say why there's no sound.
+              console.warn('Sound conversion failed', err);
+              soundFix?.stop();
+              soundFix = null;
+              soundNote = 'No sound: this file’s sound couldn’t be converted';
+            }
+          }
         }
-        sending = capture;
+        for (const t of sending.getAudioTracks()) t.contentHint = 'music';
+        toChosenSpeaker(localOutput());
         const update = () =>
           set((s) =>
             s.host && source
@@ -310,8 +362,8 @@ export const useLiveStream = create<LiveState>()((set, get) => {
                     playing: !source.paused && !source.ended,
                     time: source.currentTime,
                     duration: Number.isFinite(source.duration) ? source.duration : s.host.duration,
-                    volume: echo ? echo.volume : source.volume,
-                    muted: echo ? echo.muted : source.muted,
+                    volume: localOutput()?.volume ?? source.volume,
+                    muted: localOutput()?.muted ?? source.muted,
                   },
                 }
               : s,
@@ -323,7 +375,7 @@ export const useLiveStream = create<LiveState>()((set, get) => {
             report();
           });
         }
-        await begin(roomId, 'file', file.name.replace(/\.[^.]+$/, '') || file.name, Number.isFinite(el.duration) ? el.duration : null);
+        await begin(roomId, 'file', file.name.replace(/\.[^.]+$/, '') || file.name, Number.isFinite(el.duration) ? el.duration : null, soundNote);
       } catch (err) {
         cleanupHost();
         throw err;
@@ -382,14 +434,14 @@ export const useLiveStream = create<LiveState>()((set, get) => {
       if (source && Number.isFinite(seconds)) source.currentTime = Math.max(0, Math.min(seconds, source.duration || seconds));
     },
     setVolume: (volume) => {
-      const out = echo ?? source;
+      const out = localOutput();
       if (!out) return;
       out.volume = volume;
       out.muted = volume === 0;
       set((s) => (s.host ? { host: { ...s.host, volume, muted: volume === 0 } } : s));
     },
     setMuted: (muted) => {
-      const out = echo ?? source;
+      const out = localOutput();
       if (!out) return;
       out.muted = muted;
       set((s) => (s.host ? { host: { ...s.host, muted } } : s));
@@ -559,6 +611,11 @@ export const useLiveStream = create<LiveState>()((set, get) => {
 window.addEventListener('pagehide', () => {
   const host = useLiveStream.getState().host;
   if (host) socket.emit('live:stop', { roomId: host.roomId });
+});
+
+// A new speaker picked while streaming takes effect at once.
+onDeviceChoice((kind) => {
+  if (kind === 'audiooutput') toChosenSpeaker(localOutput());
 });
 
 onLogout(() => {

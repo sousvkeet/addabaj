@@ -8,7 +8,7 @@ import { one, query } from '../db.js';
 import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, presence, userChannel } from '../realtime.js';
 import { deleteRoom, postSystemMessage } from '../services/rooms.js';
-import { getSettings, markDisabled, saveSettings } from '../services/site.js';
+import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
 import { publicUser } from '../services/users.js';
 import { calls } from '../socket/calls.js';
 import { live } from '../socket/live.js';
@@ -190,6 +190,9 @@ adminRouter.post('/users/:id/password', async (req, res) => {
   const { password } = z.object({ password: newPassword }).parse(req.body);
   const row = await one('UPDATE users SET password_hash = $2 WHERE id = $1 RETURNING id', [id, await bcrypt.hash(password, 10)]);
   if (!row) throw notFound("That person doesn't exist.");
+  // Whoever had their account (and forgot the password) is signed out everywhere.
+  await endSessions(id);
+  disconnect(id);
   res.status(204).end();
 });
 

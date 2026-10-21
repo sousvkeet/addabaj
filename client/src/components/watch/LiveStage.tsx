@@ -7,6 +7,7 @@ import { emitAck } from '../../lib/socket';
 import { unlockAudio } from '../../lib/sounds';
 import type { RoomDetail, WatchState } from '../../lib/types';
 import { useAuth } from '../../store/auth';
+import { canPickSpeaker, useDevices } from '../../store/devices';
 import { useLiveStream, type HostSession } from '../../store/liveStream';
 import { toast } from '../../store/ui';
 import { Button, IconButton } from '../ui/Button';
@@ -122,6 +123,15 @@ function HostView({ host, frame }: { host: HostSession; frame: RefObject<HTMLDiv
           <span className="sr-only">Starting your stream</span>
         </div>
       )}
+      {host.soundNote && (
+        <span
+          role="status"
+          className="pointer-events-none absolute top-2 right-2 flex max-w-[60%] items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[12px] font-semibold text-white"
+        >
+          {host.soundWaiting ? <LoaderCircle size={13} className="shrink-0 animate-spin" /> : <AudioLines size={13} className="shrink-0" />}
+          <span className="truncate">{host.soundWaiting ? 'Getting the sound ready…' : host.soundNote}</span>
+        </span>
+      )}
       {host.mode === 'file' ? (
         <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/85 to-transparent px-2 pt-8 pb-2 text-white">
           <IconButton
@@ -185,6 +195,13 @@ function ViewerView({ room, watch, frame }: { room: RoomDetail; watch: WatchStat
   const [, tick] = useState(0);
   const stream = viewer?.stream ?? null;
   const hasVideo = !stream || stream.getVideoTracks().length > 0;
+  const speaker = useDevices((s) => s.choice.audiooutput);
+
+  // Play the stream's sound on the speaker chosen in settings, like calls do.
+  useEffect(() => {
+    const el = video.current as (HTMLVideoElement & { setSinkId?: (id: string) => Promise<void> }) | null;
+    if (canPickSpeaker) void el?.setSinkId?.(speaker).catch(() => {});
+  }, [speaker, stream]);
 
   useEffect(() => {
     useLiveStream.getState().watch(room.id, device.sessionId);

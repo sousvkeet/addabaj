@@ -15,11 +15,22 @@ function required(name) {
   return value;
 }
 
+/** Anyone who knows the secret can sign in as anyone, so a guessable one isn't allowed in production. */
+function jwtSecret() {
+  const secret = required('JWT_SECRET');
+  const weak = secret.length < 32 || /change-me|secret|password|example/i.test(secret);
+  if (weak && process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET is too easy to guess. Set it to a long random string, e.g. the output of: openssl rand -hex 32');
+  }
+  if (weak) console.warn('Warning: JWT_SECRET is weak. Use a long random string (openssl rand -hex 32) before going live.');
+  return secret;
+}
+
 const turnUrls = (process.env.TURN_URL ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
 export const config = {
   databaseUrl: required('DATABASE_URL'),
-  jwtSecret: required('JWT_SECRET'),
+  jwtSecret: jwtSecret(),
   port: Number(process.env.PORT ?? 4080),
   isProd: process.env.NODE_ENV === 'production',
   // Cloudflare Realtime TURN: preferred when set. See services/ice.js.

@@ -30,7 +30,7 @@ export function App() {
   if (status === 'loading') {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-5">
-        <Logo size={76} className="animate-pulse drop-shadow-[0_12px_30px_rgb(124_92_255/0.6)]" />
+        <Logo size={76} className="animate-pulse drop-shadow-[0_12px_30px_var(--logo-glow)]" />
         <Wordmark className="text-[22px]" />
       </div>
     );

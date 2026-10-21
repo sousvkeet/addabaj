@@ -1,3 +1,4 @@
+import { api } from './lib/api';
 import { syncClock } from './lib/clock';
 import { useSite } from './lib/site';
 import { watchConnection } from './lib/liveness';
@@ -47,21 +48,38 @@ export function bindRealtime() {
   socket.on('presence:snapshot', ({ online }: { online: string[] }) => {
     useChat.setState({ online: Object.fromEntries(online.map((id) => [id, true])) });
   });
-  socket.on('presence:update', ({ userId, online, lastSeenAt }: { userId: string; online: boolean; lastSeenAt?: string }) => {
+  socket.on('presence:update', ({ userId, online, lastSeenAt, hidden }: { userId: string; online: boolean; lastSeenAt?: string | null; hidden?: boolean }) => {
     useChat.setState((s) => ({
       online: { ...s.online, [userId]: online },
       lastSeen: lastSeenAt ? { ...s.lastSeen, [userId]: lastSeenAt } : s.lastSeen,
+      hiddenPresence: { ...s.hiddenPresence, [userId]: !!hidden },
     }));
+  });
+  // My privacy changed: reload who's online, and people's last seen with it.
+  socket.on('presence:refresh', () => {
+    void api<{ online: string[] }>('/auth/presence').then(({ online }) => {
+      useChat.setState({ online: Object.fromEntries(online.map((id) => [id, true])), lastSeen: {}, hiddenPresence: {} });
+      void chat().sync();
+    });
   });
 
   // Direct messages
-  socket.on('dm:new', ({ message, partner }: { message: DmMessage; partner: User }) => chat().receiveDm(message, partner));
+  // Answering tells the server this device has the message, so the sender sees "delivered".
+  socket.on('dm:new', ({ message, partner }: { message: DmMessage; partner: User }, ack?: (ok: boolean) => void) => {
+    chat().receiveDm(message, partner);
+    if (typeof ack === 'function') ack(true);
+  });
+  socket.on('dm:delivered', (e: { partnerId: string; ids: number[]; deliveredAt: string }) => chat().applyDmDelivered(e));
   socket.on('dm:typing', ({ from, typing }: { from: string; typing: boolean }) => chat().setDmTyping(from, typing));
   socket.on('dm:read', (e: { readerId: string; partnerId: string; readAt: string }) => chat().applyDmRead(e));
   socket.on('msg:reactions', (e: Parameters<ReturnType<typeof useChat.getState>['applyReactions']>[0]) => chat().applyReactions(e));
 
   // Rooms
-  socket.on('room:message', (m: RoomMessage) => chat().receiveRoomMessage(m));
+  socket.on('room:message', (m: RoomMessage, ack?: (ok: boolean) => void) => {
+    chat().receiveRoomMessage(m);
+    if (typeof ack === 'function') ack(true);
+  });
+  socket.on('room:receipts', (e: Parameters<ReturnType<typeof useChat.getState>['applyRoomReceipts']>[0]) => chat().applyRoomReceipts(e));
   socket.on('room:typing', (e: { roomId: string; userId: string; name: string; typing: boolean }) => chat().setRoomTyping(e));
   socket.on('room:read', ({ roomId }: { roomId: string }) => {
     useChat.setState((s) => (s.rooms[roomId] ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0 } } } : s));

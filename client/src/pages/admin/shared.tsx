@@ -98,7 +98,7 @@ export function Chip({ tone, children }: { tone: 'brand' | 'danger' | 'live' | '
   const tones = {
     brand: 'bg-aurora text-white',
     danger: 'bg-danger/15 text-danger',
-    live: 'bg-live/15 text-cyan-700 dark:text-live',
+    live: 'bg-live/15 text-live-ink',
     muted: 'bg-subtle text-ink-soft',
     warn: 'bg-amber-400/15 text-amber-700 dark:text-amber-300',
   };

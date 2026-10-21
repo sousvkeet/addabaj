@@ -122,7 +122,7 @@ function Stat({
     <>
       <span
         className={`flex size-10 items-center justify-center rounded-2xl ${
-          tone === 'live' ? 'bg-live/15 text-cyan-700 dark:text-live' : 'bg-aurora text-white shadow-glow'
+          tone === 'live' ? 'bg-live/15 text-live-ink' : 'bg-aurora text-white shadow-glow'
         }`}
       >
         <Icon size={19} />
