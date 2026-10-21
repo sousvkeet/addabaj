@@ -1,181 +1,329 @@
-# Adda Khana
+<p align="center">
+  <img src="docs/logo.svg" width="88" height="88" alt="Adda Khana logo">
+</p>
 
-A real-time hangout app: one-to-one chat with voice and video calls, plus rooms with group chat, a shared voice table and videos watched together.
+<h1 align="center">Adda Khana</h1>
+
+<p align="center">
+  A real-time hangout app you host yourself: one-to-one chat with voice and video calls,<br>
+  rooms with group chat and a live voice table, and videos watched together.
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/02-chat.jpg" alt="A one-to-one chat with a reply, reactions and a voice message">
+</p>
+
+## Contents
+
+- [Highlights](#highlights)
+- [Screenshots](#screenshots)
+- [Quick start](#quick-start)
+- [Features](#features)
+- [Host admin](#host-admin)
+- [Configuration](#configuration)
+- [Production](#production)
+- [Scripts](#scripts)
+- [Tests](#tests)
+- [Project layout](#project-layout)
+- [Security](#security)
+- [Limits to know about](#limits-to-know-about)
+
+## Highlights
+
+- **Chat** one to one or in rooms, with photos, videos, files, voice messages, replies and emoji reactions.
+- **Call** with HD voice and video, routed through Cloudflare's TURN relay when networks block direct connections.
+- **Hang out** in rooms with a live voice table for up to 12 people, where whoever speaks lights up.
+- **Watch together:** paste a link from almost any site, and the server finds the video and keeps everyone in sync. You can also stream a file or your screen live from your device.
+- **Run the site** from a host admin panel with live numbers, people, rooms, sign-ups and announcements.
+- **Look good** with a dark-first "Midnight Aurora" design, a light theme, and layouts made for phones too.
+
+## Screenshots
+
+| Room with live voice | Host admin |
+|---|---|
+| ![A room with three people at the voice table](docs/screenshots/03-room-voice.jpg) | ![The host admin overview](docs/screenshots/04-admin.jpg) |
+| **Light theme** | **Sign in** |
+| ![The chat in the light theme](docs/screenshots/05-light.jpg) | ![The sign-in page](docs/screenshots/01-login.jpg) |
+
+<p align="center">
+  <img src="docs/screenshots/06-phone.jpg" width="300" alt="A room on a phone">
+</p>
+
+## Quick start
+
+You need **Node.js 20.19 or newer** (22 recommended) and **PostgreSQL 13 or newer**. The server alone runs on Node 20.12 and up; building the client with Vite 7 needs 20.19.
+
+```sh
+git clone git@github.com:sousvkeet/addabaj.git adda-khana
+cd adda-khana
+
+cp server/.env.example server/.env    # then set DATABASE_URL and a long random JWT_SECRET
+cp client/.env.example client/.env
+createdb adda_khana                   # the tables are created on first start
+
+npm install
+npm run setup:yt-dlp                  # optional: finds videos on about 1,800 sites
+npm run setup:ffmpeg                  # optional: joins sites' separate picture and sound (about 160 MB)
+npx playwright install chromium       # optional: the deep scan for JavaScript video players
+
+npm run dev
+```
+
+Open **http://localhost:5180** and log in as **`admin` / `admin`** to run the site, or create an account. The API runs on http://localhost:4080.
+
+To try calls by yourself, open a second browser profile or an incognito window and sign up as someone else.
 
 ## Features
 
-- **Accounts:** sign up and log in with email and password. You stay logged in for 30 days.
-- **Presence:** see who's online and when they were last seen.
-- **One-to-one chat:** instant delivery, typing indicator, read ticks, unread counts and message history.
-- **One-to-one voice and video calls:**
-  - Start either kind from a chat. The person you call sees a ring screen; a video call can be answered with video or voice only.
-  - During any call you can mute, turn your camera on or off (so a voice call can become a video call), and see when the other person is speaking, muted or has their camera off.
-  - Video shows the other person large with you in a corner. On desktop it's a floating window you can shrink back to the call bar; on phones it's full screen.
-  - Missed, declined and finished calls are logged in the chat.
-- **Watch together (rooms):** a room admin pastes a link, picks a video and quality, and everyone in the room watches it in sync above the chat.
-  - **Any link:** a video page on almost any site, YouTube, or a direct `.mp4`, `.webm` or `.m3u8` link. **Find videos** looks for videos the way a download manager does, then lists them with their qualities and sizes, with the best one preselected. Finders, tried in order:
-    1. **Site support** by [yt-dlp](https://github.com/yt-dlp/yt-dlp): about 1,800 sites (Facebook, Instagram, X, Dailymotion, Vimeo, TikTok, Reddit, Archive.org, news sites…) plus generic web players.
-    2. **Page scan:** `<video>` tags, video metadata and video links anywhere in the page.
-    3. **Deep scan:** opens the page in a hidden browser, presses play (skipping ads where it can) and records the video requests it makes. It recognises streams by their content, not only by a `.m3u8` name.
+### Accounts and presence
 
-    Each find is checked for length. Short clips (under 30 s: previews, intros, ads) are dropped when a real video (a minute or longer) is on the page. If only short clips turn up, the next finder still runs. Results from page scans are listed longest first.
-  - **Relay:** YouTube plays in YouTube's player. Videos found on web pages play through the server's relay, which adds the headers the site expects and supports seeking. Streams are relayed segment by segment through signed links, so the relay only fetches parts listed in a playlist it served. Direct links play straight from their source and fall back to the relay if a browser can't play them, for example when the site blocks cross-site playback or the link is `http://` on an HTTPS page.
-  - **Shared download:** a relayed video file is fetched once into a temporary file that every viewer reads from as it fills, the way a download manager works.
-  - **Separate picture and sound:** many sites keep their better qualities (often everything above 360p) as a silent video file plus a separate sound file. With FFmpeg installed, Find videos offers these too, for example "720p MP4, picture and sound joined first". The server downloads both and joins them without re-encoding, so it's quick and loses no quality. The room sees "Getting the video ready…" with progress, and playback starts for everyone together. After a server restart, a joined video is prepared again automatically. This approach comes from [IDM-CLI](https://github.com/rj41-w2/idm-cli).
-  - **Getting past blocks:** if a site blocks yt-dlp, it retries impersonating Chrome's network fingerprint. That needs the standalone `yt-dlp_linux` build that `npm run setup:yt-dlp` installs. If a site answers 403 to a video request, the relay retries once as `curl/8.0`.
-  - **Extra connections:** like IDM, it can download over several connections at once, up to `STREAM_CONNECTIONS` (default 4). It adds them only while they help: while the file arrives slower than 4 MB/s, and only if each addition speeds things up, so sites that limit each connection get much faster and fast sites stay on one. When the room jumps far ahead, a connection starts right at that point.
-    - The site sees one download however many people watch, everyone gets the same data, and seeking back is instant.
-    - Jumping beyond the downloaded part is fetched from the site directly.
-    - Stream segments are likewise fetched once and shared.
-    - Disk use is capped by `STREAM_CACHE_GB` (default 10). Files are removed when the video stops or after 10 idle minutes, and the folder is cleared on start.
-  - **Who controls it:** only admins can find, play, pause, seek, change or stop. The server enforces this.
-  - **Staying in sync:** the admin who last controlled playback is the host. Every member's player compares itself with the shared timeline every 2 seconds and re-syncs if it drifts. Late joiners start at the current point.
-  - **Members' controls:** volume, mute and full screen. If their browser blocks autoplay, they see **Click to watch along**.
-  - **What it won't do:** play DRM-protected video (Netflix, Prime Video and similar), get past logins or bot checks, or fetch anything on the server's own machine or network. Each of these is explained when it happens.
-- **Microphone, speaker and camera choice:**- **Microphone, speaker and camera choice:** from the account menu, during a call, or under room voice.
-  - A live level bar shows which microphone hears you.
-  - A test sound checks the speaker. Speaker choice works in Chrome, Edge and Firefox; Safari always uses the system output.
-  - A preview checks the camera.
+- Sign up and log in with email and password, and stay logged in for 30 days. Change your password from the account menu.
+- See who's online and when they were last seen.
+
+### One-to-one chat
+
+- Instant delivery, typing indicator, read ticks, unread counts and message history.
+- **Photos, files and voice messages** (in rooms too):
+  - Attach with the paperclip, paste a picture, or drag files onto the chat. Send up to 10 at once; the caption goes with the first.
+  - Photos are shrunk to 2048 px on the long side before sending, which also strips hidden details such as where they were taken. Tap a photo to see it full screen and download it.
+  - Videos play in the chat. Other files show as a card with a download button.
+  - Tap the microphone to record a voice message (up to 5 minutes), then send or discard it. Voice messages show a waveform you can tap to jump around, and play at 1×, 1.5× or 2×.
+  - Upload progress shows on the message, and a failed send can be retried without picking the file again.
+- **Replies and reactions:** reply to any message (its quote is shown, and tapping it jumps to the original), and react with 👍 ❤️ 😂 😮 😢 🙏. On a computer, hover a message for the buttons; on a phone, press and hold it.
+
+### Voice and video calls
+
+- Start either kind from a chat. The person you call sees a ring screen, and can answer a video call with video or voice only.
+- During a call you can mute, turn your camera on or off (so a voice call can become a video call), and see when the other person is speaking, muted or has their camera off.
+- Video shows the other person large with you in a corner. On a computer it's a floating window you can shrink back to the call bar; on phones it's full screen.
+- Missed, declined and finished calls are logged in the chat.
+- **Microphone, speaker and camera:** choose them from the account menu, during a call, or under room voice.
+  - A live level bar shows which microphone hears you, a test sound checks the speaker, and a preview checks the camera.
   - Choices apply immediately, even mid-call, are remembered per browser, and fall back to the system default if a device is unplugged.
-- **Rooms:**
-  - Whoever starts a room is its admin and chooses the maximum members (2–50).
-  - Admins can **add** people straight in, or **invite** them so they can accept or decline. Admins can also cancel invites and remove members.
-  - The room's creator can make other members admins and can delete the room.
-  - The member limit is enforced on the server, including when two people join at the same moment. The limit can't be lowered below the current member count.
+  - Speaker choice works in Chrome, Edge and Firefox; Safari always uses the system output.
+
+### Rooms
+
+- Whoever starts a room is its admin and chooses the maximum members (2–50).
+- Admins can **add** people straight in, or **invite** them so they can accept or decline. Admins can also cancel invites and remove members.
+- The room's creator can make other members admins and can delete the room.
+- The member limit is enforced on the server, even when two people join at the same moment, and can't be lowered below the current member count.
 - **Room voice (the adda table):** members join a voice channel and sit around a table. Each person's avatar lights up while they speak, and mute shows for everyone. Up to 12 people can talk at once.
-- **Layout and themes:** light and dark themes, and layouts that work on phones.
 
-## Stack
+### Watch together
 
-| Part | Tech |
-|---|---|
-| Client | React 19, Vite 7, TypeScript, Tailwind CSS 4, Zustand, React Router 7 |
-| Server | Node.js 22, Express 5, Socket.IO 4 |
-| Database | PostgreSQL (`pg`); the schema is applied automatically on start |
-| Calls | WebRTC peer-to-peer audio and video, with Socket.IO carrying the connection setup messages, and Cloudflare Realtime TURN as the relay |
+A room admin picks something to watch, and everyone in the room sees it in sync above the chat.
 
-## Setup
+**From a link.** Paste a video page from almost any site, a YouTube link, or a direct `.mp4`, `.webm` or `.m3u8` link. **Find videos** looks for videos the way a download manager does, then lists them with their qualities and sizes, with the best one preselected. The finders are tried in order:
 
-1. Create the two settings files from their examples:
-   ```sh
-   cp server/.env.example server/.env
-   cp client/.env.example client/.env
-   ```
-   In `server/.env`, set `DATABASE_URL` and a long random `JWT_SECRET`.
-2. Create the database:
-   ```sh
-   createdb adda_khana
-   ```
-3. Install dependencies, plus yt-dlp for finding videos on most sites:
-   ```sh
-   npm install
-   npm run setup:yt-dlp        # downloads yt-dlp to server/bin/ and checks its checksum
-   npm run setup:ffmpeg        # downloads a static FFmpeg (about 160 MB) to server/bin/ and checks its checksum
-   npx playwright install chromium   # for the deep scan (optional)
-   ```
-   Re-run `npm run setup:yt-dlp` now and then; sites change and yt-dlp keeps up.
-4. Run in development:
-   ```sh
-   npm run dev
-   ```
-   This starts the API on http://localhost:4080 and the app on http://localhost:5180. Open the app URL.
+1. **Site support** by [yt-dlp](https://github.com/yt-dlp/yt-dlp): about 1,800 sites (Facebook, Instagram, X, Dailymotion, Vimeo, TikTok, Reddit, Archive.org, news sites…) plus generic web players.
+2. **Page scan:** `<video>` tags, video metadata and video links anywhere in the page.
+3. **Deep scan:** opens the page in a hidden browser, presses play (skipping ads where it can) and records the video requests it makes. It recognises streams by their content, not only by a `.m3u8` name.
 
-### Settings files
+Each find is checked for length. Short clips under 30 seconds (previews, intros, ads) are dropped when there's a real video of a minute or longer on the page. If only short clips turn up, the next finder still runs.
+
+How linked videos play:
+
+- **Relay:** YouTube plays in YouTube's player. Videos found on web pages play through the server's relay, which adds the headers the site expects and supports seeking. Streams are relayed segment by segment through signed links, so the relay only fetches parts listed in a playlist it served. Direct links play straight from their source and fall back to the relay if a browser can't play them, for example when the site blocks cross-site playback or the link is `http://` on an HTTPS page.
+- **Shared download:** a relayed file is fetched once into a temporary file that every viewer reads from as it fills, the way a download manager works.
+  - The site sees one download however many people watch, everyone gets the same data, and seeking back is instant. Stream segments are fetched once and shared as well.
+  - Disk use is capped by `STREAM_CACHE_GB` (default 10). Files are removed when the video stops or after 10 idle minutes, and the folder is cleared on start.
+- **Extra connections:** like IDM, the server can download over several connections at once, up to `STREAM_CONNECTIONS` (default 4). It adds them only while they help: while the file arrives slower than 4 MB/s, and only if each one speeds things up. Sites that limit each connection get much faster, and fast sites stay on one. When the room jumps far ahead, a connection starts right at that point.
+- **Separate picture and sound:** many sites keep their better qualities as a silent video file plus a separate sound file. With FFmpeg installed, Find videos offers these too, for example "720p MP4, picture and sound joined first". The server downloads both and joins them without re-encoding, so it's quick and loses no quality. The room sees "Getting the video ready…" with progress, and playback starts for everyone together. This approach comes from [IDM-CLI](https://github.com/rj41-w2/idm-cli).
+- **Getting past blocks:** if a site blocks yt-dlp, the server retries while imitating Chrome's network fingerprint (this needs the standalone `yt-dlp_linux` build that `npm run setup:yt-dlp` installs). If a site answers 403 to a video request, the relay retries once as `curl/8.0`.
+
+**Live from your device.** Instead of a link, an admin can pick **From your device**:
+
+- **Stream a video file** from a computer or Android phone. It plays on their device and streams live to the room. They play, pause and seek with their own controls; viewers see a "Paused" note and a progress bar. Muting their own speakers doesn't mute the stream.
+- **Share your screen or a tab** from a computer. To include sound, share a tab and turn on "Share tab audio".
+- Nothing is uploaded: picture and sound go straight from the host's browser to each viewer (through the TURN relay when a direct route is blocked). It starts at once, in HD with stereo sound, and up to `LIVE_MAX_VIEWERS` (default 10) people can watch.
+- The stream keeps going while the host looks at other pages, with a "Live in…" bar to get back. It survives a short connection drop, ends when the host closes the tab, and ends after 15 seconds if their connection doesn't come back. Any admin can stop it.
+
+**Sync and control:**
+
+- Only admins can find, play, pause, seek, change or stop, and the server enforces this.
+- The admin who last controlled playback is the host. Every member's player compares itself with the shared timeline every 2 seconds and catches up if it drifts. Late joiners start at the current point.
+- Members get volume, mute and full screen. If their browser blocks autoplay, they see **Click to watch along**.
+- It won't play DRM-protected video (Netflix, Prime Video and similar), get past logins or bot checks, or fetch anything on the server's own machine or network. Each of these is explained when it happens.
+
+### Design
+
+- **Midnight Aurora:** a dark-first look with a deep navy background, a violet-to-pink "aurora" gradient for the brand, your messages and main actions, and cyan for anything live (online, speaking, streaming).
+- On computers the app is three floating panels: a navigation rail, the list and the conversation, with frosted glass over a soft glow. On phones the list and conversation fill the screen, and the navigation floats at the bottom.
+- The light theme is one click away (the sun button on the rail, or the account menu) and is remembered. Fonts are Plus Jakarta Sans for text and Sora for headings.
+
+## Host admin
+
+The person running the site logs in as **`admin` / `admin`** and gets an **Admin** tab. This account is created on first start.
+
+- **Overview:** people and who's online, rooms, today's messages, who's in voice or on a call, videos playing, files shared, sign-ups and messages over the last 14 days, and server uptime and memory. It refreshes every 15 seconds.
+- **People:** search and filter (online, host admins, switched off). You can:
+  - make someone a host admin (their Admin tab appears at once),
+  - set a new password for someone who forgot theirs,
+  - switch an account off (they're logged out with a reason and can't log back in),
+  - add a person by hand, or remove an account with its messages and rooms.
+- **Rooms:** every room with its owner, members, messages, who's in voice and what's playing. Stop a video or live stream, or delete a room (its members are told).
+- **Site settings:** close sign-ups (the sign-up page then says so, and only a host admin can add people), and post an announcement banner that everyone sees live and can dismiss.
+- The site always keeps at least one host admin, and you can't demote or switch off yourself.
+
+**About the default password.** `admin` / `admin` is the first thing anyone would try, so:
+
+- Until it's changed, the Admin pages show a warning. A password of `admin`, or anything under 8 characters, always counts as a default.
+- On a production server (`NODE_ENV=production`), the app asks for a new password before anything else, and the admin API refuses to work until then.
+- To start with your own login, set `ADMIN_USERNAME` and `ADMIN_PASSWORD` in `server/.env` before the first start.
+- Locked out? Run `npm run admin:reset`. It sets the login back to those values, or `admin` / `admin`.
+
+## Configuration
+
+Settings live in two files, created from their examples. Both `.env` files are excluded from git.
 
 | File | Read by | Holds |
 |---|---|---|
-| `server/.env` | `server/src/config.js` | `DATABASE_URL`, `JWT_SECRET`, `PORT` (API), `NODE_ENV`, Cloudflare TURN keys, `FORCE_TURN_RELAY`, optional `TURN_*`, and for watch together `YTDLP_PATH`, `DEEP_SCAN`, `STREAM_ALLOW_PRIVATE`, `STREAM_CACHE_GB`, `STREAM_CACHE_DIR`, `STREAM_CONNECTIONS`, `FFMPEG_PATH` |
-| `client/.env` | `client/vite.config.ts` | `CLIENT_PORT` (dev server), `API_URL` (where the dev server forwards `/api` and `/socket.io`) |
+| `server/.env` | `server/src/config.js` | Everything the server needs (see below) |
+| `client/.env` | `client/vite.config.ts` | `CLIENT_PORT` (dev server port) and `API_URL` (where the dev server forwards `/api` and `/socket.io`) |
 
-To change the API port, change `PORT` in `server/.env` and the port in `API_URL` in `client/.env` to match.
+Server settings:
 
-Values set in the shell override both files. Only `VITE_`-prefixed variables in `client/.env` reach browser code, so never put secrets there. Both `.env` files are excluded from git; the `.env.example` files are committed.
+| Setting | What it does |
+|---|---|
+| `DATABASE_URL` | PostgreSQL connection string |
+| `JWT_SECRET` | Signs login cookies; use a long random string |
+| `PORT`, `NODE_ENV` | API port (and in production, the whole app); `production` turns on secure cookies and the admin password lock |
+| `CF_TURN_KEY_ID`, `CF_TURN_KEY_API_TOKEN` | Cloudflare Realtime TURN key for calls, voice and live streams |
+| `FORCE_TURN_RELAY` | `true` sends all media through TURN, which hides people's IP addresses from each other |
+| `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | Another TURN server instead of Cloudflare |
+| `YTDLP_PATH`, `FFMPEG_PATH` | Custom tool paths (the setup scripts install them to `server/bin/`) |
+| `DEEP_SCAN` | Open pages in a hidden browser when nothing else finds a video (default `true`) |
+| `STREAM_ALLOW_PRIVATE` | `true` lets the relay fetch from your own network, for example a NAS |
+| `STREAM_CACHE_GB`, `STREAM_CACHE_DIR` | Disk cap and folder for the shared download |
+| `STREAM_CONNECTIONS` | Most parallel connections per relayed file (default 4, 1 = off) |
+| `LIVE_MAX_VIEWERS` | Most viewers of a live stream from a device (default 10) |
+| `UPLOAD_DIR`, `UPLOAD_MAX_MB` | Where attachments are kept and the largest upload (default 25 MB) |
+| `ADMIN_USERNAME`, `ADMIN_PASSWORD` | The host admin login created on first start (default `admin` / `admin`) |
 
-To try calls by yourself, open a second browser profile or an incognito window and sign up as another person.
+To change the API port, change `PORT` in `server/.env` and the port in `API_URL` in `client/.env` to match. Values set in the shell override both files. Only `VITE_`-prefixed variables in `client/.env` reach browser code, so never put secrets there.
 
 ## Production
 
 ```sh
-npm run build        # builds client/dist
-NODE_ENV=production npm start
+npm run build                  # builds client/dist
+NODE_ENV=production npm start  # serves the app and the API on PORT
 ```
 
-The server then serves the app and the API on `PORT` from `server/.env`. `client/.env` is only used by the development server. Two requirements:
+Then log in as `admin` / `admin` straight away and choose a new password.
 
-- **HTTPS.** Browsers only allow the microphone on HTTPS (or localhost), so put the app behind a TLS proxy such as nginx or Caddy. The proxy must forward WebSocket upgrades for `/socket.io`.
-- **TURN relay.** Calls use [Cloudflare Realtime TURN](https://developers.cloudflare.com/realtime/turn/), for networks that block direct connections. Set `CF_TURN_KEY_ID` and `CF_TURN_KEY_API_TOKEN` in `server/.env`.
-  - The server uses that key to request 24-hour TURN credentials and caches them (`server/src/services/ice.js`). The key itself never reaches the browser.
-  - Calls connect directly when they can and fall back to Cloudflare's relay over UDP, TCP or TLS on ports 3478, 5349, 443 and 80.
-  - `FORCE_TURN_RELAY=true` sends all audio through Cloudflare. This hides users' IP addresses from each other, at the cost of a little delay and more relayed traffic.
-  - To use another TURN server, leave the Cloudflare keys empty and set `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL`.
+**Keep it running with PM2.** `ecosystem.config.cjs` runs one server process in production mode. Edit its `cwd` and `interpreter` paths for your machine, then:
+
+```sh
+pm2 start ecosystem.config.cjs
+pm2 save
+```
+
+Run a single process: calls, voice and live streams are coordinated in the server's memory.
+
+**Put it behind HTTPS.** Browsers only allow the microphone and camera on HTTPS (or localhost). The proxy must forward WebSocket upgrades for `/socket.io` and accept uploads as large as `UPLOAD_MAX_MB`. An nginx example:
+
+```nginx
+server {
+    server_name adda.example.com;
+    client_max_body_size 25m;          # match UPLOAD_MAX_MB
+
+    location / {
+        proxy_pass http://127.0.0.1:4080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 1h;
+    }
+
+    location /api/stream/ {            # relayed videos: pass bytes straight through
+        proxy_pass http://127.0.0.1:4080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+    }
+
+    # listen 443 ssl; plus your certificate lines (for example from certbot)
+}
+```
+
+**Set up TURN.** Calls use [Cloudflare Realtime TURN](https://developers.cloudflare.com/realtime/turn/) for networks that block direct connections. Set `CF_TURN_KEY_ID` and `CF_TURN_KEY_API_TOKEN` in `server/.env`.
+
+- The server uses that key to request 24-hour TURN credentials and caches them. The key itself never reaches the browser.
+- Calls connect directly when they can, and fall back to Cloudflare's relay over UDP, TCP or TLS on ports 3478, 5349, 443 and 80.
+- To use another TURN server, leave the Cloudflare keys empty and set `TURN_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL`.
+
+**Back up** the database and the attachments folder (`server/uploads`, or `UPLOAD_DIR`) together.
+
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | API and app with live reload (ports 4080 and 5180) |
+| `npm run build` | Builds the client into `client/dist` |
+| `npm start` | Starts the server (serves `client/dist` when it exists) |
+| `npm run db:migrate` | Applies the database schema (also done on every start) |
+| `npm run setup:yt-dlp` | Downloads yt-dlp to `server/bin/` and checks its checksum. Re-run now and then; sites change. |
+| `npm run setup:ffmpeg` | Downloads a static FFmpeg to `server/bin/` and checks its checksum |
+| `npm run admin:reset` | Puts the host admin login back to `ADMIN_USERNAME` / `ADMIN_PASSWORD` (or `admin` / `admin`) |
+| `npm run test:*` | Browser tests, see below |
 
 ## Tests
 
-`npm run test:e2e` runs an end-to-end test with real browsers. Start `npm run dev` first. If Playwright's Chromium isn't installed, run `npx playwright install chromium` once.
+The tests drive real browsers with Playwright. Start `npm run dev` first, and run `npx playwright install chromium` once if Chromium isn't installed. Screenshots are saved to `tests/screenshots/`.
 
-The test drives three users with fake microphones. It checks the TURN relay with a relay-only connection, and logs which route each call and voice link used. With `FORCE_TURN_RELAY=true`, it fails if any link avoids the relay. It covers:
-
-- sign-up and a wrong-password error,
-- chat with typing indicator and read ticks,
-- an accepted call, mute, hang-up, and a declined call,
-- a video call with real video frames both ways, camera off/on, and switching microphone mid-call,
-- creating a room, adding and inviting members, and the room-full limit,
-- three-way room voice,
-- removing a member, and dark theme.
-
-`npm run test:watch` tests watch together with three people. It covers:
-
-- the admin-only button,
-- a refused bad link,
-- play, pause and seek staying in sync,
-- drift correction and a late joiner,
-- the server refusing control from a member,
-- stop for everyone,
-- YouTube sync,
-- finding a video on a Wikimedia Commons page and watching it through the shared download, including a jump ahead,
-- a JavaScript-player page caught by the deep scan,
-- a direct stream falling back to the relay,
-- a Bilibili video whose picture and sound are separate files: joined on the server, then watched in sync with sound,
-- clear refusals for DRM, pages without video and private addresses.
-
-The YouTube and web-page checks need internet access.
-
-It serves its own test clip from `tests/fixtures/` on port 4099.
-
-`npm run test:find` checks the video finder and the shared download without internet access. It covers:
-
-- video lengths: MP4 with its index at the start or at the end, WebM, streams, and live streams,
-- a page whose 5-second preview clip sits next to a 13-minute stream, where the stream must win,
-- a file that a server hands out in 64 KB pieces, which must download completely,
-- a site that limits each connection, which must get faster with several connections,
-- a site that allows only one connection, which must still download completely,
-- a jump far ahead, which must get its data quickly,
-- pairing and joining a separate H.264 picture file and AAC sound file into one playable file. This needs FFmpeg.
-
-Screenshots are saved to `tests/screenshots/`.
+| Command | What it checks |
+|---|---|
+| `npm run test:e2e` | Sign-up and login errors; chat with typing and read ticks; voice calls with mute, hang-up and decline; a video call with real frames both ways, camera off/on and switching microphone mid-call; rooms with add, invite and the member limit; three-way room voice; removing a member; the themes. It also checks the TURN relay with a relay-only connection. |
+| `npm run test:attachments` | A large photo shrunk and delivered live; a file that only downloads; video in the chat; paste and drag; voice messages; replies and reactions; retrying a failed upload; the size limit; history after reload; files private to their chat or room; the phone's press-and-hold menu. |
+| `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses. Needs internet. |
+| `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. |
+| `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; pause and seek for viewers; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
+| `npm run test:admin` | The `admin` / `admin` login; the Admin tab and API only for host admins; the overview; roles, switching accounts off and on, new passwords, adding and removing people; deleting rooms; closing sign-ups; announcements; changing your own password; the admin pages on a phone. The admin must still have its default password (`npm run admin:reset`). |
 
 ## Project layout
 
 ```
 server/src/
-  index.js            Express + Socket.IO entry, serves client/dist in production
-  schema.sql          Tables (applied on start)
-  routes/             REST: auth, users, dms, rooms, invites
-  services/rooms.js   Membership checks, member-limit locking, room summaries
-  socket/             Realtime: chat, typing, read receipts, calls, room voice
+  index.js              Express + Socket.IO entry; serves client/dist in production
+  schema.sql            Tables (applied on start)
+  routes/               REST: auth, users, chats, rooms, invites, uploads and files, video relay
+  routes/admin.js       The host admin API: overview, people, rooms, settings
+  services/             Rooms and member limits, attachments, message extras, site settings, TURN
+  socket/               Realtime: chat, typing, read receipts, calls, room voice, watch together
+  socket/live.js        Live streams from a device: who hosts, who watches, connection setup
+  stream/               Finding videos, the relay, the shared download, joining picture and sound
 client/src/
-  store/              Zustand stores: auth, chat, call (1:1 WebRTC), voice (room mesh)
-  realtime.ts         Socket events into the stores
-  pages/, components/ UI
-tests/e2e.mjs         Browser end-to-end test
+  pages/                Sign-in, chats, rooms and the admin pages
+  components/           Message list, composer, calls, voice table, watch together, UI kit
+  store/                Zustand stores: auth, chat, call (1:1 WebRTC), voice (room mesh), live streams
+  realtime.ts           Socket events into the stores
+tests/                  Playwright browser tests and their video clips
+docs/                   The logo and README screenshots
 ```
+
+**Stack:** React 19, Vite 7, TypeScript, Tailwind CSS 4, Zustand and React Router 7 on the client; Node.js, Express 5 and Socket.IO 4 on the server; PostgreSQL; WebRTC for calls, voice and live streams.
+
+## Security
+
+- **Passwords and logins:** passwords are hashed with bcrypt. Logins use an httpOnly JWT cookie, and login and sign-up are rate-limited. Switched-off accounts are refused everywhere at once.
+- **Private files:** attachments are only served to the people in their chat or room. A file's type is decided from its contents, not its name, so only real photos, videos and audio show inside the page; everything else is served as a download with a restrictive content policy.
+- **Fetching links:** the server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. Relay links are signed.
+- **TURN key:** the Cloudflare TURN key stays on the server; browsers only get short-lived credentials.
+- **Admin password:** the default admin password must be changed before the admin API works in production.
 
 ## Limits to know about
 
-- Videos from web pages are relayed through the server. The site is downloaded from once, but each viewer still uses the server's upload bandwidth. A link found on a page can expire after some hours. The part already downloaded keeps playing, but if a long session stops beyond it, find the video again.
-- Some sites throttle or block servers that download a lot. The relay retries hiccups, and players retry a stalled load before showing an error, but a slow site stays slow.
-- The server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. To relay from your own network, for example a NAS, set `STREAM_ALLOW_PRIVATE=true`.
-
-- Call and voice state is kept in server memory. Run a single server process; restarting it ends any calls in progress.
-- Room voice is a full mesh, meaning each person sends audio directly to every other person. That's why voice is capped at 12 people.
-- Any logged-in user can search for every other user by name or email.
+- Videos from web pages are relayed through the server. The site is downloaded from once, but each viewer still uses the server's upload bandwidth. A link found on a page can expire after some hours; if a long session stops beyond the part already downloaded, find the video again.
+- Some sites throttle or block servers that download a lot. The relay retries hiccups, but a slow site stays slow.
+- Calls, room voice and live streams are kept in server memory, so run a single server process. Restarting it ends any calls in progress.
+- **Room voice:** each person sends audio directly to every other person, which is why voice is capped at 12 people.
+- **Live streams from a device:** the host's computer sends a separate copy to every viewer, up to about 2.5 Mbps each, so 10 viewers need about 25 Mbps of upload. On a slower connection the picture gets softer rather than stopping. For bigger audiences, use a link, which the server relays.
+- **Streaming a file needs Chrome, Edge or Firefox.** Safari, which includes every iPhone browser, can't capture a playing video, but iPhones can watch. Phones can't share their screen, and should keep the browser in front while streaming.
+- **Attachments** are stored on the server's disk, up to 25 MB each by default. Files picked but never sent are removed after a day.
+- Any logged-in person can search for every other person by name or email.
