@@ -13,12 +13,12 @@ export function Toasts() {
         <div
           key={t.id}
           role={t.tone === 'error' ? 'alert' : 'status'}
-          className={`pop-in pointer-events-auto flex max-w-md items-start gap-3 rounded-2xl py-2.5 pr-2 pl-4 text-[14px] shadow-[0_12px_30px_-12px_rgb(10_30_25/0.5)] ${
+          className={`pop-in pointer-events-auto flex max-w-md items-start gap-3 rounded-2xl border py-2.5 pr-2 pl-4 text-[14px] font-medium shadow-[0_16px_40px_-14px_rgb(10_8_40/0.6)] ${
             t.tone === 'error'
-              ? 'bg-oxide text-white'
+              ? 'border-white/15 bg-danger text-white'
               : t.tone === 'live'
-                ? 'bg-taxi text-on-taxi'
-                : 'bg-shutter-deep text-on-shutter'
+                ? 'border-white/30 bg-live text-on-live'
+                : 'glass-deep border-white/10 text-on-brand'
           }`}
         >
           <span className="py-0.5">{t.text}</span>

@@ -2,8 +2,10 @@ import { one, query } from '../db.js';
 import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
 import { getIO, roomChannel, userChannel } from '../realtime.js';
 import { publicUser, USER_COLUMNS } from './users.js';
+import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
 import { publicWatch } from './watch.js';
+import { enrich } from './messages.js';
 
 export function roomMessage(row) {
   return {
@@ -15,11 +17,15 @@ export function roomMessage(row) {
     sender: row.sender_id
       ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue }
       : null,
+    replyToId: row.reply_to_id ?? null,
+    attachment: null,
+    replyTo: null,
+    reactions: [],
   };
 }
 
 export const ROOM_MESSAGE_SELECT = `
-  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id,
+  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id,
          u.name AS sender_name, u.avatar_hue AS sender_hue
   FROM room_messages m LEFT JOIN users u ON u.id = m.sender_id`;
 
@@ -103,12 +109,17 @@ export async function listRooms(userId) {
      ORDER BY COALESCE(lm.created_at, r.created_at) DESC`,
     [userId],
   );
-  return rows.map(summary);
+  const rooms = rows.map(summary);
+  await enrich('room', rooms.map((r) => r.lastMessage).filter(Boolean)); // "Photo", "Voice message"… in previews
+  return rooms;
 }
 
 export async function roomSummary(roomId, userId) {
   const row = await one(`${SUMMARY_SELECT} WHERE rm.user_id = $1 AND rm.room_id = $2`, [userId, roomId]);
-  return row ? summary(row) : null;
+  if (!row) return null;
+  const room = summary(row);
+  if (room.lastMessage) await enrich('room', [room.lastMessage]);
+  return room;
 }
 
 export async function roomDetail(roomId, userId) {
@@ -175,10 +186,20 @@ export async function attachMember(roomId, userId) {
   io.to(userChannel(userId)).emit('room:added', room);
 }
 
+/** Deletes a room and tells its members and invitees it's gone. */
+export async function deleteRoom(roomId) {
+  const { rows: members } = await query('SELECT user_id FROM room_members WHERE room_id = $1', [roomId]);
+  const { rows: invites } = await query(`SELECT id, invitee_id FROM room_invites WHERE room_id = $1 AND status = 'pending'`, [roomId]);
+  await query('DELETE FROM rooms WHERE id = $1', [roomId]);
+  for (const m of members) detachMember(roomId, m.user_id, 'deleted');
+  for (const i of invites) getIO()?.to(userChannel(i.invitee_id)).emit('invite:removed', { inviteId: i.id });
+}
+
 export function detachMember(roomId, userId, reason) {
   const io = getIO();
   if (!io) return;
   voice.kick(roomId, userId, reason);
+  live.dropUser(roomId, userId, reason);
   io.to(userChannel(userId)).emit('room:removed', { roomId, reason });
   io.in(userChannel(userId)).socketsLeave(roomChannel(roomId));
 }

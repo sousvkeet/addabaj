@@ -148,13 +148,13 @@ function Settings({ onDone }: { onDone: () => void }) {
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={Math.round(level * 100)}
-            className="h-2.5 flex-1 overflow-hidden rounded-full bg-limewash"
+            className="h-2.5 flex-1 overflow-hidden rounded-full bg-subtle"
           >
-            <div className="h-full rounded-full bg-taxi transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
+            <div className="h-full rounded-full bg-live transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
           </div>
           <span className="w-[92px] text-right text-[12.5px] text-ink-soft">{level > 0.08 ? 'Hearing you' : 'Say something'}</span>
         </div>
-        {micError && <p className="mt-2 text-[13.5px] text-oxide">{micError}</p>}
+        {micError && <p className="mt-2 text-[13.5px] text-danger">{micError}</p>}
       </Section>
 
       <Section
@@ -174,7 +174,7 @@ function Settings({ onDone }: { onDone: () => void }) {
 
       <Section icon={<Camera size={17} />} title="Camera" hint="Used for video calls. You can switch cameras during a call.">
         <DeviceSelect kind="videoinput" label="Camera" />
-        <div className="mt-2.5 overflow-hidden rounded-xl bg-shutter-deep">
+        <div className="mt-2.5 overflow-hidden rounded-xl bg-deep">
           {shownVideo ? (
             <Video stream={shownVideo} />
           ) : (
@@ -185,7 +185,7 @@ function Settings({ onDone }: { onDone: () => void }) {
             </div>
           )}
         </div>
-        {cameraError && <p className="mt-2 text-[13.5px] text-oxide">{cameraError}</p>}
+        {cameraError && <p className="mt-2 text-[13.5px] text-danger">{cameraError}</p>}
       </Section>
 
       <div className="flex justify-end pt-2">

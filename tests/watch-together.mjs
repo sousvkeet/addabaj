@@ -45,7 +45,7 @@ const check = async (label, fn) => {
     console.log('PASS', label);
   } catch (e) {
     results.push(false);
-    console.log('FAIL', label, '-', e.message.split('\n')[0]);
+    console.log('FAIL', label, '-', e.message.split('\n').slice(0, 8).join(' | '));
   }
 };
 

@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { config } from './config.js';
 import { AppError } from './errors.js';
+import { isDisabled } from './services/site.js';
 
 export const COOKIE_NAME = 'adda_token';
 const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -35,6 +36,7 @@ export function clearAuthCookie(res) {
 export function requireAuth(req, _res, next) {
   const userId = verifyToken(req.cookies?.[COOKIE_NAME]);
   if (!userId) return next(new AppError(401, 'Log in to continue.'));
+  if (isDisabled(userId)) return next(new AppError(401, 'This account has been switched off by the host.'));
   req.userId = userId;
   next();
 }

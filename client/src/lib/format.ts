@@ -55,3 +55,26 @@ export const initials = (name: string) =>
     .slice(0, 2)
     .map((p) => [...p][0]?.toUpperCase() ?? '')
     .join('') || '?';
+
+export function formatBytes(n: number) {
+  if (!n || !Number.isFinite(n)) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  return `${n >= 100 || i === 0 ? Math.round(n) : n.toFixed(1).replace(/\.0$/, '')} ${units[i]}`;
+}
+
+/** Short words for a message in previews and reply quotes ("Photo", "Voice message 0:12", "report.pdf"). */
+export function attachmentLabel(a: { kind: string; name: string; duration?: number | null }) {
+  if (a.kind === 'image') return 'Photo';
+  if (a.kind === 'video') return 'Video';
+  if (a.kind === 'voice') return a.duration ? `Voice message ${duration(a.duration)}` : 'Voice message';
+  return a.name;
+}
+
+/** One line for a chat or room list: the text, or what was sent if there's no text. */
+export const messagePreview = (m: { body: string; attachment?: { kind: string; name: string; duration?: number | null } | null }) =>
+  m.body || (m.attachment ? attachmentLabel(m.attachment) : '');

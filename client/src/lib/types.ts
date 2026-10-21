@@ -5,9 +5,67 @@ export type User = {
   hue: number;
   lastSeenAt: string | null;
   online?: boolean;
+  /** Only on your own account: */
+  siteAdmin?: boolean;
+  /** Still using the default password the host admin account came with. */
+  mustChangePassword?: boolean;
+  /** On a public server that default must be changed before anything else. */
+  passwordChangeRequired?: boolean;
 };
 
-export type DmMessage = {
+export type Announcement = { id: string; text: string; at: string };
+
+/** A photo, video, voice message or file sent with a message. */
+export type Attachment = {
+  id: string;
+  kind: 'image' | 'video' | 'voice' | 'file';
+  name: string;
+  mime: string;
+  size: number;
+  width: number | null;
+  height: number | null;
+  duration: number | null;
+  waveform: number[] | null;
+  url: string;
+};
+
+/** The message being replied to, as quoted inside the reply. */
+export type ReplyRef = {
+  id: number;
+  senderId?: string;
+  senderName: string;
+  body: string;
+  attachment: { kind: Attachment['kind']; name: string; duration?: number | null } | null;
+  deleted?: boolean;
+};
+
+export type Reaction = { emoji: string; users: string[] };
+
+/** A file ready to upload (photos already shrunk), with a local preview. */
+export type PreparedFile = {
+  blob: Blob;
+  meta: { kind: Attachment['kind']; name: string; mime: string; width?: number; height?: number; duration?: number; waveform?: number[] };
+  previewUrl: string | null;
+  /** Set once uploaded, so a retry doesn't upload again. */
+  uploaded?: Attachment;
+};
+
+/** What the composer sends: text, optionally a file and/or the message replied to. */
+export type Draft = { body: string; file?: PreparedFile; replyTo?: ReplyRef | null };
+
+/** Fields every chat and room message carries besides its text. */
+type MessageExtras = {
+  attachment?: Attachment | null;
+  replyTo?: ReplyRef | null;
+  replyToId?: number | null;
+  reactions?: Reaction[];
+  /** Client-only while sending a file: upload progress (0–100). */
+  upload?: number;
+  /** Client-only: what to send again on retry. */
+  draft?: Draft;
+};
+
+export type DmMessage = MessageExtras & {
   id: number;
   senderId: string;
   recipientId: string;
@@ -27,7 +85,7 @@ export type Conversation = {
   unread: number;
 };
 
-export type RoomMessage = {
+export type RoomMessage = MessageExtras & {
   id: number;
   roomId: string;
   kind: 'text' | 'system';
@@ -40,8 +98,19 @@ export type RoomMessage = {
 
 export type Role = 'admin' | 'member';
 
+/** A live stream from an admin's device: a video file playing there, or their screen. */
+export type DeviceStream = {
+  sessionId: string;
+  hostId: string;
+  hostName: string;
+  mode: 'file' | 'screen';
+  /** Length of the file being streamed (null for screens). */
+  duration: number | null;
+  audio: boolean;
+};
+
 export type WatchSource = {
-  kind: 'youtube' | 'file' | 'hls';
+  kind: 'youtube' | 'file' | 'hls' | 'device';
   url: string;
   videoId?: string;
   title: string;
@@ -55,6 +124,8 @@ export type WatchSource = {
   preparing?: boolean;
   /** Why the video couldn't be prepared. */
   error?: string;
+  /** Set when kind is 'device'. */
+  device?: DeviceStream;
 };
 
 /** One way to play a found video (a quality, or YouTube's player). */

@@ -7,6 +7,7 @@ import { cleanPosition, getWatch, playbackFor, publicWatch, saveWatch } from '..
 import { forgetStream } from '../stream/cache.js';
 import { cancelMerge, startMerge } from '../stream/merge.js';
 import { bestFor, findVideos, takeOption } from '../stream/find.js';
+import { live } from './live.js';
 import { handle } from './util.js';
 
 // Finding videos can open pages and run tools, so keep it to a sane rate.
@@ -18,6 +19,21 @@ function allowScan(userId) {
   list.push(now);
   recentScans.set(userId, list);
   return true;
+}
+
+/**
+ * Puts a new video (or nothing) in place for the room and lets go of what
+ * played before: its shared download, a join in progress, or a live stream.
+ */
+export async function replaceWatch(roomId, watch, { keepLive = false } = {}) {
+  const previous = await getWatch(roomId);
+  await saveWatch(roomId, watch);
+  if (previous?.stream) {
+    cancelMerge(previous.stream.token);
+    forgetStream(previous.stream.token);
+  }
+  if (previous?.source?.kind === 'device' && !keepLive) live.closeRoom(roomId, watch ? 'replaced' : 'stopped');
+  return previous;
 }
 
 export function registerWatch(socket) {
@@ -44,12 +60,7 @@ export function registerWatch(socket) {
     const { source, start, stream } = playbackFor(roomId, choice);
     // A joined video plays once it's ready; until then the room sees progress.
     const watch = { source, playing: !source.preparing, position: start, at: Date.now(), by: user.id, byName: user.name, stream };
-    const previous = await getWatch(roomId);
-    await saveWatch(roomId, watch);
-    if (previous?.stream) {
-      cancelMerge(previous.stream.token);
-      forgetStream(previous.stream.token);
-    }
+    await replaceWatch(roomId, watch);
     if (stream?.merge) startMerge(roomId, stream);
     await postSystemMessage(roomId, `${user.name} is playing “${source.title}” for everyone`);
     return { watch: publicWatch(watch) };
@@ -59,6 +70,7 @@ export function registerWatch(socket) {
     await requireAdmin(roomId, user.id);
     const current = await getWatch(roomId);
     if (!current) throw new AppError(409, 'Nothing is playing right now.');
+    if (current.source?.kind === 'device') throw new AppError(409, `${current.byName} controls their live stream.`);
     const watch = { ...current, playing: !!playing, position: cleanPosition(position), at: Date.now(), by: user.id, byName: user.name };
     await saveWatch(roomId, watch);
     return { watch: publicWatch(watch) };
@@ -66,14 +78,9 @@ export function registerWatch(socket) {
 
   socket.on('watch:stop', handle(async ({ roomId }) => {
     await requireAdmin(roomId, user.id);
-    const current = await getWatch(roomId);
+    const current = await replaceWatch(roomId, null);
     if (!current) return {};
-    await saveWatch(roomId, null);
-    if (current.stream) {
-      cancelMerge(current.stream.token);
-      forgetStream(current.stream.token);
-    }
-    await postSystemMessage(roomId, `${user.name} stopped the video`);
+    await postSystemMessage(roomId, current.source?.kind === 'device' ? `${user.name} ended the live stream` : `${user.name} stopped the video`);
     return {};
   }));
 }

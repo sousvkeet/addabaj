@@ -7,7 +7,8 @@
     "start": "node src/index.js",
     "migrate": "node src/migrate.js",
     "setup:yt-dlp": "node scripts/install-yt-dlp.mjs",
-    "setup:ffmpeg": "node scripts/install-ffmpeg.mjs"
+    "setup:ffmpeg": "node scripts/install-ffmpeg.mjs",
+    "admin:reset": "node scripts/reset-admin.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

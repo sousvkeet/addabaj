@@ -32,6 +32,7 @@ function leave(userId, roomId) {
 
 export const voice = {
   participants,
+  totalParticipants: () => userRoom.size,
   isInVoice: (userId) => userRoom.has(userId),
 
   snapshot(roomIds) {

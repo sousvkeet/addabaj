@@ -29,7 +29,7 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
       {open && (
         <div
           role="menu"
-          className="pop-in absolute top-9 right-0 z-20 min-w-[190px] rounded-xl border border-line bg-paper p-1 shadow-[0_14px_32px_-14px_rgb(10_30_25/0.45)]"
+          className="pop-in absolute top-9 right-0 z-20 min-w-[200px] rounded-2xl border border-line bg-surface p-1.5 shadow-float"
         >
           {items.map((item) => (
             <button
@@ -40,7 +40,7 @@ export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
                 setOpen(false);
                 item.onSelect();
               }}
-              className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px] hover:bg-limewash ${item.danger ? 'text-oxide' : ''}`}
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-[14px] font-medium hover:bg-subtle ${item.danger ? 'text-danger' : ''}`}
             >
               {item.icon}
               {item.label}

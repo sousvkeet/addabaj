@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router';
-import { PhoneMissed, Phone, SquarePen, Video } from 'lucide-react';
-import { listStamp } from '../lib/format';
+import { MessageCircle, PhoneMissed, Phone, SquarePen, Video } from 'lucide-react';
+import { listStamp, messagePreview } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { Avatar } from './ui/Avatar';
 import { Button, IconButton } from './ui/Button';
-import { ListEmpty, ListHeader, ListSearch } from './ListHeader';
+import { ListEmpty, ListHeader, ListSearch, UnreadBadge, listRowClass } from './ListHeader';
 import { UserPicker } from './UserPicker';
 
 export function ChatList() {
@@ -29,14 +29,15 @@ export function ChatList() {
     <>
       <ListHeader
         title="Chats"
+        subtitle={list.length ? `${list.length} ${list.length === 1 ? 'conversation' : 'conversations'}` : 'Talk one to one'}
         action={
-          <IconButton label="Start a new chat" variant="primary" size={38} onClick={() => setPicking(true)}>
+          <IconButton label="Start a new chat" variant="primary" size={42} onClick={() => setPicking(true)}>
             <SquarePen size={18} />
           </IconButton>
         }
       />
       {Object.keys(conversations).length > 0 && <ListSearch value={filter} onChange={setFilter} placeholder="Search chats" />}
-      <ul className="min-h-0 flex-1 overflow-y-auto px-2 pb-3">
+      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pb-3">
         {list.map(({ partner, lastMessage, unread }) => {
           const m = lastMessage!;
           const mine = m.senderId === me?.id;
@@ -45,24 +46,22 @@ export function ChatList() {
             <li key={partner.id}>
               <NavLink
                 to={`/chats/${partner.id}`}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-2xl px-3 py-2.5 transition-colors ${isActive ? 'bg-paper' : 'hover:bg-paper/50'}`
-                }
+                className={({ isActive }) => listRowClass(isActive)}
               >
-                <Avatar name={partner.name} hue={partner.hue} size={46} online={online[partner.id]} />
+                <Avatar name={partner.name} hue={partner.hue} size={48} online={online[partner.id]} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
                     <span className="truncate font-semibold">{partner.name}</span>
-                    <span className="ml-auto shrink-0 text-[12px] text-ink-soft">{listStamp(m.createdAt)}</span>
+                    <span className={`ml-auto shrink-0 text-[12px] ${unread ? 'font-semibold text-brand dark:text-live' : 'text-ink-soft'}`}>{listStamp(m.createdAt)}</span>
                   </span>
                   <span className="flex items-center gap-2">
                     <span className={`flex min-w-0 flex-1 items-center gap-1 truncate text-[14px] ${unread ? 'font-medium text-ink' : 'text-ink-soft'}`}>
                       {isTyping ? (
-                        <span className="text-shutter dark:text-taxi">typing…</span>
+                        <span className="text-brand dark:text-live">typing…</span>
                       ) : m.kind === 'call' ? (
                         <>
                           {m.meta?.outcome !== 'completed' ? (
-                            <PhoneMissed size={14} className="text-oxide" />
+                            <PhoneMissed size={14} className="text-danger" />
                           ) : m.meta?.video ? (
                             <Video size={14} />
                           ) : (
@@ -73,15 +72,11 @@ export function ChatList() {
                       ) : (
                         <span className="truncate">
                           {mine && 'You: '}
-                          {m.body}
+                          {messagePreview(m)}
                         </span>
                       )}
                     </span>
-                    {unread > 0 && (
-                      <span className="min-w-[20px] rounded-full bg-taxi px-1.5 text-center text-[12px] leading-5 font-bold text-on-taxi">
-                        {unread}
-                      </span>
-                    )}
+                    <UnreadBadge count={unread} />
                   </span>
                 </span>
               </NavLink>
@@ -89,7 +84,7 @@ export function ChatList() {
           );
         })}
         {bootstrapped && list.length === 0 && (
-          <ListEmpty title={filter ? 'No chats match that name' : 'No chats yet'}>
+          <ListEmpty icon={<MessageCircle size={22} />} title={filter ? 'No chats match that name' : 'No chats yet'}>
             {!filter && (
               <>
                 <p>Find someone on Adda Khana and say hello. Your conversations will show up here.</p>

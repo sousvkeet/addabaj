@@ -88,13 +88,13 @@ export function UserPicker(props: Props) {
       }
     >
       {props.mode === 'room' && room && (
-        <p className={`mb-3 rounded-xl px-3.5 py-2.5 text-[14px] ${full ? 'bg-oxide/10 text-oxide' : 'bg-limewash'}`}>
+        <p className={`mb-3 rounded-xl px-3.5 py-2.5 text-[14px] ${full ? 'bg-danger/10 text-danger' : 'bg-subtle'}`}>
           {full
             ? `The room is full (${room.maxMembers} of ${room.maxMembers}). Raise the member limit in room settings to add more people.`
             : `${room.memberCount} of ${room.maxMembers} seats taken, ${seatsLeft} left.`}
         </p>
       )}
-      <label className="sticky top-0 z-10 mb-2 flex h-11 items-center gap-2 rounded-xl border border-line bg-wall px-3 text-ink-soft focus-within:border-shutter focus-within:bg-paper">
+      <label className="sticky top-0 z-10 mb-2 flex h-12 items-center gap-2.5 rounded-2xl border border-line/70 bg-subtle px-3.5 text-ink-soft transition-[border-color,box-shadow] focus-within:border-brand focus-within:shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_16%,transparent)]">
         <Search size={17} />
         <input
           autoFocus
@@ -105,10 +105,10 @@ export function UserPicker(props: Props) {
           className="h-full min-w-0 flex-1 bg-transparent text-ink outline-none placeholder:text-ink-soft/70"
         />
       </label>
-      {error && <p className="py-3 text-[14px] text-oxide">{error}</p>}
+      {error && <p className="py-3 text-[14px] text-danger">{error}</p>}
       <ul className="-mx-2">
         {users?.map((u) => (
-          <li key={u.id} className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-limewash/60">
+          <li key={u.id} className="flex items-center gap-3 rounded-2xl px-2 py-2 transition-colors hover:bg-subtle/70">
             <button
               type="button"
               disabled={props.mode !== 'chat'}

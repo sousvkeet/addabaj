@@ -34,7 +34,7 @@ export function MemberLimit({ value, onChange, min = ROOM_MIN }: { value: number
         max={ROOM_MAX}
         value={Math.min(ROOM_MAX, Math.max(lo, value || lo))}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="ml-1 min-w-[120px] flex-1 accent-[var(--shutter)]"
+        className="ml-1 min-w-[120px] flex-1 accent-[var(--brand)]"
       />
     </div>
   );

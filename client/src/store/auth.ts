@@ -11,6 +11,9 @@ type AuthState = {
   register: (name: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   expire: () => void;
+  /** Reloads my account (after a password change, or when the host changes my role). */
+  refresh: () => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 };
 
 const resetHandlers: (() => void)[] = [];
@@ -59,6 +62,15 @@ export const useAuth = create<AuthState>()((set) => {
       signedOut();
     },
     expire: signedOut,
+    refresh: async () => {
+      const { user } = await api<{ user: User | null }>('/auth/me');
+      if (user) set({ user });
+      else signedOut();
+    },
+    changePassword: async (currentPassword, newPassword) => {
+      const { user } = await api<{ user: User }>('/auth/password', { method: 'POST', body: { currentPassword, newPassword } });
+      set({ user });
+    },
   };
 });
 

@@ -72,7 +72,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
     <div className="flex h-full min-h-0 flex-col">
       {onClose && (
         <div className="flex h-14 shrink-0 items-center justify-between px-4">
-          <h2 className="font-display text-[20px]">In this room</h2>
+          <h2 className="font-display text-[18px] font-semibold">In this room</h2>
           <IconButton label="Close" onClick={onClose}>
             <X size={19} />
           </IconButton>
@@ -81,11 +81,11 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <VoiceTable roomId={room.id} members={room.members} />
 
-        <section aria-labelledby="members-heading" className="border-t border-line px-2 pt-4 pb-3">
+        <section aria-labelledby="members-heading" className="border-t border-line/70 px-2 pt-4 pb-3">
           <div className="flex items-center justify-between gap-2 px-2 pb-2">
             <h2 id="members-heading" className="font-semibold">
               Members{' '}
-              <span className={`font-normal tabular-nums ${full ? 'text-oxide' : 'text-ink-soft'}`}>
+              <span className={`font-normal tabular-nums ${full ? 'text-danger' : 'text-ink-soft'}`}>
                 {room.memberCount} of {room.maxMembers}
               </span>
             </h2>
@@ -97,14 +97,14 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
             )}
           </div>
           {isAdmin && full && (
-            <p className="mx-2 mb-2 rounded-lg bg-oxide/10 px-3 py-2 text-[13px] text-oxide">
+            <p className="mx-2 mb-2 rounded-lg bg-danger/10 px-3 py-2 text-[13px] text-danger">
               The room is full. Raise the limit in settings to add more people.
             </p>
           )}
           <ul>
             {room.members.map((m) => (
               <li key={m.id}>
-                <div className="flex items-center gap-3 rounded-xl px-2 py-1.5 hover:bg-paper/60">
+                <div className="flex items-center gap-3 rounded-2xl px-2 py-1.5 transition-colors hover:bg-subtle/70">
                   <Avatar name={m.name} hue={m.hue} size={36} online={online[m.id]} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[14.5px] font-medium">
@@ -121,8 +121,8 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
                   <Menu label={`Options for ${m.name}`} items={memberMenu(m)} />
                 </div>
                 {confirm?.kind === 'remove' && confirm.member.id === m.id && (
-                  <div className="mx-2 mb-2 flex flex-wrap items-center gap-2 rounded-xl bg-oxide/10 p-2.5">
-                    <span className="flex-1 text-[13.5px] text-oxide">Remove {m.name} from the room?</span>
+                  <div className="mx-2 mb-2 flex flex-wrap items-center gap-2 rounded-xl bg-danger/10 p-2.5">
+                    <span className="flex-1 text-[13.5px] text-danger">Remove {m.name} from the room?</span>
                     <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>
                       Cancel
                     </Button>
@@ -137,7 +137,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
         </section>
 
         {isAdmin && room.invites.length > 0 && (
-          <section aria-labelledby="invites-heading" className="border-t border-line px-2 pt-4 pb-3">
+          <section aria-labelledby="invites-heading" className="border-t border-line/70 px-2 pt-4 pb-3">
             <h2 id="invites-heading" className="px-2 pb-2 font-semibold">
               Waiting to join <span className="font-normal text-ink-soft">{room.invites.length}</span>
             </h2>
@@ -159,7 +159,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
         )}
       </div>
 
-      <div className="shrink-0 border-t border-line p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+      <div className="shrink-0 border-t border-line/70 p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
         {confirm?.kind === 'leave' ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex-1 text-[14px]">Leave {room.name}?</span>
@@ -183,13 +183,13 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
         ) : (
           <div className="flex gap-2">
             {isAdmin && (
-              <Button variant="ghost" className="flex-1" onClick={() => setSettingsOpen(true)}>
+              <Button variant="soft" className="flex-1" onClick={() => setSettingsOpen(true)}>
                 <Settings size={17} />
                 Room settings
               </Button>
             )}
             {!isOwner && (
-              <Button variant="ghost" className="flex-1 text-oxide" onClick={() => setConfirm({ kind: 'leave' })}>
+              <Button variant="ghost" className="flex-1 text-danger" onClick={() => setConfirm({ kind: 'leave' })}>
                 <LogOut size={17} />
                 Leave room
               </Button>

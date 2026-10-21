@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { api, errorMessage } from '../lib/api';
 import { emitAck, socket } from '../lib/socket';
 import type {
-  Conversation, DmMessage, Invite, Paged, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
+  Attachment, Conversation, DmMessage, Draft, Invite, Paged, PreparedFile, Reaction, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
 } from '../lib/types';
+import { uploadFile } from '../lib/upload';
 import { myId, onLogout, useAuth } from './auth';
 import { toast } from './ui';
 
@@ -31,7 +32,7 @@ type ChatState = {
 
   openDm: (partnerId: string | null) => void;
   loadDm: (partnerId: string, older?: boolean) => Promise<void>;
-  sendDm: (partnerId: string, body: string, retryOf?: string) => Promise<void>;
+  sendDm: (partnerId: string, draft: Draft, retryOf?: string) => Promise<void>;
   receiveDm: (message: DmMessage, partner: User) => void;
   markDmRead: (partnerId: string) => void;
   applyDmRead: (e: { readerId: string; partnerId: string; readAt: string }) => void;
@@ -40,7 +41,9 @@ type ChatState = {
   openRoom: (roomId: string | null) => void;
   loadRoom: (roomId: string) => Promise<void>;
   loadRoomMessages: (roomId: string, older?: boolean) => Promise<void>;
-  sendRoomMessage: (roomId: string, body: string, retryOf?: string) => Promise<void>;
+  sendRoomMessage: (roomId: string, draft: Draft, retryOf?: string) => Promise<void>;
+  react: (scope: 'dm' | 'room', messageId: number, emoji: string) => Promise<void>;
+  applyReactions: (e: { scope: 'dm' | 'room'; messageId: number; reactions: Reaction[]; between?: string[]; roomId?: string }) => void;
   receiveRoomMessage: (message: RoomMessage) => void;
   markRoomRead: (roomId: string) => void;
   setRoomTyping: (e: { roomId: string; userId: string; name: string; typing: boolean }) => void;
@@ -81,6 +84,43 @@ function merge<T extends { id: number; tempId?: string; pending?: string }>(item
 }
 
 const typingTimers = new Map<string, number>();
+
+/** How a file being sent looks in the chat before the server has it: its local preview. */
+const localAttachment = (file: PreparedFile): Attachment => ({
+  id: 'local',
+  kind: file.meta.kind,
+  name: file.meta.name,
+  mime: file.meta.mime,
+  size: file.blob.size,
+  width: file.meta.width ?? null,
+  height: file.meta.height ?? null,
+  duration: file.meta.duration ?? null,
+  waveform: file.meta.waveform ?? null,
+  url: file.previewUrl ?? '',
+});
+
+/** Uploads a draft's file once (a retry reuses it), reporting progress. */
+async function uploadOnce(draft: Draft, onProgress: (percent: number) => void) {
+  if (!draft.file) return undefined;
+  if (!draft.file.uploaded) {
+    let last = -10;
+    draft.file.uploaded = await uploadFile(draft.file, (p) => {
+      if (p - last >= 3 || p === 100) onProgress((last = p));
+    });
+  }
+  return draft.file.uploaded;
+}
+
+/** A file the server no longer has waiting (expired, or the send got through after all) is uploaded again on retry. */
+const forgetUpload = (draft: Draft, err: unknown) => {
+  if (draft.file?.uploaded && /already sent or has expired/.test(errorMessage(err))) draft.file.uploaded = undefined;
+};
+
+/** The local preview isn't needed once the sent message shows the server's copy. */
+const releasePreview = (draft: Draft) => {
+  const url = draft.file?.previewUrl;
+  if (url) window.setTimeout(() => URL.revokeObjectURL(url), 15_000);
+};
 const visible = () => document.visibilityState === 'visible';
 
 const initial = {
@@ -178,20 +218,33 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
-  sendDm: async (partnerId, body, retryOf) => {
+  sendDm: async (partnerId, draft, retryOf) => {
     const me = myId();
     const tid = tempId();
     const temp: DmMessage = {
-      id: 0, tempId: tid, senderId: me, recipientId: partnerId, kind: 'text', body, meta: null,
-      createdAt: new Date().toISOString(), readAt: null, pending: 'sending',
+      id: 0, tempId: tid, senderId: me, recipientId: partnerId, kind: 'text', body: draft.body, meta: null,
+      createdAt: new Date().toISOString(), readAt: null, pending: 'sending', draft,
+      attachment: draft.file ? localAttachment(draft.file) : null,
+      replyTo: draft.replyTo ?? null,
+      reactions: [],
+      upload: draft.file && !draft.file.uploaded ? 0 : undefined,
     };
     set((s) => {
       const page = s.dms[partnerId] ?? { ...emptyPage<DmMessage>(), loaded: true };
       const items = retryOf ? page.items.filter((m) => m.tempId !== retryOf) : page.items;
       return { dms: { ...s.dms, [partnerId]: { ...page, items: [...items, temp] } } };
     });
+    const patch = (fn: (m: DmMessage) => DmMessage) =>
+      set((s) => {
+        const page = s.dms[partnerId];
+        return page ? { dms: { ...s.dms, [partnerId]: { ...page, items: page.items.map((m) => (m.tempId === tid ? fn(m) : m)) } } } : s;
+      });
     try {
-      const { message } = await emitAck<{ message: DmMessage }>('dm:send', { to: partnerId, body });
+      const attachment = await uploadOnce(draft, (upload) => patch((m) => ({ ...m, upload })));
+      const { message } = await emitAck<{ message: DmMessage }>('dm:send', {
+        to: partnerId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id,
+      });
+      releasePreview(draft);
       const partner = get().users[partnerId] ?? get().conversations[partnerId]?.partner;
       set((s) => {
         const page = s.dms[partnerId] ?? emptyPage<DmMessage>();
@@ -210,6 +263,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           dms: { ...s.dms, [partnerId]: { ...page, items: page.items.map((m) => (m.tempId === tid ? { ...m, pending: 'failed' as const } : m)) } },
         };
       });
+      forgetUpload(draft, err);
       toast(errorMessage(err), 'error');
     }
   },
@@ -334,20 +388,35 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
-  sendRoomMessage: async (roomId, body, retryOf) => {
+  sendRoomMessage: async (roomId, draft, retryOf) => {
     const me = meAsSender();
     const tid = tempId();
     const temp: RoomMessage = {
-      id: 0, tempId: tid, roomId, kind: 'text', body, createdAt: new Date().toISOString(),
-      sender: me, pending: 'sending',
+      id: 0, tempId: tid, roomId, kind: 'text', body: draft.body, createdAt: new Date().toISOString(),
+      sender: me, pending: 'sending', draft,
+      attachment: draft.file ? localAttachment(draft.file) : null,
+      replyTo: draft.replyTo ?? null,
+      reactions: [],
+      upload: draft.file && !draft.file.uploaded ? 0 : undefined,
     };
     set((s) => {
       const page = s.roomMessages[roomId] ?? { ...emptyPage<RoomMessage>(), loaded: true };
       const items = retryOf ? page.items.filter((m) => m.tempId !== retryOf) : page.items;
       return { roomMessages: { ...s.roomMessages, [roomId]: { ...page, items: [...items, temp] } } };
     });
+    const patch = (fn: (m: RoomMessage) => RoomMessage) =>
+      set((s) => {
+        const page = s.roomMessages[roomId];
+        return page
+          ? { roomMessages: { ...s.roomMessages, [roomId]: { ...page, items: page.items.map((m) => (m.tempId === tid ? fn(m) : m)) } } }
+          : s;
+      });
     try {
-      const { message } = await emitAck<{ message: RoomMessage }>('room:send', { roomId, body });
+      const attachment = await uploadOnce(draft, (upload) => patch((m) => ({ ...m, upload })));
+      const { message } = await emitAck<{ message: RoomMessage }>('room:send', {
+        roomId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id,
+      });
+      releasePreview(draft);
       set((s) => {
         const page = s.roomMessages[roomId] ?? emptyPage<RoomMessage>();
         const room = s.rooms[roomId];
@@ -367,6 +436,7 @@ export const useChat = create<ChatState>()((set, get) => ({
           },
         };
       });
+      forgetUpload(draft, err);
       toast(errorMessage(err), 'error');
     }
   },
@@ -499,6 +569,31 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   setVoice: (roomId, participants) => set((s) => ({ voice: { ...s.voice, [roomId]: participants } })),
+
+  react: async (scope, messageId, emoji) => {
+    try {
+      await emitAck('msg:react', { scope, messageId, emoji });
+      // The server tells everyone (including this tab) via 'msg:reactions'.
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  },
+
+  applyReactions: ({ scope, messageId, reactions, between, roomId }) => {
+    const update = <T extends { id: number; reactions?: Reaction[] }>(items: T[]) =>
+      items.map((m) => (m.id === messageId ? { ...m, reactions } : m));
+    if (scope === 'dm') {
+      const me = myId();
+      const partner = between?.find((id) => id !== me) ?? me;
+      set((s) => (s.dms[partner] ? { dms: { ...s.dms, [partner]: { ...s.dms[partner], items: update(s.dms[partner].items) } } } : s));
+    } else if (roomId) {
+      set((s) =>
+        s.roomMessages[roomId]
+          ? { roomMessages: { ...s.roomMessages, [roomId]: { ...s.roomMessages[roomId], items: update(s.roomMessages[roomId].items) } } }
+          : s,
+      );
+    }
+  },
 }));
 
 function meAsSender() {

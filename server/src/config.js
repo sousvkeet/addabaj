@@ -57,5 +57,8 @@ export const limits = {
   minRoomMembers: 2,
   maxRoomMembers: 50,
   voiceSeats: 12,
+  // A live stream from someone's device goes from their browser to each viewer
+  // separately, so their upload speed and computer set how many can watch.
+  liveViewers: Math.min(30, Math.max(1, Number(process.env.LIVE_MAX_VIEWERS ?? 10) || 10)),
   messageLength: 4000,
 };

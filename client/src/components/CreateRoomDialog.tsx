@@ -59,7 +59,7 @@ export function CreateRoomDialog({ open, onClose }: { open: boolean; onClose: ()
         <Field label="Maximum members" hint={`Including you. Between ${ROOM_MIN} and ${ROOM_MAX}; you can change it later.`}>
           <MemberLimit value={max} onChange={setMax} />
         </Field>
-        {error && <p role="alert" className="text-[14px] text-oxide">{error}</p>}
+        {error && <p role="alert" className="text-[14px] text-danger">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="ghost" onClick={close}>
             Cancel

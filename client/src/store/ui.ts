@@ -25,7 +25,7 @@ export const useUi = create<UiState>()((set, get) => ({
   setSoundBlocked: (soundBlocked) => set({ soundBlocked }),
   devicesOpen: false,
   setDevicesOpen: (devicesOpen) => set({ devicesOpen }),
-  theme: (document.documentElement.dataset.theme as Theme) ?? 'light',
+  theme: (document.documentElement.dataset.theme as Theme) ?? 'dark',
   toast: (text, tone = 'info') => {
     const id = nextId++;
     set((s) => ({ toasts: [...s.toasts.filter((t) => t.text !== text), { id, text, tone }].slice(-4) }));
@@ -35,7 +35,7 @@ export const useUi = create<UiState>()((set, get) => ({
   toggleTheme: () => {
     const theme: Theme = get().theme === 'dark' ? 'light' : 'dark';
     document.documentElement.dataset.theme = theme;
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#09130f' : '#15362f');
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#090C1A' : '#F3F4FB');
     try {
       localStorage.setItem('adda-theme', theme);
     } catch {

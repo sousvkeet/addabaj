@@ -9,19 +9,26 @@ import { config, limits, rootDir } from './config.js';
 import { requireAuth } from './auth.js';
 import { migrate } from './migrate.js';
 import { setIO } from './realtime.js';
+import { adminRouter } from './routes/admin.js';
 import { authRouter } from './routes/auth.js';
 import { usersRouter } from './routes/users.js';
 import { dmsRouter } from './routes/dms.js';
 import { roomsRouter } from './routes/rooms.js';
 import { invitesRouter } from './routes/invites.js';
 import { streamRouter } from './routes/stream.js';
+import { filesRouter, uploadsRouter } from './routes/uploads.js';
+import { cleanUploads, maxUploadBytes } from './services/uploads.js';
+import { ensureHostAdmin, loadSite, publicSite } from './services/site.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
 import { ytdlpPath } from './stream/ytdlp.js';
 import { ffmpegPath } from './stream/ffmpeg.js';
 import { resumeMerges } from './stream/merge.js';
+import { live } from './socket/live.js';
 
 await migrate();
+await ensureHostAdmin();
+await loadSite();
 
 const app = express();
 app.disable('x-powered-by');
@@ -32,13 +39,17 @@ app.use(cookieParser());
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 app.use('/api/auth', authRouter);
 app.get('/api/config', requireAuth, async (_req, res) => {
-  res.json({ iceServers: await getIceServers(), iceTransportPolicy: iceTransportPolicy(), limits });
+  res.json({ iceServers: await getIceServers(), iceTransportPolicy: iceTransportPolicy(), limits: { ...limits, uploadMaxBytes: maxUploadBytes } });
 });
+app.get('/api/site', requireAuth, (_req, res) => res.json(publicSite()));
+app.use('/api/admin', requireAuth, adminRouter);
 app.use('/api/users', requireAuth, usersRouter);
 app.use('/api/dms', requireAuth, dmsRouter);
 app.use('/api/rooms', requireAuth, roomsRouter);
 app.use('/api/invites', requireAuth, invitesRouter);
 app.use('/api/stream', requireAuth, streamRouter);
+app.use('/api/uploads', requireAuth, uploadsRouter);
+app.use('/api/files', requireAuth, filesRouter);
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
 
 // In production the server also hosts the built client.
@@ -84,4 +95,9 @@ server.listen(config.port, async () => {
       : 'Watch together: FFmpeg not installed; run `npm run setup:ffmpeg` to offer qualities that need joining',
   );
   resumeMerges().catch((err) => console.error('Could not resume video preparation', err));
+  live.clearStale().catch((err) => console.error('Could not clear old live streams', err));
+  // Unsent uploads (after a day) and files of deleted messages are removed hourly.
+  const clean = () => cleanUploads().catch((err) => console.error('Upload cleanup failed', err));
+  clean();
+  setInterval(clean, 60 * 60 * 1000).unref();
 });

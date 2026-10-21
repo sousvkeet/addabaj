@@ -17,7 +17,7 @@ export function ConnectionNotice() {
   return (
     <div
       role="status"
-      className="pop-in fixed top-[max(8px,env(safe-area-inset-top))] left-1/2 z-[55] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full bg-shutter-deep px-4 py-2 text-[13.5px] font-medium text-on-shutter shadow-lg"
+      className="pop-in fixed top-[max(8px,env(safe-area-inset-top))] left-1/2 z-[55] flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-full glass-deep border border-white/10 px-4 py-2 text-[13.5px] font-medium text-on-brand shadow-float"
     >
       <LoaderCircle size={15} className="animate-spin" />
       Reconnecting…

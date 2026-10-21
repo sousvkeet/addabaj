@@ -7,3 +7,4 @@ dist
 tests/screenshots
 server/bin
 server/cache
+server/uploads

@@ -1,17 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
 import { ArrowLeft, AudioLines, Headphones, LoaderCircle, MonitorPlay, Users } from 'lucide-react';
 import { socket } from '../lib/socket';
 import { useMedia } from '../lib/useMedia';
-import type { VoiceParticipant } from '../lib/types';
+import type { ReplyRef, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
 import { useChat } from '../store/chat';
 import { useVoice } from '../store/voice';
 import { Avatar, hueFromId } from '../components/ui/Avatar';
 import { Button, IconButton } from '../components/ui/Button';
-import { Composer } from '../components/Composer';
-import { MessageList, TypingLine, type ThreadItem } from '../components/MessageList';
+import { Composer, type ComposerHandle } from '../components/Composer';
+import { FileDrop } from '../components/FileDrop';
+import { MessageList, TypingLine, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { RoomPanel } from '../components/RoomPanel';
 import { WatchDialog, WatchStage } from '../components/watch/WatchStage';
 
@@ -36,6 +37,7 @@ export function RoomView() {
   const openRoom = useChat((s) => s.openRoom);
   const loadRoomMessages = useChat((s) => s.loadRoomMessages);
   const sendRoomMessage = useChat((s) => s.sendRoomMessage);
+  const react = useChat((s) => s.react);
   const voiceRoom = useVoice((s) => s.roomId);
   const voiceStatus = useVoice((s) => s.status);
   const joinVoice = useVoice((s) => s.join);
@@ -46,10 +48,13 @@ export function RoomView() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
+  const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const composer = useRef<ComposerHandle>(null);
 
   useEffect(() => {
     openRoom(roomId);
     setPanelOpen(false);
+    setReplyTo(null);
     return () => openRoom(null);
   }, [roomId, openRoom]);
 
@@ -66,12 +71,18 @@ export function RoomView() {
     () =>
       (page?.items ?? []).map((m) => ({
         key: m.tempId ?? String(m.id),
+        id: m.id,
         mine: m.sender?.id === me?.id && m.kind === 'text',
         kind: m.kind,
         body: m.body,
         createdAt: m.createdAt,
         sender: m.sender,
         pending: m.pending,
+        attachment: m.attachment,
+        replyTo: m.replyTo,
+        reactions: m.reactions,
+        upload: m.upload,
+        draft: m.draft,
       })),
     [page?.items, me?.id],
   );
@@ -83,7 +94,7 @@ export function RoomView() {
           <>
             <p className="font-display text-[22px]">This room isn't available</p>
             <p className="max-w-sm text-[14px] text-ink-soft">It may have been deleted, or you're no longer a member.</p>
-            <Link to="/rooms" className="font-semibold text-shutter hover:underline dark:text-taxi">
+            <Link to="/rooms" className="font-semibold text-brand hover:underline dark:text-live">
               Back to your rooms
             </Link>
           </>
@@ -103,19 +114,19 @@ export function RoomView() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-16 shrink-0 items-center gap-3 border-b border-line bg-paper px-2 md:px-5">
+        <header className="glass relative z-10 flex h-[72px] shrink-0 items-center gap-3 border-b border-line/70 px-2 pt-[env(safe-area-inset-top)] md:px-5">
           <IconButton label="Back to rooms" className="md:hidden" onClick={() => navigate('/rooms')}>
             <ArrowLeft size={20} />
           </IconButton>
-          <Avatar name={room.name} hue={hueFromId(room.id)} size={40} square />
+          <Avatar name={room.name} hue={hueFromId(room.id)} size={44} square />
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-[20px] leading-tight">{room.name}</h1>
+            <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{room.name}</h1>
             <p className="flex items-center gap-2 truncate text-[13px] text-ink-soft">
               <span className="truncate">
                 {room.memberCount} of {room.maxMembers} members
               </span>
               {voiceList.length > 0 && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-shutter px-2 leading-5 font-semibold text-taxi">
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-cyan-700 dark:text-live">
                   <AudioLines size={12} />
                   {voiceList.length} in voice
                 </span>
@@ -136,13 +147,13 @@ export function RoomView() {
             </Button>
           )}
           {room.myRole === 'admin' && (
-            <Button variant="outline" size="sm" onClick={() => setWatchOpen(true)} aria-label="Watch together">
+            <Button variant="soft" size="sm" onClick={() => setWatchOpen(true)} aria-label="Watch together">
               <MonitorPlay size={16} />
               <span className="hidden lg:inline">Watch</span>
             </Button>
           )}
           {!wide && (
-            <IconButton label="Members and voice" onClick={() => setPanelOpen(true)}>
+            <IconButton label="Members and voice" variant="soft" onClick={() => setPanelOpen(true)}>
               <Users size={20} />
             </IconButton>
           )}
@@ -150,23 +161,31 @@ export function RoomView() {
 
         {detail?.watch && <WatchStage room={detail} onChange={() => setWatchOpen(true)} />}
 
-        <MessageList
-          key={`thread-${roomId}`}
-          items={items}
-          loaded={!!page?.loaded}
-          hasMore={!!page?.hasMore}
-          loadingMore={page?.loadingMore}
-          onLoadOlder={() => void loadRoomMessages(roomId, true)}
-          showSenders
-          onRetry={(item) => void sendRoomMessage(roomId, item.body, item.key)}
-        />
-        <TypingLine text={typingText(typingNames)} />
-        <Composer
-          key={`composer-${roomId}`}
-          placeholder={`Message ${room.name}`}
-          onSend={(body) => void sendRoomMessage(roomId, body)}
-          onTyping={(t) => socket.emit('room:typing', { roomId, typing: t })}
-        />
+        <FileDrop className="flex min-h-0 flex-1 flex-col" onFiles={(files) => composer.current?.addFiles(files)}>
+          <MessageList
+            key={`thread-${roomId}`}
+            items={items}
+            loaded={!!page?.loaded}
+            hasMore={!!page?.hasMore}
+            loadingMore={page?.loadingMore}
+            onLoadOlder={() => void loadRoomMessages(roomId, true)}
+            showSenders
+            meId={me?.id ?? ''}
+            onRetry={(item) => void sendRoomMessage(roomId, item.draft ?? { body: item.body }, item.key)}
+            onReply={(item) => setReplyTo(replyRefFor(item))}
+            onReact={(item, emoji) => void react('room', item.id, emoji)}
+          />
+          <TypingLine text={typingText(typingNames)} />
+          <Composer
+            ref={composer}
+            key={`composer-${roomId}`}
+            placeholder={`Message ${room.name}`}
+            onSend={(draft) => void sendRoomMessage(roomId, draft)}
+            onTyping={(t) => socket.emit('room:typing', { roomId, typing: t })}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+          />
+        </FileDrop>
       </div>
 
       {room.myRole === 'admin' && (
@@ -174,11 +193,11 @@ export function RoomView() {
       )}
 
       {wide ? (
-        <aside className="flex w-[330px] shrink-0 flex-col border-l border-line bg-limewash">{panel}</aside>
+        <aside className="flex w-[340px] shrink-0 flex-col border-l border-line/70 bg-subtle/30">{panel}</aside>
       ) : (
         panelOpen && (
-          <div className="fixed inset-0 z-[45] flex justify-end bg-[rgb(10_25_21/0.5)]" onMouseDown={(e) => e.target === e.currentTarget && setPanelOpen(false)}>
-            <aside className="pop-in flex h-full w-[min(360px,100%)] flex-col bg-limewash pt-[env(safe-area-inset-top)] shadow-2xl">{panel}</aside>
+          <div className="fixed inset-0 z-[45] flex justify-end bg-[rgb(6_8_22/0.5)]" onMouseDown={(e) => e.target === e.currentTarget && setPanelOpen(false)}>
+            <aside className="pop-in flex h-full w-[min(370px,100%)] flex-col border-l border-line bg-surface pt-[env(safe-area-inset-top)] shadow-2xl">{panel}</aside>
           </div>
         )
       )}

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Coffee, Headphones, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
+import { AudioLines, Headphones, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
 import type { RoomMember, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
@@ -40,14 +40,22 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
   return (
     <section aria-label="Voice" className="px-4 pt-4 pb-5">
       <div className="relative mx-auto" style={{ width: box, height: box + 18 }}>
+        {/* The orbit the seats sit on, and the glowing table in the middle. */}
         <div
-          className="absolute left-1/2 flex size-[112px] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border border-line bg-wall px-3 text-center"
+          aria-hidden
+          className="absolute rounded-full border border-dashed border-line"
+          style={{ left: box / 2 - radius, top: box / 2 - radius, width: radius * 2, height: radius * 2 }}
+        />
+        <div
+          className={`absolute left-1/2 size-[100px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-aurora p-[2px] ${n ? 'shadow-glow' : 'opacity-70'}`}
           style={{ top: box / 2 }}
         >
-          <Coffee size={20} className="text-ink-soft" />
-          <span className="mt-1 text-[13px] leading-tight text-ink-soft">
-            {n === 0 ? 'No one is talking yet' : `${n} at the table`}
-          </span>
+          <div className="flex size-full flex-col items-center justify-center rounded-full bg-surface px-3 text-center">
+            <AudioLines size={20} className={n ? 'text-brand dark:text-live' : 'text-ink-soft'} />
+            <span className="mt-1 text-[12.5px] leading-tight font-medium text-ink-soft">
+              {n === 0 ? 'No one is talking yet' : `${n} at the table`}
+            </span>
+          </div>
         </div>
         {participants.map((p, i) => {
           const user = byId.get(p.userId);
@@ -66,7 +74,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
             >
               <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} size={seat} speaking={lit} muted={p.muted} className={linking ? 'opacity-50' : ''} />
               {n <= 8 && (
-                <span className="mt-1 w-[72px] truncate text-center text-[11.5px] font-medium">
+                <span className="mt-1 w-[72px] truncate text-center text-[11.5px] font-semibold">
                   {isMe ? 'You' : user?.name.split(' ')[0] ?? 'Someone'}
                 </span>
               )}
@@ -92,7 +100,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
           </Button>
         ) : (
           <>
-            <Button variant={muted ? 'live' : 'outline'} className="flex-1" onClick={toggleMute} aria-pressed={muted}>
+            <Button variant={muted ? 'live' : 'soft'} className="flex-1" onClick={toggleMute} aria-pressed={muted}>
               {muted ? <MicOff size={17} /> : <Mic size={17} />}
               {muted ? 'Unmute' : 'Mute'}
             </Button>
@@ -119,7 +127,7 @@ function DevicePickers({ onMore }: { onMore: () => void }) {
   }, [refresh]);
 
   return (
-    <div className="mt-4 space-y-2 rounded-xl border border-line bg-paper/60 p-3">
+    <div className="mt-4 space-y-2 rounded-2xl border border-line/70 bg-subtle/40 p-3">
       <label className="flex items-center gap-2.5">
         <Mic size={16} className="shrink-0 text-ink-soft" aria-hidden />
         <span className="sr-only">Microphone</span>
@@ -132,7 +140,7 @@ function DevicePickers({ onMore }: { onMore: () => void }) {
           <DeviceSelect kind="audiooutput" label="Speaker" compact />
         </label>
       )}
-      <button type="button" onClick={onMore} className="pl-[26px] text-[12.5px] font-semibold text-shutter underline-offset-2 hover:underline dark:text-taxi">
+      <button type="button" onClick={onMore} className="pl-[26px] text-[12.5px] font-semibold text-brand underline-offset-2 hover:underline dark:text-live">
         Test microphone and speaker
       </button>
     </div>

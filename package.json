@@ -14,10 +14,17 @@
     "test:watch": "node tests/watch-together.mjs",
     "setup:yt-dlp": "npm run setup:yt-dlp -w server",
     "test:find": "node tests/find-videos.mjs",
-    "setup:ffmpeg": "npm run setup:ffmpeg -w server"
+    "test:attachments": "node tests/attachments.mjs",
+    "test:live": "node tests/live-stream.mjs",
+    "setup:ffmpeg": "npm run setup:ffmpeg -w server",
+    "admin:reset": "npm run admin:reset -w server",
+    "test:admin": "node tests/admin.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",
     "playwright": "^1.64.1"
+  },
+  "engines": {
+    "node": ">=20.19"
   }
 }

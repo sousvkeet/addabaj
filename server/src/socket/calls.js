@@ -48,6 +48,7 @@ function finish(call, reason) {
 
 export const calls = {
   isInCall: (userId) => userCall.has(userId),
+  activeCount: () => active.size,
 
   register(io, socket) {
     const userId = socket.data.userId;

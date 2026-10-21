@@ -2,55 +2,99 @@
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
-/* Palette: Kolkata para — limewashed walls, green khorkhori shutters,
-   yellow taxis for anything live, red-oxide floors for leaving/ending. */
+/* Palette: Midnight Aurora. A deep navy night, a violet-to-pink aurora for
+   the brand, and cyan for anything live (online, speaking, streaming). */
 :root {
   color-scheme: light;
-  --limewash: #e2eae5;
-  --wall: #f2f5f1;
-  --paper: #fcfdfb;
-  --shutter: #1f4c42;
-  --shutter-deep: #15362f;
-  --on-shutter: #eef4f0;
-  --taxi: #f2c230;
-  --on-taxi: #2a2205;
-  --oxide: #9c3424;
-  --ink: #14302a;
-  --ink-soft: #556d66;
-  --line: #c9d8cf;
+  --canvas: #f3f4fb;
+  --surface: #ffffff;
+  --subtle: #eceef9;
+  --line: #dfe2f1;
+  --ink: #141833;
+  --ink-soft: #5f6689;
+  --brand: #6b4dff;
+  --brand-2: #ec4899;
+  --on-brand: #ffffff;
+  --deep: #0d1124;
+  --live: #22d3ee;
+  --on-live: #04222b;
+  --danger: #e5364f;
+  --glow-a: rgb(107 77 255 / 0.12);
+  --glow-b: rgb(236 72 153 / 0.08);
+  --glow-c: rgb(34 211 238 / 0.08);
+  --shadow: 0 18px 50px -24px rgb(28 22 80 / 0.35);
 }
 
 [data-theme="dark"] {
   color-scheme: dark;
-  --limewash: #11221e;
-  --wall: #0c1916;
-  --paper: #172c27;
-  --shutter: #2b6a5c;
-  --shutter-deep: #09130f;
-  --on-shutter: #eef4f0;
-  --taxi: #f2c230;
-  --on-taxi: #2a2205;
-  --oxide: #d0573f;
-  --ink: #e0eae5;
-  --ink-soft: #8fa79f;
-  --line: #22403a;
+  --canvas: #090c1a;
+  --surface: #121730;
+  --subtle: #1a2042;
+  --line: #262e55;
+  --ink: #eceeff;
+  --ink-soft: #9aa2c8;
+  --brand: #7c5cff;
+  --brand-2: #ff5ca8;
+  --on-brand: #ffffff;
+  --deep: #060814;
+  --live: #22d3ee;
+  --on-live: #03202a;
+  --danger: #ff4d6d;
+  --glow-a: rgb(124 92 255 / 0.2);
+  --glow-b: rgb(255 92 168 / 0.12);
+  --glow-c: rgb(34 211 238 / 0.08);
+  --shadow: 0 22px 60px -24px rgb(0 0 0 / 0.7);
 }
 
 @theme inline {
-  --color-limewash: var(--limewash);
-  --color-wall: var(--wall);
-  --color-paper: var(--paper);
-  --color-shutter: var(--shutter);
-  --color-shutter-deep: var(--shutter-deep);
-  --color-on-shutter: var(--on-shutter);
-  --color-taxi: var(--taxi);
-  --color-on-taxi: var(--on-taxi);
-  --color-oxide: var(--oxide);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-subtle: var(--subtle);
+  --color-line: var(--line);
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
-  --color-line: var(--line);
-  --font-display: "Tiro Bangla", "Noto Serif Bengali", Georgia, serif;
-  --font-sans: "Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif;
+  --color-brand: var(--brand);
+  --color-brand-2: var(--brand-2);
+  --color-on-brand: var(--on-brand);
+  --color-deep: var(--deep);
+  --color-live: var(--live);
+  --color-on-live: var(--on-live);
+  --color-danger: var(--danger);
+  --font-display: "Sora", "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* The aurora: brand gradient for primary actions, my messages and badges. */
+@utility bg-aurora {
+  background-image: linear-gradient(135deg, var(--brand) 0%, color-mix(in srgb, var(--brand) 45%, var(--brand-2)) 55%, var(--brand-2) 100%);
+}
+@utility text-aurora {
+  background-image: linear-gradient(120deg, var(--brand) 0%, var(--brand-2) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* Frosted panels that let the background glow through. */
+@utility glass {
+  background-color: color-mix(in srgb, var(--surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+@utility glass-deep {
+  background-color: color-mix(in srgb, var(--deep) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+}
+/* The navigation rail: solid night with a hint of aurora at the top, in both themes. */
+@utility bg-rail {
+  background-color: var(--deep);
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--brand) 22%, transparent) 0%, transparent 38%);
+}
+@utility shadow-glow {
+  box-shadow: 0 10px 28px -10px color-mix(in srgb, var(--brand) 70%, transparent);
+}
+@utility shadow-float {
+  box-shadow: var(--shadow);
 }
 
 html,
@@ -61,50 +105,60 @@ body,
 
 body {
   margin: 0;
-  background: var(--wall);
+  background:
+    radial-gradient(900px 520px at 8% -12%, var(--glow-a), transparent 62%),
+    radial-gradient(760px 480px at 102% 4%, var(--glow-b), transparent 60%),
+    radial-gradient(700px 520px at 60% 120%, var(--glow-c), transparent 60%),
+    var(--canvas);
+  background-attachment: fixed;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 :focus-visible {
-  outline: 2px solid var(--taxi);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
+}
+[data-theme="dark"] :focus-visible {
+  outline-color: var(--live);
+}
+
+/* Text boxes draw their own glow when focused. */
+input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--taxi) 55%, transparent);
+  background: color-mix(in srgb, var(--brand) 40%, transparent);
 }
 
 /* Thin, quiet scrollbars */
 * {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--ink-soft) 35%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--ink-soft) 30%, transparent) transparent;
 }
 
-/* Rolling shop shutter on the sign-in panel: it rolls up once on load. */
-.shop-shutter {
-  background:
-    repeating-linear-gradient(
-      180deg,
-      #4d6b63 0 3px,
-      #3b5a52 3px 5px,
-      #5d7b72 5px 13px,
-      #436159 13px 16px
-    );
-  box-shadow: inset 0 -10px 18px rgb(0 0 0 / 0.35);
-  animation: shutter-up 1.3s cubic-bezier(0.65, 0, 0.35, 1) 0.25s both;
+/* Floating blobs behind the sign-in screen; they drift slowly. */
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(70px);
+  opacity: 0.55;
+  animation: drift 18s ease-in-out infinite alternate;
 }
-
-@keyframes shutter-up {
-  from { transform: translateY(0); }
-  to { transform: translateY(calc(-100% + 22px)); }
+@keyframes drift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(6%, 8%, 0) scale(1.15); }
 }
 
 .speaking-ring {
-  box-shadow: 0 0 0 3px var(--taxi), 0 0 0 7px color-mix(in srgb, var(--taxi) 30%, transparent);
+  box-shadow: 0 0 0 3px var(--live), 0 0 0 7px color-mix(in srgb, var(--live) 28%, transparent), 0 0 22px 4px color-mix(in srgb, var(--live) 35%, transparent);
   transition: box-shadow 120ms ease-out;
 }
 
@@ -114,7 +168,7 @@ body {
   position: absolute;
   inset: -6px;
   border-radius: 9999px;
-  border: 3px solid var(--taxi);
+  border: 3px solid var(--live);
   animation: ring-pulse 1.8s ease-out infinite;
 }
 .ring-pulse::after {
@@ -144,22 +198,46 @@ body {
 }
 
 .pop-in {
-  animation: pop-in 160ms ease-out;
+  animation: pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 @keyframes pop-in {
   from { opacity: 0; transform: translateY(6px) scale(0.98); }
   to { opacity: 1; transform: none; }
 }
 
+/* New messages rise in gently. */
+.rise-in {
+  animation: rise-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* A replied-to message briefly lights up when its quote is tapped. */
+.flash {
+  animation: flash 1.4s ease-out;
+}
+@keyframes flash {
+  from, 30% { background-color: color-mix(in srgb, var(--brand) 26%, transparent); }
+  to { background-color: transparent; }
+}
+
+.rec-dot {
+  animation: rec-dot 1s ease-in-out infinite;
+}
+@keyframes rec-dot {
+  50% { opacity: 0.25; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .shop-shutter {
-    animation: none;
-    transform: translateY(calc(-100% + 22px));
-  }
+  .rec-dot,
+  .aurora-blob,
   .ring-pulse::before,
   .ring-pulse::after,
   .typing-dots span,
-  .pop-in {
+  .pop-in,
+  .rise-in {
     animation: none;
   }
 }

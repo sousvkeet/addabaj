@@ -95,7 +95,7 @@ const A = await user('Asha');
 const B = await user('Rahul');
 const C = await user('Mitali', { width: 390, height: 844 });
 
-await check('login page renders with shutter hero', async () => {
+await check('login page renders with the aurora hero', async () => {
   await A.page.goto(`${BASE}/login`);
   await A.page.waitForTimeout(1800);
   await A.page.screenshot({ path: `${SHOTS}01-login.png` });
@@ -384,13 +384,16 @@ await check('removing a member kicks them out of the room live', async () => {
   await A.page.getByText('2 of 3 members').first().waitFor({ timeout: 5000 });
 });
 
-await check('dark theme renders', async () => {
+await check('the app opens dark, and the light theme can be picked and is remembered', async () => {
+  if ((await A.page.evaluate(() => document.documentElement.dataset.theme)) !== 'dark') throw new Error('did not open in the dark theme');
   await A.page.getByRole('button', { name: 'Your account' }).click();
   await A.page.waitForTimeout(300);
   await A.page.screenshot({ path: `${SHOTS}08a-account-menu.png` });
-  await A.page.getByRole('menuitem', { name: 'Switch to dark theme' }).click({ timeout: 5000 });
+  await A.page.getByRole('menuitem', { name: 'Switch to light theme' }).click({ timeout: 5000 });
   await A.page.waitForTimeout(400);
-  await A.page.screenshot({ path: `${SHOTS}08-dark-room.png` });
+  await A.page.screenshot({ path: `${SHOTS}08-light-room.png` });
+  await A.page.reload();
+  if ((await A.page.evaluate(() => document.documentElement.dataset.theme)) !== 'light') throw new Error('the light theme was not remembered');
 });
 
 await browser.close();

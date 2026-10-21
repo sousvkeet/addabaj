@@ -1,10 +1,12 @@
 import { syncClock } from './lib/clock';
+import { useSite } from './lib/site';
 import { watchConnection } from './lib/liveness';
 import { socket } from './lib/socket';
 import type { DmMessage, Invite, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
 import { useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
+import { useLiveStream } from './store/liveStream';
 import { toast } from './store/ui';
 import { useVoice } from './store/voice';
 import { setPreparing, type Preparing } from './store/watchProgress';
@@ -20,6 +22,8 @@ export function bindRealtime() {
   socket.on('connect', () => {
     void chat().sync();
     void syncClock();
+    useLiveStream.getState().onReconnected();
+    void useSite.getState().load();
   });
   socket.on('disconnect', (reason) => {
     useCall.getState().onConnectionLost();
@@ -30,6 +34,14 @@ export function bindRealtime() {
     if (err.message === 'unauthorized') useAuth.getState().expire();
   });
   watchConnection(() => useAuth.getState().status === 'authed');
+
+  // The host admin
+  socket.on('site:settings', (site) => useSite.getState().set(site));
+  socket.on('account:changed', () => void useAuth.getState().refresh().catch(() => {}));
+  socket.on('account:disabled', () => {
+    toast('The host switched off your account.', 'error');
+    useAuth.getState().expire();
+  });
 
   // Presence
   socket.on('presence:snapshot', ({ online }: { online: string[] }) => {
@@ -46,6 +58,7 @@ export function bindRealtime() {
   socket.on('dm:new', ({ message, partner }: { message: DmMessage; partner: User }) => chat().receiveDm(message, partner));
   socket.on('dm:typing', ({ from, typing }: { from: string; typing: boolean }) => chat().setDmTyping(from, typing));
   socket.on('dm:read', (e: { readerId: string; partnerId: string; readAt: string }) => chat().applyDmRead(e));
+  socket.on('msg:reactions', (e: Parameters<ReturnType<typeof useChat.getState>['applyReactions']>[0]) => chat().applyReactions(e));
 
   // Rooms
   socket.on('room:message', (m: RoomMessage) => chat().receiveRoomMessage(m));
@@ -80,6 +93,13 @@ export function bindRealtime() {
       rooms: s.rooms[roomId] ? { ...s.rooms, [roomId]: { ...s.rooms[roomId], watching: watch?.source.title ?? null } } : s.rooms,
     }));
   });
+
+  // Live streams from an admin's device
+  const live = () => useLiveStream.getState();
+  socket.on('live:viewer', (e) => void live().onViewer(e));
+  socket.on('live:viewer-left', (e) => live().onViewerLeft(e));
+  socket.on('live:signal', (e) => void live().onSignal(e));
+  socket.on('live:ended', (e) => live().onEnded(e));
 
   // Invites
   socket.on('invite:new', (invite: Invite | null) => {

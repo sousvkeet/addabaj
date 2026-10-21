@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router';
-import { AudioLines, Mic, MicOff, Minimize2, Phone, PhoneOff, Settings2, Video, VideoOff, Volume2 } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router';
+import { AudioLines, Mic, MicOff, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff, Volume2 } from 'lucide-react';
 import { duration } from '../lib/format';
 import { audioContext } from '../lib/sounds';
 import { useNow } from '../lib/useMedia';
@@ -8,6 +8,7 @@ import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
 import { useChat } from '../store/chat';
 import { canPickSpeaker, useDevices } from '../store/devices';
+import { useLiveStream } from '../store/liveStream';
 import { useUi } from '../store/ui';
 import { useVoice } from '../store/voice';
 import { Avatar } from './ui/Avatar';
@@ -41,35 +42,36 @@ export function IncomingCall() {
     navigate(`/chats/${peer.id}`);
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[rgb(10_25_21/0.62)] p-4 sm:items-center">
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-[rgb(6_8_22/0.62)] p-4 backdrop-blur-[6px] sm:items-center">
       <div
         role="alertdialog"
         aria-labelledby="incoming-name"
         aria-describedby="incoming-label"
-        className="pop-in w-full max-w-sm rounded-[28px] bg-shutter-deep px-8 pt-10 pb-8 text-center text-on-shutter shadow-2xl"
+        className="pop-in relative w-full max-w-sm overflow-hidden rounded-[32px] border border-white/10 bg-deep px-8 pt-10 pb-8 text-center text-on-brand shadow-2xl"
       >
+        <span aria-hidden className="absolute -top-28 left-1/2 size-80 -translate-x-1/2 rounded-full bg-aurora opacity-35 blur-3xl" />
         <div className="ring-pulse relative mx-auto w-fit rounded-full">
           <Avatar name={peer.name} hue={peer.hue} size={104} />
         </div>
-        <p id="incoming-label" className="mt-7 text-[14px] text-on-shutter/70">
+        <p id="incoming-label" className="relative mt-7 text-[14px] font-medium text-on-brand/70">
           {video ? 'Incoming video call' : 'Incoming voice call'}
         </p>
-        <h2 id="incoming-name" className="mt-0.5 font-display text-[30px] leading-tight">
+        <h2 id="incoming-name" className="relative mt-0.5 font-display text-[30px] leading-tight font-bold tracking-[-0.02em]">
           {peer.name}
         </h2>
-        <div className={`mt-9 flex justify-center ${video ? 'gap-8' : 'gap-14'}`}>
+        <div className={`relative mt-9 flex justify-center ${video ? 'gap-8' : 'gap-14'}`}>
           <div className="flex flex-col items-center gap-2">
             <IconButton label="Decline call" variant="danger" size={64} onClick={decline} disabled={accepting}>
               <PhoneOff size={26} />
             </IconButton>
-            <span className="text-[13px] text-on-shutter/80">Decline</span>
+            <span className="text-[13px] text-on-brand/80">Decline</span>
           </div>
           {video && (
             <div className="flex flex-col items-center gap-2">
               <IconButton label="Answer with voice only" variant="on-dark" size={64} onClick={() => answer(false)} disabled={accepting}>
                 <Phone size={26} />
               </IconButton>
-              <span className="text-[13px] text-on-shutter/80">Voice only</span>
+              <span className="text-[13px] text-on-brand/80">Voice only</span>
             </div>
           )}
           <div className="flex flex-col items-center gap-2">
@@ -79,11 +81,11 @@ export function IncomingCall() {
               aria-label={video ? 'Accept with video' : 'Accept call'}
               disabled={accepting}
               onClick={() => answer(video)}
-              className="inline-flex size-16 items-center justify-center rounded-full bg-taxi text-on-taxi hover:brightness-105 disabled:opacity-60"
+              className="inline-flex size-16 items-center justify-center rounded-full bg-live text-on-live shadow-[0_0_30px_-4px_var(--live)] transition-transform hover:scale-105 hover:brightness-105 disabled:opacity-60"
             >
               {video ? <Video size={26} /> : <Phone size={26} />}
             </button>
-            <span className="text-[13px] text-on-shutter/80">{accepting ? 'Connecting…' : video ? 'With video' : 'Accept'}</span>
+            <span className="text-[13px] text-on-brand/80">{accepting ? 'Connecting…' : video ? 'With video' : 'Accept'}</span>
           </div>
         </div>
       </div>
@@ -91,15 +93,24 @@ export function IncomingCall() {
   );
 }
 
-/** Persistent bar for whatever is live: a one-to-one call or room voice. */
+/** Persistent bar for whatever is live: a one-to-one call, room voice, or your live stream. */
 export function LiveBar() {
   const phase = useCall((s) => s.phase);
   const minimized = useCall((s) => s.minimized);
   const videoActive = useVideoActive();
   const voiceStatus = useVoice((s) => s.status);
+  const streaming = useStreamElsewhere();
   if (LIVE_PHASES.includes(phase)) return videoActive && !minimized ? null : <CallBar />;
   if (voiceStatus !== 'idle') return <VoiceBar />;
+  if (streaming) return <StreamBar />;
   return null;
+}
+
+/** Streaming to a room while looking at another page (the room's own page shows the stream). */
+function useStreamElsewhere() {
+  const roomId = useLiveStream((s) => s.host?.roomId);
+  const { pathname } = useLocation();
+  return !!roomId && pathname !== `/rooms/${roomId}`;
 }
 
 /** Shown when the browser blocked call audio; one tap lets it play. */
@@ -120,7 +131,7 @@ function SoundBlocked({ className = '' }: { className?: string }) {
     <button
       type="button"
       onClick={enable}
-      className={`absolute z-10 flex min-h-10 items-center justify-center gap-2 rounded-xl bg-taxi px-3 py-2 text-center text-[14px] font-semibold text-on-taxi shadow-lg ${className}`}
+      className={`absolute z-10 flex min-h-10 items-center justify-center gap-2 rounded-xl bg-live px-3 py-2 text-center text-[14px] font-semibold text-on-live shadow-lg ${className}`}
     >
       <Volume2 size={17} />
       Sound is paused. Tap to hear the call.
@@ -131,11 +142,12 @@ function SoundBlocked({ className = '' }: { className?: string }) {
 export const useLive = () => {
   const phase = useCall((s) => s.phase);
   const voiceStatus = useVoice((s) => s.status);
-  return (phase !== 'idle' && phase !== 'incoming') || voiceStatus !== 'idle';
+  const streaming = useStreamElsewhere();
+  return (phase !== 'idle' && phase !== 'incoming') || voiceStatus !== 'idle' || streaming;
 };
 
 const barClass =
-  'pop-in fixed inset-x-2 top-[max(8px,env(safe-area-inset-top))] z-40 flex items-center gap-2 rounded-2xl bg-shutter-deep p-2.5 pl-3 text-on-shutter shadow-[0_16px_40px_-16px_rgb(5_20_16/0.7)] md:inset-x-auto md:top-auto md:bottom-4 md:left-[88px] md:w-[304px]';
+  'pop-in glass-deep fixed inset-x-2 top-[max(8px,env(safe-area-inset-top))] z-40 flex items-center gap-2 rounded-[22px] border border-white/10 p-2.5 pl-3 text-on-brand shadow-[0_16px_40px_-16px_rgb(4_6_18/0.7)] md:inset-x-auto md:top-auto md:bottom-6 md:left-[120px] md:w-[316px]';
 const barPrompt = 'inset-x-0 top-full mt-2 md:top-auto md:bottom-full md:mt-0 md:mb-2';
 
 /** Glows while your own microphone picks up sound, so you know it's working. */
@@ -216,7 +228,7 @@ function CallBar() {
         <Avatar name={peer.name} hue={peer.hue} size={40} speaking={phase === 'active' && remoteSpeaking && !peerMuted} muted={peerMuted} />
         <span className="min-w-0">
           <span className="block truncate font-semibold">{peer.name}</span>
-          <span className={`block truncate text-[13px] tabular-nums ${noIncomingAudio && phase === 'active' ? 'text-taxi' : 'text-on-shutter/70'}`}>
+          <span className={`block truncate text-[13px] tabular-nums ${noIncomingAudio && phase === 'active' ? 'text-live' : 'text-on-brand/70'}`}>
             {status}
             {peerMuted && phase === 'active' ? ', muted' : ''}
           </span>
@@ -259,7 +271,7 @@ export function CallStage() {
     <div
       role="region"
       aria-label={`Video call with ${peer.name}`}
-      className="pop-in fixed inset-0 z-[45] flex flex-col bg-shutter-deep text-on-shutter md:inset-auto md:right-4 md:bottom-4 md:h-[min(560px,calc(100dvh-32px))] md:w-[min(780px,calc(100vw-440px))] md:overflow-hidden md:rounded-[22px] md:shadow-[0_30px_70px_-20px_rgb(5_20_16/0.75)]"
+      className="pop-in fixed inset-0 z-[45] flex flex-col bg-deep text-on-brand md:inset-auto md:right-4 md:bottom-4 md:h-[min(560px,calc(100dvh-32px))] md:w-[min(780px,calc(100vw-440px))] md:overflow-hidden md:rounded-[28px] md:border md:border-white/10 md:shadow-[0_30px_70px_-20px_rgb(4_6_18/0.75)]"
     >
       <div className="relative min-h-0 flex-1 bg-black/30">
         {remoteVideo ? (
@@ -267,7 +279,7 @@ export function CallStage() {
         ) : (
           <div className="flex size-full flex-col items-center justify-center gap-4 px-6 text-center">
             <Avatar name={peer.name} hue={peer.hue} size={112} speaking={phase === 'active' && remoteSpeaking && !peerMuted} muted={peerMuted} />
-            <p className="text-[14px] text-on-shutter/70">
+            <p className="text-[14px] text-on-brand/70">
               {phase === 'active' ? `${first}'s camera is off` : phase === 'connecting' ? 'Connecting…' : `Calling ${first}…`}
             </p>
           </div>
@@ -348,12 +360,12 @@ function VoiceBar() {
     <div className={barClass} role="region" aria-label="Room voice">
       <SoundBlocked className={barPrompt} />
       <button type="button" onClick={() => navigate(`/rooms/${roomId}`)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-taxi text-on-taxi">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-live text-on-live shadow-[0_0_16px_-2px_var(--live)]">
           <AudioLines size={19} />
         </span>
         <span className="min-w-0">
           <span className="block truncate font-semibold">{room?.name ?? 'Room voice'}</span>
-          <span className="block truncate text-[13px] text-on-shutter/70">
+          <span className="block truncate text-[13px] text-on-brand/70">
             {status === 'joining' ? 'Joining voice…' : count === 1 ? 'Only you so far' : `Talking with ${count - 1} ${count - 1 === 1 ? 'other' : 'others'}`}
           </span>
         </span>
@@ -361,6 +373,40 @@ function VoiceBar() {
       {status === 'live' && <MuteButton muted={muted} speaking={meSpeaking} onClick={toggleMute} />}
       <IconButton label="Leave voice" variant="danger" size={40} onClick={() => void leave()}>
         <PhoneOff size={18} />
+      </IconButton>
+    </div>
+  );
+}
+
+/** Your live stream keeps going while you look around the app; this keeps it in reach. */
+function StreamBar() {
+  const host = useLiveStream((s) => s.host);
+  const room = useChat((s) => (host ? s.rooms[host.roomId] : undefined));
+  const navigate = useNavigate();
+  if (!host) return null;
+  const live = useLiveStream.getState();
+  const watching = Object.values(host.viewers).filter((v) => v === 'connected').length;
+
+  return (
+    <div className={barClass} role="region" aria-label="Your live stream">
+      <button type="button" onClick={() => navigate(`/rooms/${host.roomId}`)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-danger text-white shadow-[0_0_16px_-2px_var(--danger)]">
+          <Radio size={19} />
+        </span>
+        <span className="min-w-0">
+          <span className="block truncate font-semibold">Live in {room?.name ?? 'your room'}</span>
+          <span className="block truncate text-[13px] text-on-brand/70">
+            {host.title}, {watching} watching
+          </span>
+        </span>
+      </button>
+      {host.mode === 'file' && (
+        <IconButton label={host.playing ? 'Pause for everyone' : 'Play for everyone'} variant="on-dark" size={40} onClick={() => (host.playing ? live.pause() : live.play())}>
+          {host.playing ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+        </IconButton>
+      )}
+      <IconButton label="Stop streaming" variant="danger" size={40} onClick={() => void live.stop()}>
+        <Square size={16} />
       </IconButton>
     </div>
   );

@@ -17,7 +17,7 @@ usersRouter.get('/', async (req, res) => {
        EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = $3 AND m.user_id = u.id) AS is_member,
        EXISTS (SELECT 1 FROM room_invites i WHERE i.room_id = $3 AND i.invitee_id = u.id AND i.status = 'pending') AS is_invited` : ''}
      FROM users u
-     WHERE u.id <> $1 AND ($2 = '%%' OR u.name ILIKE $2 OR u.email ILIKE $2)
+     WHERE u.id <> $1 AND u.disabled_at IS NULL AND ($2 = '%%' OR u.name ILIKE $2 OR u.email ILIKE $2)
      ORDER BY lower(u.name)
      LIMIT 30`,
     roomId ? [req.userId, pattern, roomId] : [req.userId, pattern],

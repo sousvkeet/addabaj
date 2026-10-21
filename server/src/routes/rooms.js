@@ -4,11 +4,9 @@ import { one, query, transaction } from '../db.js';
 import { limits } from '../config.js';
 import { assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, userChannel } from '../realtime.js';
-import {
-  announceRoomChanged, attachMember, detachMember, inviteForInvitee, listRooms, lockSeat,
-  postSystemMessage, requireAdmin, requireMember, roomDetail, roomMessage, ROOM_MESSAGE_SELECT,
-} from '../services/rooms.js';
+import { announceRoomChanged, attachMember, detachMember, inviteForInvitee, listRooms, lockSeat, postSystemMessage, requireAdmin, requireMember, roomDetail, roomMessage, ROOM_MESSAGE_SELECT, deleteRoom } from '../services/rooms.js';
 import { findUser } from '../services/users.js';
+import { enrich } from '../services/messages.js';
 
 export const roomsRouter = Router();
 
@@ -95,13 +93,7 @@ roomsRouter.delete('/:id', async (req, res) => {
   const roomId = req.params.id;
   const { ownerId } = await requireMember(roomId, req.userId);
   if (ownerId !== req.userId) throw forbidden('Only the person who started the room can delete it.');
-  const { rows: members } = await query('SELECT user_id FROM room_members WHERE room_id = $1', [roomId]);
-  const { rows: invites } = await query(
-    `SELECT id, invitee_id FROM room_invites WHERE room_id = $1 AND status = 'pending'`, [roomId],
-  );
-  await query('DELETE FROM rooms WHERE id = $1', [roomId]);
-  for (const m of members) detachMember(roomId, m.user_id, 'deleted');
-  for (const i of invites) getIO()?.to(userChannel(i.invitee_id)).emit('invite:removed', { inviteId: i.id });
+  await deleteRoom(roomId);
   res.status(204).end();
 });
 
@@ -116,7 +108,7 @@ roomsRouter.get('/:id/messages', async (req, res) => {
      ORDER BY m.id DESC LIMIT $3`,
     [roomId, before, limit + 1],
   );
-  res.json({ messages: rows.slice(0, limit).reverse().map(roomMessage), hasMore: rows.length > limit });
+  res.json({ messages: await enrich('room', rows.slice(0, limit).reverse().map(roomMessage)), hasMore: rows.length > limit });
 });
 
 // Admin adds someone straight into the room.

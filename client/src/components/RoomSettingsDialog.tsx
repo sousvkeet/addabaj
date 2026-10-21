@@ -78,7 +78,7 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
         <Field label="Maximum members" hint={`${room.memberCount} people are in the room now, so the limit can't go lower than that.`}>
           <MemberLimit value={max} onChange={setMax} min={room.memberCount} />
         </Field>
-        {error && <p role="alert" className="text-[14px] text-oxide">{error}</p>}
+        {error && <p role="alert" className="text-[14px] text-danger">{error}</p>}
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>
             Cancel
@@ -94,8 +94,8 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
           <h3 className="font-semibold">Delete this room</h3>
           <p className="mt-0.5 text-[14px] text-ink-soft">Everyone is removed and the chat history is gone for good.</p>
           {confirmDelete ? (
-            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-oxide/10 p-3">
-              <span className="flex-1 text-[14px] text-oxide">Delete {room.name} for everyone?</span>
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-danger/10 p-3">
+              <span className="flex-1 text-[14px] text-danger">Delete {room.name} for everyone?</span>
               <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
                 Keep room
               </Button>
@@ -104,7 +104,7 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
               </Button>
             </div>
           ) : (
-            <Button size="sm" variant="outline" className="mt-3 text-oxide" onClick={() => setConfirmDelete(true)}>
+            <Button size="sm" variant="outline" className="mt-3 text-danger" onClick={() => setConfirmDelete(true)}>
               Delete room
             </Button>
           )}
