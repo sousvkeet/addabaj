@@ -156,8 +156,12 @@ public class MainActivity extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(barColor);
         boolean fresh = page == null;
-        if (fresh) createPage(this);
-        else pageContext.setBaseContext(this);
+        if (fresh) {
+            createPage(this);
+            Updater.clean(this);
+        } else {
+            pageContext.setBaseContext(this);
+        }
         web = page;
         if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web);
         web.setWebViewClient(new Client());
@@ -315,6 +319,17 @@ public class MainActivity extends Activity {
 
     // ── Page ↔ app ─────────────────────────────────────────────────────
 
+    /** Runs on the main thread (where the page and activities live). */
+    static void runOnPage(Runnable r) {
+        main.post(r);
+    }
+
+    /** The activity on screen, or null when the app is in the background. */
+    static MainActivity foreground() {
+        MainActivity a = current.get();
+        return a != null && AddaApp.visible ? a : null;
+    }
+
     /** Sends the page an event (an "addanative" window event), until the page confirms it. */
     static boolean send(Object event) {
         String json = event.toString();
@@ -380,6 +395,21 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void ack(String id) {
             main.post(() -> pending.removeIf(e -> String.valueOf(e.id).equals(id)));
+        }
+
+        /** {code, name} of the installed app, for the update check. */
+        @JavascriptInterface
+        public String appVersion() {
+            return Updater.version();
+        }
+
+        /** Downloads an update from this app's own server and opens the installer. */
+        @JavascriptInterface
+        public void installUpdate(String url, String sha256) {
+            main.post(() -> {
+                MainActivity a = current.get();
+                if (a != null && url != null) Updater.start(a, url, sha256);
+            });
         }
 
         @JavascriptInterface
@@ -915,6 +945,13 @@ public class MainActivity extends Activity {
         super.onStart();
         AddaApp.visible = true;
         current = new WeakReference<>(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // During an update: back from the installer, or from allowing "install unknown apps".
+        Updater.resume(this);
     }
 
     @Override

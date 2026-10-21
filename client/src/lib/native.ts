@@ -17,6 +17,8 @@ type Bridge = {
   setSpeaker?(on: boolean): void;
   isSpeakerOn?(): boolean;
   screenCapture?(action: 'start' | 'stop'): void;
+  appVersion?(): string;
+  installUpdate?(url: string, sha256: string): void;
 };
 
 /** What the app tells the page (window event "addanative"). */
@@ -27,7 +29,15 @@ export type NativeEvent =
   | { type: 'hangup' }
   | { type: 'open'; path: string }
   | { type: 'speaker'; on: boolean }
-  | { type: 'screen'; state: 'denied' | 'ended' | 'failed' };
+  | { type: 'screen'; state: 'denied' | 'ended' | 'failed' }
+  | {
+      type: 'update';
+      state: 'downloading' | 'downloaded' | 'permission' | 'permission-needed' | 'installing' | 'cancelled' | 'failed';
+      percent?: number;
+      received?: number;
+      total?: number;
+      message?: string;
+    };
 
 const bridge = (window as { AddaNative?: Bridge }).AddaNative;
 
@@ -109,6 +119,26 @@ export const setNativeAnswer = (callId: string | null) => {
 };
 /** Answered on the call screen already (so the page doesn't ring first). */
 export const nativeAnswering = (callId: string) => answering === callId;
+
+// ── App updates ───────────────────────────────────────────────────────
+
+/**
+ * The installed app's version: {code, name} from the app, or (apps from before
+ * in-app updates) the name it puts in its user agent ("AddaKhanaApp/1.3.0").
+ */
+export function nativeAppVersion(): { code: number | null; name: string | null } {
+  try {
+    const v = JSON.parse(bridge?.appVersion?.() ?? 'null');
+    if (v && Number.isSafeInteger(v.code)) return { code: v.code, name: String(v.name) };
+  } catch {
+    /* an older app */
+  }
+  return { code: null, name: /AddaKhanaApp\/([\w.-]+)/.exec(navigator.userAgent)?.[1] ?? null };
+}
+
+/** The app can download and install updates itself (1.4.0 on); older ones download through the browser. */
+export const canSelfUpdate = () => !!bridge?.installUpdate;
+export const nativeInstallUpdate = (url: string, sha256: string) => bridge?.installUpdate?.(url, sha256);
 
 /** Loudspeaker or earpiece during calls (the app picks: earpiece for voice, speaker for video). */
 export const canToggleSpeaker = () => !!bridge?.setSpeaker;

@@ -19,6 +19,9 @@ What the app adds:
 - **Room invite links** (`https://<your server>/join/…`) open straight in the app. Share buttons (your user ID, a room's invite link) use the phone's share sheet: WhatsApp, Messenger, SMS and so on.
   - This works because the server publishes `/.well-known/assetlinks.json` with the app's signing key fingerprint. Android checks it when the app is installed.
   - It's set for the key in `android/keystore`. If you sign with another key, set `ANDROID_CERT_SHA256` in `server/.env`.
+- **Updates from your own server.** When the host uploads a new version (Admin › App updates), the app offers it the next time it opens. **Update app** downloads it with a progress bar, checks its SHA-256, and opens Android's installer. Mandatory versions can't be put off. See [Publishing a release](#publishing-a-release).
+  - The first time, Android asks to allow installing apps from Adda Khana (Settings › Install unknown apps); the update carries on once you come back.
+  - The app only downloads from its own server's `/api/app/download/<version>` address, and only opens a file whose SHA-256 matches the release.
 - **Everything a browser does.**
   - Microphone and camera for calls.
   - The photo and file picker; downloads go to Downloads.
@@ -97,7 +100,7 @@ On first sign-in the app asks to show notifications. On Android 14 and newer it 
 
 ## Publishing a release
 
-1. Raise `versionCode` and `versionName` in `app/build.gradle`.
+1. Raise `versionCode` and `versionName` in `app/build.gradle`. Phones compare `versionCode`, so it must go up every time.
 2. Make sure `app/google-services.json` is in place (or the release has no notifications).
 3. Build and check the signature:
 
@@ -107,7 +110,10 @@ On first sign-in the app asks to show notifications. On Android 14 and newer it 
    cp app/build/outputs/apk/release/app-release.apk dist/AddaKhana-<version>.apk
    ```
 
-4. Commit, then publish with the APK attached (`dist/` is ignored by git):
+4. **Send it to phones:** sign in to the site as host admin, open **Admin › App updates**, choose the APK, write what's new, and **Upload and publish**. Turn on **Make it mandatory** if older versions must stop working (you can also switch that on or off later for any version).
+   - The server reads the version and signing key from the file. It refuses a file that isn't newer than the latest upload, is another app, or is signed with a different key than the version before. The first upload must match `ANDROID_CERT_SHA256` (by default the key in `android/keystore`).
+   - Apps from 1.4.0 on download and install it themselves. Older apps are offered it too and download it with Android's downloader; tapping its notification installs it.
+5. Commit, then also publish it on GitHub for new installs (`dist/` is ignored by git):
 
    ```bash
    gh release create v<version> dist/AddaKhana-<version>.apk --title "Adda Khana <version>" --notes "…"
@@ -127,8 +133,11 @@ adb shell am broadcast -n com.addakhana.app/.DebugPushReceiver --es data \
 
 `npm run test:push` checks the server side of notifications against a fake Firebase.
 
+**Trying updates with debug builds:** debug builds are signed with your debug key, which the server refuses by default. Set `ANDROID_CERT_SHA256` in `server/.env` to the debug key's fingerprint (`./gradlew signingReport`), clear the uploaded versions in Admin › App updates, install one debug build, then upload a debug build with a higher `versionCode`. `npm run test:updates` checks the server and the update screens (without a phone).
+
 ## Limits
 
 - **Phones that stop background apps:** some brands (Xiaomi, Huawei, OPPO, Vivo) stop apps more aggressively than Android does. If calls don't ring there, allow Adda Khana to run in the background (battery settings › no restrictions).
 - **Screen sharing:** sends the picture, not the phone's sound.
 - **Push notifications** need the Firebase setup above.
+- **Updates** need one tap on Android's installer: Android asks you to confirm every app installed from outside an app store. Phones where the owner blocks "Install unknown apps" (some work or school phones) can't update this way.

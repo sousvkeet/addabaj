@@ -216,3 +216,19 @@ CREATE TABLE IF NOT EXISTS room_hidden (
   message_id bigint NOT NULL REFERENCES room_messages(id) ON DELETE CASCADE,
   PRIMARY KEY (user_id, message_id)
 );
+
+-- Android app updates the host uploads (Admin › App updates). The app checks
+-- on every start; a mandatory release has to be installed before going on.
+CREATE TABLE IF NOT EXISTS app_releases (
+  version_code int PRIMARY KEY,
+  version_name text NOT NULL,
+  notes        text NOT NULL DEFAULT '' CHECK (char_length(notes) <= 2000),
+  mandatory    boolean NOT NULL DEFAULT false,
+  size         bigint NOT NULL,
+  sha256       text NOT NULL,
+  cert_sha256  text,
+  min_sdk      int,
+  stored       text NOT NULL,
+  uploaded_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);

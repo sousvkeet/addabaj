@@ -6,7 +6,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { Server } from 'socket.io';
 import { ZodError } from 'zod';
-import { config, limits, rootDir, streaming } from './config.js';
+import { android, config, limits, rootDir, streaming } from './config.js';
 import { requireAuth } from './auth.js';
 import { migrate } from './migrate.js';
 import { setIO } from './realtime.js';
@@ -19,6 +19,7 @@ import { invitesRouter } from './routes/invites.js';
 import { streamRouter } from './routes/stream.js';
 import { filesRouter, uploadsRouter } from './routes/uploads.js';
 import { pushRouter } from './routes/push.js';
+import { appRouter } from './routes/app.js';
 import { pushEnabled } from './services/push.js';
 import { calls } from './socket/calls.js';
 import { assertUuid } from './errors.js';
@@ -97,15 +98,15 @@ app.get('/api/health', (_req, res) => res.json({ ok: true }));
 // Android App Links: lets the Adda Khana app open this site's room invite links
 // (/join/…) directly. The fingerprint is the app's signing certificate (not a
 // secret); set ANDROID_CERT_SHA256 when the app is signed with another key.
-const androidCerts = (process.env.ANDROID_CERT_SHA256 || 'F0:BA:1C:4C:BF:4B:25:EC:08:73:B1:71:6C:C6:59:B1:94:B4:F5:20:23:80:DE:FE:BD:EE:83:E4:08:F3:2C:24')
-  .split(',').map((c) => c.trim().toUpperCase()).filter(Boolean);
 app.get('/.well-known/assetlinks.json', (_req, res) => {
   res.json([{
     relation: ['delegate_permission/common.handle_all_urls'],
-    target: { namespace: 'android_app', package_name: 'com.addakhana.app', sha256_cert_fingerprints: androidCerts },
+    target: { namespace: 'android_app', package_name: android.package, sha256_cert_fingerprints: android.certs },
   }]);
 });
 app.use('/api/auth', authRouter);
+// Android app updates (open to everyone: the app checks before signing in).
+app.use('/api/app', appRouter);
 app.get('/api/config', requireAuth, async (_req, res) => {
   res.json({
     iceServers: await getIceServers(),

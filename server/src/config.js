@@ -49,6 +49,20 @@ export const config = {
   ],
 };
 
+/**
+ * The Android app. Its signing certificate fingerprints (not secret) let room
+ * invite links open in the app, and app updates must be signed with them.
+ * Default: the key in android/keystore.
+ */
+export const android = {
+  package: 'com.addakhana.app',
+  certs: (process.env.ANDROID_CERT_SHA256 || 'F0:BA:1C:4C:BF:4B:25:EC:08:73:B1:71:6C:C6:59:B1:94:B4:F5:20:23:80:DE:FE:BD:EE:83:E4:08:F3:2C:24')
+    .split(',')
+    .map((c) => c.replace(/[^0-9a-f]/gi, '').toUpperCase())
+    .filter((c) => c.length === 64)
+    .map((c) => c.match(/../g).join(':')),
+};
+
 /** Watch together: fetching videos from web pages. */
 export const streaming = {
   // The server refuses to fetch from private/local addresses (your machine, LAN,

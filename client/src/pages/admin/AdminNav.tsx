@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router';
-import { DoorOpen, KeyRound, LayoutDashboard, ShieldCheck, SlidersHorizontal, Users } from 'lucide-react';
+import { DoorOpen, KeyRound, LayoutDashboard, ShieldCheck, SlidersHorizontal, Smartphone, Users } from 'lucide-react';
 import { useAuth } from '../../store/auth';
 import { ListHeader, listRowClass } from '../../components/ListHeader';
 import { Button } from '../../components/ui/Button';
@@ -11,6 +11,7 @@ const ITEMS = [
   { to: '/admin/people', label: 'People', hint: 'Accounts, roles and passwords', Icon: Users },
   { to: '/admin/rooms', label: 'Rooms', hint: 'Every room on the site', Icon: DoorOpen },
   { to: '/admin/settings', label: 'Site settings', hint: 'Sign-ups and announcements', Icon: SlidersHorizontal },
+  { to: '/admin/app', label: 'App updates', hint: 'New versions of the Android app', Icon: Smartphone },
 ];
 
 /** The admin area's menu, in the list panel. */

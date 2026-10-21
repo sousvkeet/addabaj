@@ -8,6 +8,7 @@ import { one, query, transaction } from '../db.js';
 import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, presence, userChannel } from '../realtime.js';
 import { videoTools } from '../stream/status.js';
+import { deleteRelease, listReleases, saveRelease, updateRelease } from '../services/appReleases.js';
 import { announceRoomChanged, attachMember, deleteRoom, detachMember, lockSeat, postSystemMessage } from '../services/rooms.js';
 import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
 import { publicUser } from '../services/users.js';
@@ -349,6 +350,43 @@ adminRouter.delete('/rooms/:id', async (req, res) => {
   if (!(await one('SELECT id FROM rooms WHERE id = $1', [id]))) throw notFound("That room doesn't exist.");
   await deleteRoom(id);
   res.status(204).end();
+});
+
+// ── App updates (Android) ─────────────────────────────────────────────
+
+const versionCodeOf = (req) => {
+  const code = Number(req.params.code);
+  if (!Number.isSafeInteger(code) || code <= 0) throw notFound("That release doesn't exist.");
+  return code;
+};
+
+adminRouter.get('/app/releases', async (_req, res) => {
+  res.json({ releases: await listReleases() });
+});
+
+// The APK is the raw request body; notes and "mandatory" come in the X-Release-Meta header.
+adminRouter.post('/app/releases', async (req, res) => {
+  let meta = {};
+  try {
+    meta = JSON.parse(decodeURIComponent(String(req.headers['x-release-meta'] ?? '{}'))) ?? {};
+  } catch {
+    throw badRequest('The release details were unreadable. Try again.');
+  }
+  const release = await saveRelease(req, req.userId, { notes: typeof meta.notes === 'string' ? meta.notes : '', mandatory: meta.mandatory === true });
+  res.status(201).json({ release });
+});
+
+adminRouter.patch('/app/releases/:code', async (req, res) => {
+  const input = z
+    .object({ notes: z.string().max(2000, 'Keep the notes under 2,000 characters.').optional(), mandatory: z.boolean().optional() })
+    .parse(req.body);
+  await updateRelease(versionCodeOf(req), input);
+  res.json({ releases: await listReleases() });
+});
+
+adminRouter.delete('/app/releases/:code', async (req, res) => {
+  await deleteRelease(versionCodeOf(req));
+  res.json({ releases: await listReleases() });
 });
 
 // ── Settings ──────────────────────────────────────────────────────────

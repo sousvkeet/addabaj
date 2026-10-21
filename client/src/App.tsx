@@ -10,7 +10,9 @@ import { Overview } from './pages/admin/Overview';
 import { People } from './pages/admin/People';
 import { RoomsAdmin } from './pages/admin/RoomsAdmin';
 import { SiteSettings } from './pages/admin/SiteSettings';
+import { AppReleases } from './pages/admin/AppReleases';
 import { Toasts } from './components/Toasts';
+import { AppUpdate } from './components/AppUpdate';
 import { Logo, Wordmark } from './components/ui/Logo';
 import { setNativeNavigator } from './nativeApp';
 
@@ -99,10 +101,12 @@ export function App() {
           <Route path="admin/people" element={<HostOnly><People /></HostOnly>} />
           <Route path="admin/rooms" element={<HostOnly><RoomsAdmin /></HostOnly>} />
           <Route path="admin/settings" element={<HostOnly><SiteSettings /></HostOnly>} />
+          <Route path="admin/app" element={<HostOnly><AppReleases /></HostOnly>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
       <Toasts />
+      <AppUpdate />
       <NativeNavigator />
       {authed && <PendingJoin />}
     </>
