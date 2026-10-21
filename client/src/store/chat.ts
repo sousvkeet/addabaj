@@ -5,6 +5,7 @@ import type {
   Attachment, Conversation, DmMessage, Draft, Invite, Paged, PreparedFile, Reaction, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
 } from '../lib/types';
 import { uploadFile } from '../lib/upload';
+import { nativeClearChat } from '../lib/native';
 import { myId, onLogout, useAuth } from './auth';
 import { toast } from './ui';
 
@@ -54,7 +55,10 @@ type ChatState = {
   upsertRoom: (room: RoomSummary | RoomDetail) => void;
   dropRoom: (roomId: string) => void;
 
-  createRoom: (input: { name: string; description: string; maxMembers: number }) => Promise<RoomDetail>;
+  createRoom: (input: { name: string; description: string; maxMembers: number; password?: string }) => Promise<RoomDetail>;
+  joinRoom: (code: string, password?: string) => Promise<RoomDetail>;
+  setRoomPassword: (roomId: string, password: string | null) => Promise<void>;
+  renewRoomCode: (roomId: string) => Promise<void>;
   updateRoom: (roomId: string, input: Partial<{ name: string; description: string; maxMembers: number }>) => Promise<void>;
   deleteRoom: (roomId: string) => Promise<void>;
   addMember: (roomId: string, userId: string) => Promise<void>;
@@ -298,6 +302,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   markDmRead: (partnerId) => {
+    nativeClearChat('dm', partnerId);
     const { conversations, dms } = get();
     const me = myId();
     const hasUnread =
@@ -506,6 +511,7 @@ export const useChat = create<ChatState>()((set, get) => ({
   },
 
   markRoomRead: (roomId) => {
+    nativeClearChat('room', roomId);
     const page = get().roomMessages[roomId];
     const last = page?.items.filter((m) => !m.pending).at(-1);
     set((s) => (s.rooms[roomId]?.unread ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0 } } } : s));
@@ -555,6 +561,22 @@ export const useChat = create<ChatState>()((set, get) => ({
     const { room } = await api<{ room: RoomDetail }>('/rooms', { method: 'POST', body: input });
     get().upsertRoom(room);
     return room;
+  },
+
+  joinRoom: async (code, password) => {
+    const { room } = await api<{ room: RoomDetail }>('/rooms/join', { method: 'POST', body: { code, password } });
+    get().upsertRoom(room);
+    return room;
+  },
+
+  setRoomPassword: async (roomId, password) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/access`, { method: 'PATCH', body: { password } });
+    get().upsertRoom(room);
+  },
+
+  renewRoomCode: async (roomId) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/code`, { method: 'POST' });
+    get().upsertRoom(room);
   },
 
   updateRoom: async (roomId, input) => {

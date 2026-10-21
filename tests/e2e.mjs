@@ -81,14 +81,14 @@ async function assertRoutes(label, page) {
   }
 }
 
-async function search(page, email) {
+/** Finds one person by exact user ID or email (nobody is listed). */
+async function search(page, query) {
   const dlg = page.getByRole('dialog');
-  await dlg.getByLabel('Search people').fill(email);
-  for (let i = 0; i < 50; i++) {
-    if ((await dlg.locator('li').count()) === 1) return dlg.locator('li').first();
-    await page.waitForTimeout(100);
-  }
-  throw new Error(`search for ${email} never narrowed to one result`);
+  await dlg.getByLabel('User ID or email').fill(query);
+  await dlg.getByRole('button', { name: 'Find' }).click();
+  const result = dlg.getByRole('group', { name: 'Search result' });
+  await result.waitFor({ timeout: 5000 });
+  return result;
 }
 
 const A = await user('Asha');
@@ -146,7 +146,8 @@ await check('TURN server relays traffic (relay-only peer pair)', async () => {
 await check('Asha starts a chat with Rahul from the picker', async () => {
   await A.page.getByRole('button', { name: 'Start a new chat' }).click();
   const row = await search(A.page, B.email);
-  await row.getByRole('button', { name: /Rahul Das/ }).click();
+  await row.getByText('Rahul Das').waitFor();
+  await row.getByRole('button', { name: 'Message' }).click();
   await A.page.waitForURL(/\/chats\/[0-9a-f-]+$/);
   await A.page.getByText('Say hello to Rahul Das').waitFor();
 });
@@ -305,16 +306,19 @@ await check('Mitali (phone size) accepts and lands in the room; it is now full',
 });
 
 await check('server refuses a 4th member when the room is full', async () => {
-  const res = await A.page.evaluate(async (roomId) => {
-    const r = await fetch('/api/users?q=');
-    const { users } = await r.json();
-    const out = [];
-    for (const u of users) {
-      const x = await fetch(`/api/rooms/${roomId}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: u.id }) });
-      out.push([x.status, (await x.json()).error]);
-    }
-    return out;
-  }, roomUrl.split('/').pop());
+  // A fourth person (registered from here, so nobody's browser login changes).
+  const extra = await fetch(`${BASE}/api/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Fourth Person', email: `fourth.${Date.now()}@example.com`, password: 'password123' }),
+  }).then((r) => r.json());
+  const res = await A.page.evaluate(
+    async ([roomId, userId]) => {
+      const x = await fetch(`/api/rooms/${roomId}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId }) });
+      return [[x.status, (await x.json()).error]];
+    },
+    [roomUrl.split('/').pop(), extra.user.id],
+  );
   const full = res.find(([s]) => s === 409 && /full/.test(res.find(([st]) => st === 409)?.[1] ?? ''));
   if (!full) throw new Error(JSON.stringify(res.slice(0, 4)));
 });

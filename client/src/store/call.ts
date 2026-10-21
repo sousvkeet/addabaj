@@ -3,6 +3,7 @@ import { errorMessage } from '../lib/api';
 import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, stopStream, watchSpeaking } from '../lib/rtc';
 import { emitAck, socket } from '../lib/socket';
 import { startTone, stopTone, unlockAudio } from '../lib/sounds';
+import { inApp, nativeAnswering, nativeRinging, pushToken } from '../lib/native';
 import type { User } from '../lib/types';
 import { onLogout } from './auth';
 import { onDeviceChoice } from './devices';
@@ -350,7 +351,10 @@ export const useCall = create<CallState>()((set, get) => {
     onIncoming: ({ callId, from, video }) => {
       if (get().phase !== 'idle') return;
       set({ ...idle, phase: 'incoming', callId, peer: from, videoCall: !!video, peerCameraOn: !!video });
-      startTone('incoming');
+      // In the Android app the phone rings itself (with the call screen) when
+      // the app is in the background or already ringing; ring here otherwise.
+      const quiet = nativeAnswering(callId) || nativeRinging(callId) || (document.visibilityState === 'hidden' && !!pushToken());
+      if (!inApp || !quiet) startTone('incoming');
     },
 
     onAccepted: async ({ callId, video }) => {

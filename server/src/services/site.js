@@ -90,6 +90,8 @@ export async function endSessions(userId) {
   const seconds = Math.floor(Date.now() / 1000);
   await query('UPDATE users SET sessions_valid_after = to_timestamp($2) WHERE id = $1', [userId, seconds]);
   validAfter.set(userId, seconds);
+  // Their phones stop getting notifications until they sign in again.
+  await query('DELETE FROM push_devices WHERE user_id = $1', [userId]);
 }
 export function markDisabled(userId, off) {
   if (off) disabled.add(userId);

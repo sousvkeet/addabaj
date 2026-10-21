@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { NavLink } from 'react-router';
-import { EyeOff, KeyRound, LogOut, Mail, MessageCircle, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
+import { AtSign, EyeOff, KeyRound, LogOut, Mail, MessageCircle, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { useUi } from '../store/ui';
@@ -8,6 +8,7 @@ import { Avatar } from './ui/Avatar';
 import { Logo } from './ui/Logo';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { PrivacyDialog } from './PrivacyDialog';
+import { MyIdDialog } from './MyIdDialog';
 
 function Badge({ count }: { count: number }) {
   if (!count) return null;
@@ -85,6 +86,7 @@ function AccountMenu() {
   const [open, setOpen] = useState(false);
   const [changing, setChanging] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [idOpen, setIdOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -125,9 +127,21 @@ function AccountMenu() {
             <Avatar name={user.name} hue={user.hue} size={42} />
             <div className="min-w-0">
               <p className="truncate font-semibold">{user.name}</p>
-              <p className="truncate text-[13px] text-ink-soft">{user.email}</p>
+              <p className="truncate text-[13px] text-ink-soft">{user.handle ? `@${user.handle}` : user.email}</p>
             </div>
           </div>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setIdOpen(true);
+            }}
+            className={item}
+          >
+            <AtSign size={17} className="text-ink-soft" />
+            Your user ID
+          </button>
           <button
             role="menuitem"
             type="button"
@@ -176,6 +190,7 @@ function AccountMenu() {
       )}
       <ChangePasswordDialog open={changing} onClose={() => setChanging(false)} />
       <PrivacyDialog open={privacyOpen} onClose={() => setPrivacyOpen(false)} />
+      <MyIdDialog open={idOpen} onClose={() => setIdOpen(false)} />
     </div>
   );
 }

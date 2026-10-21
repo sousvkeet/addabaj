@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:colorPrimary">@color/brand</item>
+        <item name="android:colorPrimaryDark">@color/canvas</item>
+        <item name="android:colorAccent">@color/brand</item>
+        <item name="android:statusBarColor">@color/canvas</item>
+        <item name="android:navigationBarColor">@color/canvas</item>
+    </style>
+
+    <!-- The incoming call screen. -->
+    <style name="AppTheme.Call">
+        <item name="android:windowBackground">@color/canvas</item>
+    </style>
+
+    <!-- Shown while the app starts, before the page loads. -->
+    <style name="AppTheme.Launch">
+        <item name="android:windowBackground">@drawable/splash</item>
+    </style>
+</resources>

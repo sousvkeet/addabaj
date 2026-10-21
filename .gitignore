@@ -8,3 +8,7 @@ tests/screenshots
 server/bin
 server/cache
 server/uploads
+
+# Firebase service account keys (FCM_SERVICE_ACCOUNT) are secrets.
+*service-account*.json
+*firebase-adminsdk*.json

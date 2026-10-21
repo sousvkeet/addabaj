@@ -1,15 +1,20 @@
 // One-to-one voice calls. The server runs the ring/accept/end state machine
 // and relays WebRTC offers, answers and ICE candidates between the two sockets.
+// Someone whose app is closed or in the background is rung on their phone
+// (a push notification); their app joins the call when they answer there.
 import { randomUUID } from 'node:crypto';
 import { one } from '../db.js';
 import { AppError, isUuid } from '../errors.js';
 import { getIO, presence, userChannel } from '../realtime.js';
 import { DM_COLUMNS, dmMessage } from '../services/dms.js';
 import { findUser } from '../services/users.js';
+import { hasDevices, isLooking, pushCall, pushCallEnded } from '../services/push.js';
 import { handle } from './util.js';
 import { voice } from './voice.js';
 
 const RING_TIMEOUT_MS = 35_000;
+// A phone woken by a push needs a little longer: unlock, open, connect.
+const PHONE_RING_TIMEOUT_MS = 45_000;
 const active = new Map(); // callId -> call
 const userCall = new Map(); // userId -> callId
 
@@ -42,6 +47,7 @@ function finish(call, reason) {
   if (userCall.get(call.callerId) === call.id) userCall.delete(call.callerId);
   if (userCall.get(call.calleeId) === call.id) userCall.delete(call.calleeId);
   getIO()?.to(userChannel(call.callerId)).to(userChannel(call.calleeId)).emit('call:ended', { callId: call.id, reason });
+  if (call.pushed && !call.startedAt) pushCallEnded(call, call.caller, reason);
   const outcome = call.startedAt ? 'completed' : reason === 'declined' ? 'declined' : 'missed';
   recordCall(call, outcome).catch((err) => console.error('Failed to record call', err));
 }
@@ -65,7 +71,10 @@ export const calls = {
       if (userCall.has(userId)) throw new AppError(409, "You're already on a call.");
       const callee = await findUser(to);
       if (!callee) throw new AppError(404, "That person doesn't exist.");
-      if (!presence.isOnline(to)) throw new AppError(409, `${callee.name} is offline right now. Send a message instead.`);
+      // Offline is fine when their phone can ring.
+      if (!presence.isOnline(to) && !(await hasDevices(to))) {
+        throw new AppError(409, `${callee.name} is offline right now. Send a message instead.`);
+      }
       if (userCall.has(to)) throw new AppError(409, `${callee.name} is on another call.`);
 
       voice.leaveAny(userId);
@@ -75,6 +84,7 @@ export const calls = {
         calleeId: to,
         callerSocket: socket.id,
         calleeSocket: null,
+        caller: socket.data.user,
         startedAt: null,
         // Whether the caller asked for video; either side can turn its camera on later.
         video: !!video,
@@ -84,6 +94,14 @@ export const calls = {
       userCall.set(userId, call.id);
       userCall.set(to, call.id);
       io.to(userChannel(to)).emit('call:incoming', { callId: call.id, from: socket.data.user, video: call.video });
+      // Not looking at the app anywhere: ring their phones. Marked first, so
+      // answering or ending the call meanwhile also reaches the phones.
+      if (!isLooking(to) && (await hasDevices(to)) && active.has(call.id) && !call.startedAt) {
+        call.pushed = true;
+        clearTimeout(call.timer);
+        call.timer = setTimeout(() => finish(call, 'missed'), PHONE_RING_TIMEOUT_MS);
+        void pushCall(call, socket.data.user);
+      }
       return { callId: call.id };
     }));
 
@@ -96,6 +114,8 @@ export const calls = {
       call.startedAt = Date.now();
       io.to(call.callerSocket).emit('call:accepted', { callId, video: !!video });
       socket.to(userChannel(userId)).emit('call:dismissed', { callId });
+      // Other phones stop ringing.
+      if (call.pushed) pushCallEnded(call, call.caller, 'answered');
       return {};
     }));
 
@@ -133,13 +153,30 @@ export const calls = {
     });
   },
 
+  /** Declined from the phone's notification, without opening the app. */
+  decline(userId, callId) {
+    const call = active.get(callId);
+    if (!call || call.calleeId !== userId) throw new AppError(404, 'That call has already ended.');
+    if (call.startedAt) throw new AppError(409, 'That call was already answered.');
+    finish(call, 'declined');
+  },
+
+  /** An app that connects while its person's phone is ringing gets the call. */
+  handleConnect(socket) {
+    const call = active.get(userCall.get(socket.data.userId));
+    if (call && call.calleeId === socket.data.userId && !call.calleeSocket) {
+      socket.emit('call:incoming', { callId: call.id, from: call.caller, video: call.video });
+    }
+  },
+
   handleDisconnect(socket) {
     const userId = socket.data.userId;
     const call = active.get(userCall.get(userId));
     if (!call) return;
     if (socket.id === call.callerSocket || socket.id === call.calleeSocket) {
       finish(call, call.startedAt ? 'dropped' : 'cancelled');
-    } else if (!call.calleeSocket && call.calleeId === userId && !presence.isOnline(userId)) {
+    } else if (!call.calleeSocket && call.calleeId === userId && !presence.isOnline(userId) && !call.pushed) {
+      // (A phone that was rung keeps ringing: its app may just be asleep.)
       finish(call, 'missed');
     }
   },

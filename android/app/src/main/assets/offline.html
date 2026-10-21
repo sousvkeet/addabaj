@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Adda Khana</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; background: #090c1a; color: #eef0ff;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    overflow: hidden;
+  }
+  .blob { position: fixed; width: 60vmax; height: 60vmax; border-radius: 50%; filter: blur(70px); opacity: .35; pointer-events: none; }
+  .b1 { background: #7c5cff; top: -25vmax; left: -20vmax; }
+  .b2 { background: #ff5ca8; bottom: -30vmax; right: -25vmax; }
+  .card {
+    position: relative; width: 100%; max-width: 360px; padding: 32px 24px; text-align: center;
+    border-radius: 28px; background: rgba(20, 24, 48, .62); border: 1px solid rgba(255, 255, 255, .08);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .6);
+  }
+  svg { width: 64px; height: 64px; filter: drop-shadow(0 10px 24px rgba(124, 92, 255, .45)); }
+  h1 { margin: 18px 0 6px; font-size: 21px; font-weight: 700; }
+  p { margin: 0 0 24px; color: #a7acd0; }
+  button {
+    width: 100%; padding: 14px 20px; border: 0; border-radius: 999px; cursor: pointer;
+    font: inherit; font-weight: 700; color: #fff;
+    background: linear-gradient(135deg, #7c5cff, #ff5ca8);
+    box-shadow: 0 12px 30px -10px rgba(255, 92, 168, .7);
+  }
+  button:active { transform: scale(.98); }
+  button:disabled { opacity: .7; }
+</style>
+</head>
+<body>
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <main class="card">
+    <svg viewBox="0 0 64 64" aria-hidden="true">
+      <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7C5CFF"/><stop offset="1" stop-color="#FF5CA8"/></linearGradient></defs>
+      <rect width="64" height="64" rx="18" fill="url(#g)"/>
+      <path d="M20 46 32 16l12 30M24.5 36h15" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="49" cy="15" r="6" fill="#22D3EE"/>
+    </svg>
+    <h1>Can't reach Adda Khana</h1>
+    <p>Check your internet connection, then try again.</p>
+    <button id="retry" type="button">Try again</button>
+  </main>
+  <script>
+    if (window.AddaNative) AddaNative.setTheme('#090C1A', true);
+    var button = document.getElementById('retry');
+    var retry = function () {
+      button.disabled = true;
+      button.textContent = 'Connecting…';
+      if (window.AddaNative) AddaNative.retry();
+    };
+    button.addEventListener('click', retry);
+    // Back online: reconnect without a tap.
+    window.addEventListener('online', retry);
+  </script>
+</body>
+</html>

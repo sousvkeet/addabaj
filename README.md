@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/sousvkeet/addabaj/releases/latest"><b>Download the Android app</b></a>
+  &nbsp;·&nbsp;
+  <a href="#quick-start"><b>Host it yourself</b></a>
+</p>
+
+<p align="center">
   <img src="docs/screenshots/02-chat.jpg" alt="A one-to-one chat with a reply, reactions and a voice message">
 </p>
 
@@ -22,6 +28,7 @@
 - [Host admin](#host-admin)
 - [Configuration](#configuration)
 - [Production](#production)
+- [Android app](#android-app)
 - [Scripts](#scripts)
 - [Tests](#tests)
 - [Project layout](#project-layout)
@@ -30,10 +37,11 @@
 
 ## Highlights
 
-- **Chat** one to one or in rooms, with photos, videos, files, voice messages, replies and emoji reactions.
+- **Chat** one to one or in rooms, with photos, videos, files, voice messages, replies and emoji reactions. Nobody is listed: find people by user ID or email, and join rooms with an invite code (open or password protected).
 - **Call** with HD voice and video, routed through Cloudflare's TURN relay when networks block direct connections.
 - **Hang out** in rooms with a live voice table for up to 12 people, where whoever speaks lights up.
 - **Watch together:** paste a link from almost any site, and the server finds the video and keeps everyone in sync. You can also stream a file or your screen live from your device.
+- **On Android:** a native app with notifications while it's closed, calls that ring like phone calls (even on the lock screen), calls that keep going in the background, and screen sharing.
 - **Run the site** from a host admin panel with live numbers, people, rooms, sign-ups and announcements.
 - **Look good** in two themes: "Midnight Aurora" (dark, the default) and "Ocean Mint" (light), with layouts made for phones too.
 
@@ -47,6 +55,24 @@
 
 <p align="center">
   <img src="docs/screenshots/06-phone.jpg" width="300" alt="A room on a phone">
+</p>
+
+**Finding people and joining rooms:** nobody is listed. You find people by their user ID or email, and join rooms with an invite code.
+
+| Start a chat by user ID | Join a room with a code |
+|---|---|
+| ![Finding someone by their exact user ID, with your own ID to share below](docs/screenshots/07-start-chat.jpg) | ![Joining a password-protected room with its invite code](docs/screenshots/08-join-room.jpg) |
+
+**The Android app:**
+
+| Incoming call (over the lock screen) | Reply from a notification | A call in progress |
+|---|---|---|
+| ![The full-screen incoming call screen with Decline and Answer](docs/screenshots/09-android-call.jpg) | ![A message notification with an inline reply being sent](docs/screenshots/10-android-notification.jpg) | ![The call bar with speaker, camera, mute and hang-up buttons](docs/screenshots/11-android-in-call.jpg) |
+
+A phone sharing its screen live to a room, as a computer sees it:
+
+<p align="center">
+  <img src="docs/screenshots/12-phone-screen-share.jpg" width="468" alt="A phone's home screen streamed live into a room">
 </p>
 
 ## Quick start
@@ -78,7 +104,8 @@ To try calls by yourself, open a second browser profile or an incognito window a
 ### Accounts and presence
 
 - Sign up and log in with email and password, and stay logged in for 30 days. Change your password from the account menu.
-- **Online and last seen:** see who's online and when they were last seen ("Last seen 5 min ago", kept up to date) in chats, room member lists and the people picker.
+- **User IDs, no directory:** nobody is listed. Everyone gets a unique user ID (like `ana.rahman4821`), shown in the account menu with Copy and Share and changeable there. To start a chat or add someone to a room, type their exact user ID or email. Lookups are limited to 30 per 10 minutes, so nobody can page through members or try email after email.
+- **Online and last seen:** see when your contacts (people you chat with or share a room with) are online and when they were last seen ("Last seen 5 min ago", kept up to date) in chats and room member lists. Nobody else gets your online status.
 - **Privacy** (account menu): hide when you're online and last seen, and turn off read receipts. Both work both ways, like most chat apps: if you hide yours, you don't see other people's.
 
 ### One-to-one chat
@@ -108,7 +135,9 @@ To try calls by yourself, open a second browser profile or an incognito window a
 ### Rooms
 
 - Whoever starts a room is its admin and chooses the maximum members (2–50).
-- Admins can **add** people straight in, or **invite** them so they can accept or decline. Admins can also cancel invites and remove members.
+- **Invite code:** every room has one (like `K7PQ-2XMB`) and a link (`/join/K7PQ2XMB`) that admins share from the room's member panel. Anyone with the code can join, from **Join with a code** in Rooms or by opening the link (after logging in, if needed; in the Android app the link opens the app).
+- **Open or password protected:** when starting a room, or later, admins choose whether the code alone is enough, or people also need a password the admins set. Admins can make a new code at any time; the old code and links stop working. Wrong codes and passwords are limited to 10 tries per 15 minutes.
+- Admins can also **add** people straight in, or **invite** them so they can accept or decline, by their user ID or email. Admins can cancel invites and remove members.
 - The room's creator can make other members admins and can delete the room.
 - The member limit is enforced on the server, even when two people join at the same moment, and can't be lowered below the current member count.
 - **Seen by:** your room messages get ticks too (delivered when everyone's device has it, coloured when everyone has seen it), and your latest one says who has seen it ("Seen by Rahul and Mitali"). Message info lists who has read it, who has it, and who hasn't received it yet. Rooms always show who has seen a message, like group chats elsewhere.
@@ -212,6 +241,8 @@ Server settings:
 | `ADMIN_USERNAME`, `ADMIN_PASSWORD` | The host admin login created on first start (default `admin` / `admin`) |
 | `TRUST_PROXY` | Which proxies may report the visitor's address (default: one on the same machine, like nginx; set `1` if your proxy runs elsewhere) |
 | `ALLOWED_ORIGINS` | Extra web addresses allowed to use the app, only if it's reached under a different address than it runs on |
+| `FCM_SERVICE_ACCOUNT` | The Firebase service account key (a path to the JSON file, or the JSON itself) for the Android app's notifications and ringing; empty turns push off. A secret: keep the file readable only by the server. See [android/README.md](android/README.md) |
+| `ANDROID_CERT_SHA256` | The Android app's signing certificate fingerprint, published at `/.well-known/assetlinks.json` so room invite links open straight in the app. Empty: the key in `android/keystore` |
 
 To change the API port, change `PORT` in `server/.env` and the port in `API_URL` in `client/.env` to match. Values set in the shell override both files. Only `VITE_`-prefixed variables in `client/.env` reach browser code, so never put secrets there.
 
@@ -274,6 +305,36 @@ server {
 
 **Back up** the database and the attachments folder (`server/uploads`, or `UPLOAD_DIR`) together.
 
+## Android app
+
+`android/` holds a native app that opens the production site full screen and adds what a messenger needs on a phone. Because the app shows the live site, server updates reach it without a new APK.
+
+**Install:** download `AddaKhana-<version>.apk` from the [latest release](https://github.com/sousvkeet/addabaj/releases/latest) on an Android phone (Android 7.0 or newer), open it, and allow installing from your browser or file manager when Android asks. Updates install over the old version, keeping you signed in. The released APK opens `https://adda-api.clix.dpdns.org`; to use your own server, build the app yourself (below).
+
+- **Notifications while the app is closed.**
+  - One notification per chat or room, with the latest messages and senders' pictures, and Reply and Mark as read buttons.
+  - A chat's notification clears once you read it anywhere.
+  - The phone stays quiet while you're using Adda Khana on it or on a computer.
+- **Calls ring like phone calls.** The phone rings with its ringtone even when the app is closed, and the call screen appears over the lock screen with Answer and Decline. Unanswered calls leave a missed-call notification.
+- **Calls keep going in the background.**
+  - Calls, room voice and live streams keep running with the screen off, in another app, or after the app is swiped away. A notification shows a hang-up button.
+  - Voice calls play from the earpiece and turn the screen off at your ear; a speaker button switches to the loudspeaker.
+- **Screen sharing** for live streams: everyone watching sees the phone's screen (picture only).
+
+Notifications and ringing need a free Firebase project:
+- **The app:** put its `google-services.json` in `android/app/` before building.
+- **The server:** set `FCM_SERVICE_ACCOUNT` in `server/.env` to the project's service account key.
+
+```bash
+cd android
+./gradlew assembleRelease            # opens addaUrl from android/gradle.properties
+./gradlew assembleRelease -PaddaUrl=https://your-server.example
+```
+
+Release builds are signed with the key in `android/keystore.properties` (ignored by git). Keep it backed up: every update must use the same key. Android 7.0 and newer.
+
+See [android/README.md](android/README.md) for the Firebase steps, signing, installing, testing without Firebase, and limits.
+
 ## Scripts
 
 | Command | What it does |
@@ -299,6 +360,8 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 | `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. |
 | `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; a movie with Dolby Digital 5.1 sound converted in the host's browser and heard by viewers, in sync after a jump; pause and seek for viewers; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
 | `npm run test:receipts` | One tick to someone offline, two ticks the moment they come back (for every waiting message), two at once when they're online, coloured when they open the chat; message info times; "Last seen just now" and back to "Online"; read receipts off (the sender only sees delivered, both ways, even after a reload); last seen hidden (no status either way, and the API doesn't reveal it); room ticks and "Seen by", room message info and member status; a faked read-ahead and someone else's message info refused. |
+| `npm run test:push` | Push notifications against a fake Firebase (starts its own server, no dev servers needed): the Google sign-in; who gets a push and when (offline, app in the background, not while looking); what it carries; clearing after reading elsewhere; room messages; calls ringing a closed app, answered or declined from the phone, and missed; replying and marking read from a notification; uninstalled apps forgotten; signing out and password changes; outsiders and other websites refused. |
+| `npm run test:people` | No list of people: exact user ID and email lookups only, rate-limited; strangers can't read each other or see each other online, contacts can; changing your user ID; rooms joined with an invite code, open and with a password; wrong passwords, full rooms, unknown codes; only admins see, reset or lock the code; guessing limits; in the app: starting a chat by user ID, your ID in the account menu, a join link opened while logged out, and starting a password room. |
 | `npm run test:security` | Logged-out access; forged login cookies; requests and live connections from other websites; security headers; outsiders reaching other people's rooms, chats and files; members running a room; admin pages; relay links; signing out other sessions after a password change; bad input to every endpoint (no 500s); all 30 live events × 9 kinds of garbage (the server stays up); message limits and flooding; HTML and scripts in messages, names and rooms showing as plain text. |
 | `npm run test:admin` | The `admin` / `admin` login; the Admin tab and API only for host admins; the overview; roles, switching accounts off and on, new passwords, adding and removing people; deleting rooms; closing sign-ups; announcements; changing your own password; the admin pages on a phone. The admin must still have its default password (`npm run admin:reset`). |
 
@@ -308,9 +371,11 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 server/src/
   index.js              Express + Socket.IO entry; serves client/dist in production
   schema.sql            Tables (applied on start)
-  routes/               REST: auth, users, chats, rooms, invites, uploads and files, video relay
+  routes/               REST: auth, users, chats, rooms, invites, uploads and files, video relay, push devices
   routes/admin.js       The host admin API: overview, people, rooms, settings
   services/             Rooms and member limits, attachments, message extras, site settings, TURN
+  services/chat.js      Sending and reading messages (shared by the live connection and the phone's notification buttons)
+  services/push.js      Push notifications to the Android app (Firebase Cloud Messaging)
   socket/               Realtime: chat, typing, read receipts, calls, room voice, watch together
   socket/live.js        Live streams from a device: who hosts, who watches, connection setup
   stream/               Finding videos, the relay, the shared download, joining picture and sound
@@ -320,6 +385,7 @@ client/src/
   store/                Zustand stores: auth, chat, call (1:1 WebRTC), voice (room mesh), live streams
   realtime.ts           Socket events into the stores
 tests/                  Playwright browser tests and their video clips
+android/                The Android app: the site in a WebView, plus notifications, ringing, background calls and screen sharing
 docs/                   The logo and README screenshots
 ```
 
@@ -328,13 +394,13 @@ docs/                   The logo and README screenshots
 ## Security
 
 - **Logins:** passwords are hashed with bcrypt. Logins use an httpOnly, SameSite login cookie signed with `JWT_SECRET` (only HS256 is accepted). Sign-in and sign-up are rate-limited, and a sign-in takes as long for an unknown email as for a wrong password, so it can't reveal who has an account.
-- **Sessions:** changing your password signs you out everywhere else; a host admin setting a new password for someone signs them out everywhere. Switched-off accounts are refused at once, including their live connection.
+- **Sessions:** changing your password signs you out everywhere else; a host admin setting a new password for someone signs them out everywhere. Their phones stop getting notifications until they sign in again. Switched-off accounts are refused at once, including their live connection.
 - **Other websites:** requests that change something, and live connections, are refused when the browser says they come from another site (`Sec-Fetch-Site`, or `Origin` on older browsers). Pages can't be framed by other sites (clickjacking), and the built app sends a content security policy that only allows its own scripts (plus YouTube's player).
-- **Private data:** rooms, their messages and files are only served to members; chats only to the two people in them; the admin API only to host admins. A message is always sent as the person whose login sent it.
+- **Private data:** rooms, their messages and files are only served to members; chats only to the two people in them; the admin API only to host admins. A message is always sent as the person whose login sent it. There's no list of people: someone is found only by exact user ID or email (rate-limited), and only contacts (people who chat or share a room) see each other's online status. Room passwords are stored as bcrypt hashes.
 - **Files:** a file's type is decided from its contents, not its name, so only real photos, videos and audio show inside the page; everything else (including SVG and HTML) is only downloaded, with a sandboxing content policy.
 - **Input:** every endpoint validates its input and answers bad input with a clear error. Every live event is guarded, so no payload can crash the server, and messages and reactions are rate-limited against flooding. Queries are parameterised throughout.
 - **Fetching links:** the server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. Relay links are signed and only work for the room's members.
-- **Secrets:** the Cloudflare TURN key stays on the server; browsers only get short-lived credentials. The default `admin` password must be changed before the admin API works in production.
+- **Secrets:** the Cloudflare TURN key stays on the server; browsers only get short-lived credentials. The Firebase service account key (`FCM_SERVICE_ACCOUNT`) stays on the server too. The default `admin` password must be changed before the admin API works in production.
 - **Checking it:** `npm run test:security` tries all of the above against a running server, and `npm audit` reports no known vulnerabilities in the dependencies.
 
 ## Limits to know about

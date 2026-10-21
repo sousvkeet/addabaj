@@ -14,11 +14,16 @@ type AuthState = {
   /** Reloads my account (after a password change, or when the host changes my role). */
   refresh: () => Promise<void>;
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
+  /** A new user ID (what people type to find you). */
+  changeHandle: (handle: string) => Promise<void>;
 };
 
 const resetHandlers: (() => void)[] = [];
 /** Stores register a reset so logging out leaves nothing behind. */
 export const onLogout = (fn: () => void) => resetHandlers.push(fn);
+const goodbyes: (() => Promise<unknown>)[] = [];
+/** Runs while still signed in, just before logging out (e.g. stop this phone's notifications). */
+export const beforeLogout = (fn: () => Promise<unknown>) => goodbyes.push(fn);
 
 let initOnce: Promise<void> | null = null;
 
@@ -58,6 +63,7 @@ export const useAuth = create<AuthState>()((set) => {
       signedIn(user);
     },
     logout: async () => {
+      await Promise.all(goodbyes.map((fn) => fn().catch(() => {})));
       await api('/auth/logout', { method: 'POST' }).catch(() => {});
       signedOut();
     },
@@ -66,6 +72,10 @@ export const useAuth = create<AuthState>()((set) => {
       const { user } = await api<{ user: User | null }>('/auth/me');
       if (user) set({ user });
       else signedOut();
+    },
+    changeHandle: async (handle) => {
+      const { user } = await api<{ user: User }>('/auth/handle', { method: 'PATCH', body: { handle } });
+      set({ user });
     },
     changePassword: async (currentPassword, newPassword) => {
       const { user } = await api<{ user: User }>('/auth/password', { method: 'POST', body: { currentPassword, newPassword } });

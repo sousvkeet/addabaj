@@ -66,11 +66,12 @@ async function user(name, viewport = { width: 1440, height: 900 }) {
   page.on('pageerror', (e) => console.log(`  [${name} pageerror]`, e.message));
   await page.goto(`${BASE}/signup`);
   await page.getByLabel('Your name').fill(name);
-  await page.getByLabel('Email').fill(`${name.toLowerCase().replace(' ', '')}.${stamp}@example.com`);
+  const email = `${name.toLowerCase().replace(' ', '')}.${stamp}@example.com`;
+  await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill('password123');
   await page.getByRole('button', { name: 'Create account' }).click();
   await page.waitForURL('**/chats');
-  return { page, ctx, name };
+  return { page, ctx, name, email };
 }
 
 const vid = (p) =>
@@ -143,12 +144,13 @@ await A.page.getByRole('button', { name: 'Create room' }).click();
 await A.page.waitForURL(/\/rooms\//);
 const roomUrl = A.page.url();
 const roomId = roomUrl.split('/').pop();
-for (const who of ['rahulmember', 'mitalilate']) {
+for (const who of [B, C]) {
   const dlg = A.page.getByRole('dialog');
-  await dlg.getByLabel('Search people').fill(`${who}.${stamp}`);
-  for (let i = 0; i < 50 && (await dlg.locator('li').count()) !== 1; i++) await A.page.waitForTimeout(100);
-  await dlg.locator('li').getByRole('button', { name: 'Add' }).click();
-  await dlg.locator('li').getByText('In the room').waitFor();
+  await dlg.getByLabel('User ID or email').fill(who.email);
+  await dlg.getByRole('button', { name: 'Find' }).click();
+  const result = dlg.getByRole('group', { name: 'Search result' });
+  await result.getByRole('button', { name: 'Add' }).click();
+  await result.getByText('In the room').waitFor();
 }
 await A.page.keyboard.press('Escape');
 await B.page.goto(roomUrl);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { FileVideo, Link2, LoaderCircle, Maximize, MonitorPlay, MonitorUp, Play, Search, Smartphone, Volume2, VolumeX } from 'lucide-react';
 import { errorMessage } from '../../lib/api';
+import { inApp } from '../../lib/native';
 import { serverNow } from '../../lib/clock';
 import { duration } from '../../lib/format';
 import { getLimits } from '../../lib/config';
@@ -598,8 +599,12 @@ function DeviceSource({ roomId, onDone }: { roomId: string; onDone: () => void }
       />
       <SourceOption
         icon={<MonitorUp size={21} />}
-        title="Share your screen or a tab"
-        text="To include sound, share a tab and turn on “Share tab audio”."
+        title={inApp ? 'Share your screen' : 'Share your screen or a tab'}
+        text={
+          inApp
+            ? 'Everyone watching sees your screen, even while you use other apps. The picture is shared, not the sound.'
+            : 'To include sound, share a tab and turn on “Share tab audio”.'
+        }
         unavailable={screenOk ? '' : 'Phones and tablets can’t share their screen. Use a computer.'}
         busy={busy === 'screen'}
         disabled={!!busy}
@@ -607,7 +612,8 @@ function DeviceSource({ roomId, onDone }: { roomId: string; onDone: () => void }
       />
       <p className="text-[13px] text-ink-soft">
         The video goes from this device to each person watching, so your upload speed matters
-        {maxViewers ? `, and up to ${maxViewers} people can watch` : ''}. Keep this tab open while you stream.
+        {maxViewers ? `, and up to ${maxViewers} people can watch` : ''}.{' '}
+        {inApp ? 'Adda Khana keeps streaming in the background until you stop.' : 'Keep this tab open while you stream.'}
       </p>
       {error && (
         <p role="alert" className="rounded-xl bg-danger/10 px-3.5 py-2.5 text-[14px] text-danger">

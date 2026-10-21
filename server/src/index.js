@@ -18,9 +18,14 @@ import { roomsRouter } from './routes/rooms.js';
 import { invitesRouter } from './routes/invites.js';
 import { streamRouter } from './routes/stream.js';
 import { filesRouter, uploadsRouter } from './routes/uploads.js';
+import { pushRouter } from './routes/push.js';
+import { pushEnabled } from './services/push.js';
+import { calls } from './socket/calls.js';
+import { assertUuid } from './errors.js';
 import { cleanUploads, maxUploadBytes } from './services/uploads.js';
 import { ensureHostAdmin, loadSite, publicSite } from './services/site.js';
 import { loadPrivacy } from './services/privacy.js';
+import { ensureRoomCodes } from './services/rooms.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
 import { ytdlpPath } from './stream/ytdlp.js';
@@ -32,6 +37,7 @@ await migrate();
 await ensureHostAdmin();
 await loadSite();
 await loadPrivacy();
+await ensureRoomCodes();
 
 const app = express();
 app.disable('x-powered-by');
@@ -84,9 +90,26 @@ app.use(express.json({ limit: '32kb' }));
 app.use(cookieParser());
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
+
+// Android App Links: lets the Adda Khana app open this site's room invite links
+// (/join/…) directly. The fingerprint is the app's signing certificate (not a
+// secret); set ANDROID_CERT_SHA256 when the app is signed with another key.
+const androidCerts = (process.env.ANDROID_CERT_SHA256 || 'F0:BA:1C:4C:BF:4B:25:EC:08:73:B1:71:6C:C6:59:B1:94:B4:F5:20:23:80:DE:FE:BD:EE:83:E4:08:F3:2C:24')
+  .split(',').map((c) => c.trim().toUpperCase()).filter(Boolean);
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  res.json([{
+    relation: ['delegate_permission/common.handle_all_urls'],
+    target: { namespace: 'android_app', package_name: 'com.addakhana.app', sha256_cert_fingerprints: androidCerts },
+  }]);
+});
 app.use('/api/auth', authRouter);
 app.get('/api/config', requireAuth, async (_req, res) => {
-  res.json({ iceServers: await getIceServers(), iceTransportPolicy: iceTransportPolicy(), limits: { ...limits, uploadMaxBytes: maxUploadBytes } });
+  res.json({
+    iceServers: await getIceServers(),
+    iceTransportPolicy: iceTransportPolicy(),
+    limits: { ...limits, uploadMaxBytes: maxUploadBytes },
+    push: pushEnabled(),
+  });
 });
 app.get('/api/site', requireAuth, (_req, res) => res.json(publicSite()));
 app.use('/api/admin', requireAuth, adminRouter);
@@ -97,6 +120,12 @@ app.use('/api/invites', requireAuth, invitesRouter);
 app.use('/api/stream', requireAuth, streamRouter);
 app.use('/api/uploads', requireAuth, uploadsRouter);
 app.use('/api/files', requireAuth, filesRouter);
+app.use('/api/push', requireAuth, pushRouter);
+// Declining a call from the phone's notification, without opening the app.
+app.post('/api/calls/:callId/decline', requireAuth, (req, res) => {
+  calls.decline(req.userId, assertUuid(req.params.callId, 'call'));
+  res.status(204).end();
+});
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
 
 // In production the server also hosts the built client.
@@ -165,6 +194,7 @@ server.listen(config.port, async () => {
     console.log(turn.length ? `Cloudflare TURN ready (${turn.length} relay URLs)` : 'Cloudflare TURN unavailable; using STUN only');
   }
   if (config.forceTurnRelay) console.log('FORCE_TURN_RELAY is on: all call audio goes through TURN');
+  console.log(pushEnabled() ? 'Push notifications: on (Firebase Cloud Messaging)' : 'Push notifications: off (set FCM_SERVICE_ACCOUNT to turn them on)');
   console.log(
     ytdlpPath()
       ? 'Watch together: yt-dlp found (site support on)'

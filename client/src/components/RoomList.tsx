@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { NavLink } from 'react-router';
-import { AudioLines, MonitorPlay, Plus, Users } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router';
+import { AudioLines, KeyRound, MonitorPlay, Plus, Users } from 'lucide-react';
 import { listStamp, messagePreview } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -8,6 +8,7 @@ import { Avatar, hueFromId } from './ui/Avatar';
 import { Button, IconButton } from './ui/Button';
 import { ListEmpty, ListHeader, ListSearch, UnreadBadge, listRowClass } from './ListHeader';
 import { CreateRoomDialog } from './CreateRoomDialog';
+import { JoinRoomDialog } from './JoinRoomDialog';
 
 export function RoomList() {
   const rooms = useChat((s) => s.rooms);
@@ -16,6 +17,18 @@ export function RoomList() {
   const me = useAuth((s) => s.user);
   const [filter, setFilter] = useState('');
   const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
+  // A /join link (see JoinLink in App.tsx) opens the join dialog with its code.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const linkCode = (location.state as { joinCode?: string } | null)?.joinCode ?? '';
+  useEffect(() => {
+    if (linkCode) setJoining(true);
+  }, [linkCode]);
+  const closeJoin = () => {
+    setJoining(false);
+    if (linkCode) navigate(location.pathname, { replace: true, state: null });
+  };
 
   const list = useMemo(() => {
     const f = filter.trim().toLowerCase();
@@ -30,9 +43,14 @@ export function RoomList() {
         title="Rooms"
         subtitle={list.length ? `${list.length} ${list.length === 1 ? 'room' : 'rooms'}` : 'Hang out together'}
         action={
-          <IconButton label="Start a room" variant="primary" size={42} onClick={() => setCreating(true)}>
-            <Plus size={20} />
-          </IconButton>
+          <span className="flex gap-2">
+            <IconButton label="Join a room with a code" variant="soft" size={42} onClick={() => setJoining(true)}>
+              <KeyRound size={19} />
+            </IconButton>
+            <IconButton label="Start a room" variant="primary" size={42} onClick={() => setCreating(true)}>
+              <Plus size={20} />
+            </IconButton>
+          </span>
         }
       />
       {Object.keys(rooms).length > 0 && <ListSearch value={filter} onChange={setFilter} placeholder="Search rooms" />}
@@ -87,16 +105,22 @@ export function RoomList() {
           <ListEmpty icon={<Users size={22} />} title={filter ? 'No rooms match that name' : 'No rooms yet'}>
             {!filter && (
               <>
-                <p>Start a room for your friends, choose how many people it holds, then add or invite them.</p>
-                <Button size="sm" onClick={() => setCreating(true)}>
-                  Start a room
-                </Button>
+                <p>Start a room for your friends, or join one with the invite code someone shared with you.</p>
+                <span className="flex flex-wrap justify-center gap-2">
+                  <Button size="sm" onClick={() => setCreating(true)}>
+                    Start a room
+                  </Button>
+                  <Button size="sm" variant="soft" onClick={() => setJoining(true)}>
+                    Join with a code
+                  </Button>
+                </span>
               </>
             )}
           </ListEmpty>
         )}
       </ul>
       <CreateRoomDialog open={creating} onClose={() => setCreating(false)} />
+      <JoinRoomDialog open={joining} onClose={closeJoin} code={linkCode} />
     </>
   );
 }

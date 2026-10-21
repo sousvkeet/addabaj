@@ -1,9 +1,9 @@
 import { config } from '../config.js';
-import { one } from '../db.js';
+import { one, query } from '../db.js';
 import { presence } from '../realtime.js';
 import { hidesPresence } from './privacy.js';
 
-export const USER_COLUMNS = 'id, email, name, avatar_hue, last_seen_at';
+export const USER_COLUMNS = 'id, email, handle, name, avatar_hue, last_seen_at';
 
 /**
  * A person as others see them. Pass who is looking (`viewerId`): when either
@@ -15,6 +15,7 @@ export function publicUser(row, viewerId) {
   return {
     id: row.id,
     email: row.email,
+    handle: row.handle ?? null,
     name: row.name,
     hue: row.avatar_hue,
     lastSeenAt: hidden ? null : row.last_seen_at,
@@ -48,4 +49,32 @@ export function sessionUser(row) {
 
 export async function findSessionUser(id) {
   return sessionUser(await one(`SELECT ${SESSION_COLUMNS} FROM users WHERE id = $1 AND disabled_at IS NULL`, [id]));
+}
+
+// ── User IDs ──────────────────────────────────────────────────────────
+
+/** 3 to 24 lowercase letters, digits, dots or underscores, starting and ending with a letter or digit. */
+export const HANDLE_RULES = 'Use 3 to 24 letters, numbers, dots or underscores, starting and ending with a letter or number.';
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9]|[._](?![._])){1,22}[a-z0-9]$/;
+
+/** "@Ana.Rahman" → "ana.rahman"; null when it can't be a user ID. */
+export function normalizeHandle(value) {
+  const h = String(value ?? '').trim().replace(/^@/, '').toLowerCase();
+  return HANDLE_RE.test(h) ? h : null;
+}
+
+// ── Contacts: the people someone has a chat with or shares a room with ──
+// Only they see each other's online status. Everyone else has to know the
+// exact user ID or email to find someone.
+
+export async function contactIds(userId) {
+  const { rows } = await query(
+    `SELECT recipient_id AS id FROM dm_messages WHERE sender_id = $1
+     UNION SELECT sender_id FROM dm_messages WHERE recipient_id = $1
+     UNION SELECT other.user_id FROM room_members mine
+       JOIN room_members other ON other.room_id = mine.room_id AND other.user_id <> $1
+       WHERE mine.user_id = $1`,
+    [userId],
+  );
+  return new Set(rows.map((r) => r.id));
 }

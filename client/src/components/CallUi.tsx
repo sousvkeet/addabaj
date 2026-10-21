@@ -1,7 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { AudioLines, Mic, MicOff, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff, Volume2 } from 'lucide-react';
+import { AudioLines, Ear, Mic, MicOff, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff, Volume2 } from 'lucide-react';
 import { duration } from '../lib/format';
+import { canToggleSpeaker, nativeSetSpeaker, nativeSpeakerOn, onNative } from '../lib/native';
 import { audioContext } from '../lib/sounds';
 import { useNow } from '../lib/useMedia';
 import { useAuth } from '../store/auth';
@@ -166,6 +167,33 @@ function MuteButton({ muted, speaking, onClick, size = 40 }: { muted: boolean; s
   );
 }
 
+/** In the Android app: the call's sound from the loudspeaker or the earpiece (at your ear). */
+function SpeakerButton({ size = 40 }: { size?: number }) {
+  const [on, setOn] = useState(nativeSpeakerOn);
+  useEffect(
+    () =>
+      onNative((e) => {
+        if (e.type === 'speaker') setOn(e.on);
+      }),
+    [],
+  );
+  if (!canToggleSpeaker()) return null;
+  return (
+    <IconButton
+      label={on ? 'Use the earpiece' : 'Use the loudspeaker'}
+      aria-pressed={on}
+      variant={on ? 'live' : 'on-dark'}
+      size={size}
+      onClick={() => {
+        nativeSetSpeaker(!on);
+        setOn(!on);
+      }}
+    >
+      {on ? <Volume2 size={size * 0.45} /> : <Ear size={size * 0.45} />}
+    </IconButton>
+  );
+}
+
 function CameraButton({ size = 40 }: { size?: number }) {
   const cameraOn = useCall((s) => s.cameraOn);
   const busy = useCall((s) => s.cameraBusy);
@@ -234,6 +262,7 @@ function CallBar() {
           </span>
         </span>
       </button>
+      {phase !== 'outgoing' && <SpeakerButton size={38} />}
       {phase !== 'outgoing' && <CameraButton size={38} />}
       {phase !== 'outgoing' && <MuteButton muted={muted} speaking={localSpeaking} onClick={toggleMute} size={38} />}
       <IconButton label={phase === 'outgoing' ? 'Cancel call' : 'End call'} variant="danger" size={38} onClick={endCall}>
@@ -311,6 +340,7 @@ export function CallStage() {
       <div className="flex shrink-0 items-center justify-center gap-4 p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
         {phase !== 'outgoing' && <MuteButton muted={muted} speaking={localSpeaking} onClick={toggleMute} size={50} />}
         <CameraButton size={50} />
+        <SpeakerButton size={50} />
         <IconButton label="Audio and video settings" variant="on-dark" size={50} onClick={() => openDevices(true)}>
           <Settings2 size={22} />
         </IconButton>

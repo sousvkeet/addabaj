@@ -1,0 +1,14 @@
+.gradle/
+build/
+app/build/
+local.properties
+keystore.properties
+keystore/
+dist/
+*.jks
+*.keystore
+.idea/
+*.iml
+
+# Firebase: per-deployment config (google-services.json) and server keys never go in git.
+app/google-services.json

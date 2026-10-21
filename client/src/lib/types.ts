@@ -1,6 +1,8 @@
 export type User = {
   id: string;
   email: string;
+  /** Their user ID: what people type to find them ("ana.rahman4821"). */
+  handle?: string | null;
   name: string;
   hue: number;
   lastSeenAt: string | null;
@@ -180,6 +182,21 @@ export type RoomSummary = {
   lastMessage: RoomMessage | null;
   /** Title of the video the room is watching together, if any. */
   watching?: string | null;
+  /** Joining with the invite code needs a password. */
+  hasPassword?: boolean;
+  /** The invite code (admins only). */
+  joinCode?: string;
+};
+
+/** What an invite code opens, before joining. */
+export type RoomPreview = {
+  id: string;
+  name: string;
+  description: string;
+  memberCount: number;
+  maxMembers: number;
+  needsPassword: boolean;
+  member: boolean;
 };
 
 export type RoomMember = User & {

@@ -1,0 +1,76 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Push notifications need the Firebase project's google-services.json in this
+// folder (see ../README.md). Without it the app builds and works, just without push.
+def firebaseConfigured = file('google-services.json').exists()
+if (firebaseConfigured) apply plugin: 'com.google.gms.google-services'
+
+// Release signing comes from keystore.properties (never committed). Without it,
+// release builds are left unsigned and debug builds use the debug key.
+def keystoreProps = new Properties()
+def keystoreFile = rootProject.file('keystore.properties')
+if (keystoreFile.exists()) keystoreFile.withInputStream { keystoreProps.load(it) }
+
+def appUrl = (project.findProperty('addaUrl') ?: 'https://adda-api.clix.dpdns.org').toString().replaceAll('/+$', '')
+
+android {
+    namespace 'com.addakhana.app'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.addakhana.app'
+        minSdk 24
+        targetSdk 36
+        versionCode 3
+        versionName '1.2.0'
+        buildConfigField 'String', 'APP_URL', "\"${appUrl}\""
+        // Invite links (https://<host>/join/…) open in the app.
+        def site = new URI(appUrl)
+        manifestPlaceholders = [addaScheme: site.scheme, addaHost: site.host]
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        if (keystoreFile.exists()) {
+            release {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
+    buildTypes {
+        debug {
+            // Test against a server on this computer: ./gradlew installDebug -PaddaDebugUrl=http://localhost:4080
+            // (with `adb reverse tcp:4080 tcp:4080`). Plain http is allowed for localhost in debug builds only.
+            if (project.hasProperty('addaDebugUrl')) {
+                def debugUrl = project.property('addaDebugUrl').toString().replaceAll('/+$', '')
+                buildConfigField 'String', 'APP_URL', "\"${debugUrl}\""
+                def site = new URI(debugUrl)
+                manifestPlaceholders = [addaScheme: site.scheme, addaHost: site.host]
+            }
+        }
+        release {
+            minifyEnabled false
+            if (keystoreFile.exists()) signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation platform('com.google.firebase:firebase-bom:34.19.0')
+    implementation 'com.google.firebase:firebase-messaging'
+    implementation 'androidx.core:core:1.17.0'
+}

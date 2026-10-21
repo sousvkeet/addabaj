@@ -12,6 +12,7 @@ import { Avatar } from './ui/Avatar';
 import { Button, IconButton } from './ui/Button';
 import { Menu, type MenuItem } from './ui/Menu';
 import { RoomSettingsDialog } from './RoomSettingsDialog';
+import { RoomInviteCard } from './RoomInvite';
 import { UserPicker } from './UserPicker';
 import { VoiceTable } from './VoiceTable';
 
@@ -107,6 +108,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
               </Button>
             )}
           </div>
+          {isAdmin && <RoomInviteCard room={room} />}
           {isAdmin && full && (
             <p className="mx-2 mb-2 rounded-lg bg-danger/10 px-3 py-2 text-[13px] text-danger">
               The room is full. Raise the limit in settings to add more people.

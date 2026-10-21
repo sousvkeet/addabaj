@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { one, query } from '../db.js';
 import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
 import { getIO, roomChannel, userChannel } from '../realtime.js';
@@ -6,6 +7,7 @@ import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
 import { publicWatch } from './watch.js';
 import { enrich } from './messages.js';
+import { introduce } from './presence.js';
 
 export function roomMessage(row) {
   return {
@@ -67,8 +69,45 @@ export async function lockSeat(client, roomId) {
   return room;
 }
 
+// ── Invite codes ──────────────────────────────────────────────────────
+// Anyone with a room's code can join it (with its password, if it has one).
+// 8 characters without look-alikes (no I, L, O, 0, 1): about 850 billion codes,
+// and guessing is rate-limited.
+const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function newRoomCode() {
+  let code = '';
+  for (let i = 0; i < 8; i++) code += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
+  return code;
+}
+
+/** "k7pq-2xmb " → "K7PQ2XMB"; null when it can't be a code. */
+export function normalizeRoomCode(value) {
+  const code = String(value ?? '').toUpperCase().replace(/[\s-]/g, '');
+  return /^[A-Z0-9]{8}$/.test(code) ? code : null;
+}
+
+/** Gives the room a new code (the old one stops working). */
+export async function renewRoomCode(roomId, client = { query }) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await client.query('UPDATE rooms SET join_code = $2 WHERE id = $1', [roomId, newRoomCode()]);
+      return;
+    } catch (err) {
+      if (err.code !== '23505' || attempt > 4) throw err;
+    }
+  }
+}
+
+/** Rooms made before invite codes existed get one (on start). */
+export async function ensureRoomCodes() {
+  const { rows } = await query('SELECT id FROM rooms WHERE join_code IS NULL');
+  for (const r of rows) await renewRoomCode(r.id);
+}
+
 const SUMMARY_SELECT = `
   SELECT r.id, r.name, r.description, r.owner_id, r.max_members, r.created_at, r.watch, rm.role,
+    r.join_code, (r.join_password_hash IS NOT NULL) AS has_password,
     (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
     (SELECT count(*)::int FROM room_messages m
        WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id <> rm.user_id) AS unread,
@@ -90,6 +129,9 @@ function summary(row) {
     maxMembers: row.max_members,
     memberCount: row.member_count,
     myRole: row.role,
+    // Joining with the code needs a password; admins also get the code to share.
+    hasPassword: row.has_password,
+    ...(row.role === 'admin' ? { joinCode: row.join_code } : {}),
     unread: row.unread,
     createdAt: row.created_at,
     watching: row.watch?.source?.title ?? null,
@@ -126,7 +168,7 @@ export async function roomDetail(roomId, userId) {
   const base = await roomSummary(roomId, userId);
   if (!base) throw notFound("That room doesn't exist or you're not a member.");
   const { rows: members } = await query(
-    `SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id
+    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id
      FROM room_members rm JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = $1
      ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,
@@ -136,7 +178,7 @@ export async function roomDetail(roomId, userId) {
   if (base.myRole === 'admin') {
     const { rows } = await query(
       `SELECT i.id, i.created_at,
-              u.id AS u_id, u.email AS u_email, u.name AS u_name, u.avatar_hue AS u_hue, u.last_seen_at AS u_seen,
+              u.id AS u_id, u.email AS u_email, u.handle AS u_handle, u.name AS u_name, u.avatar_hue AS u_hue, u.last_seen_at AS u_seen,
               b.name AS by_name
        FROM room_invites i
        JOIN users u ON u.id = i.invitee_id
@@ -149,7 +191,7 @@ export async function roomDetail(roomId, userId) {
       id: r.id,
       createdAt: r.created_at,
       invitedBy: r.by_name,
-      invitee: publicUser({ id: r.u_id, email: r.u_email, name: r.u_name, avatar_hue: r.u_hue, last_seen_at: r.u_seen }, userId),
+      invitee: publicUser({ id: r.u_id, email: r.u_email, handle: r.u_handle, name: r.u_name, avatar_hue: r.u_hue, last_seen_at: r.u_seen }, userId),
     }));
   }
   return {
@@ -191,6 +233,9 @@ export async function attachMember(roomId, userId) {
   io.in(userChannel(userId)).socketsJoin(roomChannel(roomId));
   const room = await roomSummary(roomId, userId);
   io.to(userChannel(userId)).emit('room:added', room);
+  // Room members are contacts: they see each other's online status.
+  const { rows } = await query('SELECT user_id FROM room_members WHERE room_id = $1 AND user_id <> $2', [roomId, userId]);
+  for (const r of rows) introduce(userId, r.user_id);
 }
 
 /** Deletes a room and tells its members and invitees it's gone. */
@@ -235,7 +280,7 @@ export async function inviteForInvitee(inviteId) {
       maxMembers: r.max_members,
     },
     inviter: publicUser({
-      id: r.u_id, email: r.u_email, name: r.u_name, avatar_hue: r.u_avatar_hue, last_seen_at: r.u_last_seen_at,
+      id: r.u_id, email: r.u_email, handle: r.u_handle, name: r.u_name, avatar_hue: r.u_avatar_hue, last_seen_at: r.u_last_seen_at,
     }),
   };
 }

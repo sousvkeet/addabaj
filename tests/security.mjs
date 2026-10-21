@@ -117,7 +117,7 @@ await emit(sA, 'room:send', { roomId: room.id, body: '', attachmentId: photo.id 
 
 await check('every private endpoint refuses someone who isn’t logged in', async () => {
   const paths = [
-    ['GET', '/users?q=a'], ['GET', '/dms'], ['GET', `/dms/${A.id}`], ['GET', '/rooms'], ['GET', `/rooms/${room.id}`],
+    ['GET', '/users/find?q=a'], ['GET', '/dms'], ['GET', `/dms/${A.id}`], ['GET', '/rooms'], ['GET', `/rooms/${room.id}`],
     ['GET', `/rooms/${room.id}/messages`], ['GET', '/invites'], ['GET', '/config'], ['GET', '/site'], ['GET', '/admin/overview'],
     ['GET', `/files/${photo.id}`], ['POST', '/rooms'], ['POST', '/uploads'], ['POST', '/auth/password'],
   ];
@@ -324,8 +324,8 @@ await check('bad input gets a clear 4xx answer, never a crash or a 500', async (
     const r = await call(A, m, p, body, opts);
     expect(r.status >= 400 && r.status < 500, `${m} ${p} answered ${r.status} ${JSON.stringify(r.data)?.slice(0, 120)}`);
   }
-  const search = await call(A, 'GET', `/users?q=${encodeURIComponent("' OR 1=1 --")}`);
-  expect(search.status === 200 && search.data.users.length === 0, 'a SQL-looking search returned people');
+  const search = await call(A, 'GET', `/users/find?q=${encodeURIComponent("' OR 1=1 --")}`);
+  expect(search.status === 400 && !search.data.user, 'a SQL-looking search found someone');
   expect(await alive(), 'the server went down');
 });
 

@@ -3,9 +3,13 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 import { App } from './App';
 import { bindRealtime } from './realtime';
+import { bindNative } from './nativeApp';
+import { watchActivity } from './lib/activity';
 import './index.css';
 
 bindRealtime();
+watchActivity();
+bindNative();
 
 if (import.meta.env.DEV) {
   // Handy for debugging in the console and for end-to-end tests.

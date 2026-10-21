@@ -1,41 +1,21 @@
-import { query, one, transaction } from '../db.js';
+import { one, query } from '../db.js';
 import { COOKIE_NAME, readCookie, verifyToken } from '../auth.js';
-import { limits } from '../config.js';
 import { AppError, isUuid } from '../errors.js';
 import { presence, roomChannel, userChannel } from '../realtime.js';
-import { DM_COLUMNS, dmMessage } from '../services/dms.js';
-import { roomMessage } from '../services/rooms.js';
 import { findUser } from '../services/users.js';
-import { hidesPresence, receiptsShared } from '../services/privacy.js';
-import { markAllRoomsDelivered, markDmDelivered, markRoomDelivered, queueRoomReceipts } from './receipts.js';
-import { enrich, toggleReaction } from '../services/messages.js';
-import { linkAttachment } from '../services/uploads.js';
+import { hidesPresence } from '../services/privacy.js';
+import { onlineContacts, tellContacts } from '../services/presence.js';
+import { asId, readDm, readRoom, sendDm, sendRoomMessage } from '../services/chat.js';
+import { markAllRoomsDelivered, markDmDelivered } from './receipts.js';
+import { toggleReaction } from '../services/messages.js';
 import { calls } from './calls.js';
 import { live } from './live.js';
 import { guardSocket, handle, rateLimiter } from './util.js';
 import { voice } from './voice.js';
 import { registerWatch } from './watch.js';
 
-/** Message text; may be empty when a photo, file or voice message goes with it. */
-function cleanBody(body, hasAttachment = false) {
-  const text = typeof body === 'string' ? body.trim() : '';
-  if (!text && !hasAttachment) throw new AppError(400, 'Type a message first.');
-  if (text.length > limits.messageLength) throw new AppError(400, `Messages can be up to ${limits.messageLength} characters.`);
-  return text;
-}
-
-const asId = (v) => {
-  const n = Number(v);
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
-};
-
-// Plenty for a fast typist, but stops floods: 20 messages / 30 reactions per 10 s per person.
-const canSend = rateLimiter(20, 10_000);
+// Stops reaction floods: 30 per 10 s per person.
 const canReact = rateLimiter(30, 10_000);
-const SLOW_DOWN = "You're sending messages too fast. Wait a few seconds.";
-
-/** Presence updates go only to people who share their own (it works both ways). */
-export const PRESENCE = 'presence';
 
 // One emoji (with skin tone / joiner / variation parts), nothing else.
 const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\u200d|\ufe0f)+$/u;
@@ -62,6 +42,12 @@ export function initSocket(io) {
     registerWatch(socket);
     live.register(socket);
 
+    // Whether this app or tab is on screen and in use. Phones only get a push
+    // when none of the person's apps or tabs is.
+    socket.on('client:state', ({ active } = {}) => {
+      socket.data.active = active !== false;
+    });
+
     socket.on('disconnect', async () => {
       const offline = presence.remove(userId, socket.id);
       calls.handleDisconnect(socket);
@@ -70,16 +56,21 @@ export function initSocket(io) {
       if (offline) {
         const row = await one('UPDATE users SET last_seen_at = now() WHERE id = $1 RETURNING last_seen_at', [userId]).catch(() => null);
         if (!presence.isOnline(userId) && !hidesPresence(userId)) {
-          io.to(PRESENCE).emit('presence:update', { userId, online: false, lastSeenAt: row?.last_seen_at ?? new Date() });
+          await tellContacts(userId, { userId, online: false, lastSeenAt: row?.last_seen_at ?? new Date() }).catch(() => {});
         }
       }
     });
 
     socket.join(userChannel(userId));
+    // Online status: to and from contacts only (people they chat with or share a room with).
     const sharing = !hidesPresence(userId);
-    if (sharing) socket.join(PRESENCE);
-    if (presence.add(userId, socket.id) && sharing) socket.to(PRESENCE).emit('presence:update', { userId, online: true });
-    socket.emit('presence:snapshot', { online: sharing ? presence.list().filter((id) => !hidesPresence(id)) : [] });
+    const first = presence.add(userId, socket.id);
+    if (first && sharing) tellContacts(userId, { userId, online: true }).catch((err) => console.error('Presence update failed', err));
+    onlineContacts(userId)
+      .then((online) => socket.emit('presence:snapshot', { online }))
+      .catch((err) => console.error('Presence snapshot failed', err));
+    // A call that rang this person's phone while the app was closed.
+    calls.handleConnect(socket);
 
     // Whatever arrived while this person was away is now on their device.
     markDmDelivered(userId).catch((err) => console.error('Could not mark chats delivered', err));
@@ -98,55 +89,14 @@ export function initSocket(io) {
 function registerDm(io, socket) {
   const userId = socket.data.userId;
 
-  socket.on('dm:send', handle(async ({ to, body, attachmentId, replyTo }) => {
-    if (!isUuid(to) || to === userId) throw new AppError(400, "You can't message that person.");
-    if (!canSend(userId)) throw new AppError(429, SLOW_DOWN);
-    const text = cleanBody(body, !!attachmentId);
-    const partner = await findUser(to, userId);
-    if (!partner) throw new AppError(404, "That person doesn't exist.");
-    // A reply must point at a message in this same conversation.
-    let replyToId = asId(replyTo);
-    if (replyToId) {
-      const ok = await one(
-        `SELECT 1 FROM dm_messages WHERE id = $1 AND ((sender_id = $2 AND recipient_id = $3) OR (sender_id = $3 AND recipient_id = $2))`,
-        [replyToId, userId, to],
-      );
-      if (!ok) replyToId = null;
-    }
-    const message = await transaction(async (c) => {
-      const { rows: [row] } = await c.query(
-        `INSERT INTO dm_messages (sender_id, recipient_id, body, reply_to_id) VALUES ($1, $2, $3, $4) RETURNING ${DM_COLUMNS}`,
-        [userId, to, text, replyToId],
-      );
-      const m = dmMessage(row);
-      if (attachmentId) await linkAttachment(c, attachmentId, userId, 'dm_message_id', m.id);
-      return m;
-    });
-    await enrich('dm', [message]);
-    // Delivered as soon as any of the recipient's devices confirms it has the message.
-    const me = await findUser(userId, to);
-    io.to(userChannel(to)).timeout(8000).emit('dm:new', { message, partner: me }, (_err, answers) => {
-      if (answers?.length) markDmDelivered(to, [message.id]).catch(() => {});
-    });
-    socket.to(userChannel(userId)).emit('dm:new', { message, partner });
-    return { message };
-  }));
+  socket.on('dm:send', handle(async (input) => ({ message: await sendDm(userId, input.to, input, socket.id) })));
 
   socket.on('dm:typing', ({ to, typing } = {}) => {
     if (isUuid(to)) socket.to(userChannel(to)).emit('dm:typing', { from: userId, typing: !!typing });
   });
 
   socket.on('dm:read', handle(async ({ partnerId }) => {
-    if (!isUuid(partnerId)) return {};
-    // Read means delivered too (the sender gets "delivered" even when read receipts are off).
-    await markDmDelivered(userId);
-    const { rowCount } = await query(
-      `UPDATE dm_messages SET read_at = now() WHERE recipient_id = $1 AND sender_id = $2 AND read_at IS NULL`,
-      [userId, partnerId],
-    );
-    const event = { readerId: userId, partnerId, readAt: new Date() };
-    socket.to(userChannel(userId)).emit('dm:read', event);
-    if (rowCount && receiptsShared(userId, partnerId)) io.to(userChannel(partnerId)).emit('dm:read', event);
+    await readDm(userId, partnerId, socket.id);
     return {};
   }));
 }
@@ -155,41 +105,9 @@ function registerRoomChat(io, socket) {
   const userId = socket.data.userId;
   const inRoom = (roomId) => isUuid(roomId) && socket.rooms.has(roomChannel(roomId));
 
-  socket.on('room:send', handle(async ({ roomId, body, attachmentId, replyTo }) => {
-    if (!isUuid(roomId)) throw new AppError(404, "That room doesn't exist.");
-    if (!canSend(userId)) throw new AppError(429, SLOW_DOWN);
-    const text = cleanBody(body, !!attachmentId);
-    let replyToId = asId(replyTo);
-    if (replyToId && !(await one('SELECT 1 FROM room_messages WHERE id = $1 AND room_id = $2', [replyToId, roomId]))) replyToId = null;
-    const message = await transaction(async (c) => {
-      const { rows: [row] } = await c.query(
-        `INSERT INTO room_messages (room_id, sender_id, body, reply_to_id)
-         SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2)
-         RETURNING id, room_id, kind, body, created_at, sender_id, reply_to_id`,
-        [roomId, userId, text, replyToId],
-      );
-      if (!row) throw new AppError(403, "You're not a member of this room anymore.");
-      const m = roomMessage({ ...row, sender_name: socket.data.user.name, sender_hue: socket.data.user.hue });
-      if (attachmentId) await linkAttachment(c, attachmentId, userId, 'room_message_id', m.id);
-      return m;
-    });
-    await enrich('room', [message]);
-    await query(
-      `UPDATE room_members SET last_read_id = $3, last_delivered_id = $3, last_read_at = now() WHERE room_id = $1 AND user_id = $2`,
-      [roomId, userId, message.id],
-    );
-    queueRoomReceipts(roomId, userId);
-    // Each member's device confirms it got the message, which marks it delivered to them.
-    for (const id of io.sockets.adapter.rooms.get(roomChannel(roomId)) ?? []) {
-      const member = id === socket.id ? null : io.sockets.sockets.get(id);
-      if (!member) continue;
-      const memberId = member.data.userId;
-      member.timeout(8000).emit('room:message', message, (err) => {
-        if (!err && memberId !== userId) markRoomDelivered(roomId, memberId, message.id).catch(() => {});
-      });
-    }
-    return { message };
-  }));
+  socket.on('room:send', handle(async (input) => ({
+    message: await sendRoomMessage(socket.data.user, input.roomId, input, socket.id),
+  })));
 
   // Toggle an emoji reaction on a chat or room message the person can see.
   socket.on('msg:react', handle(async ({ scope, messageId, emoji }) => {
@@ -226,18 +144,7 @@ function registerRoomChat(io, socket) {
   });
 
   socket.on('room:read', handle(async ({ roomId, messageId }) => {
-    if (!isUuid(roomId) || !Number.isSafeInteger(messageId)) return {};
-    // Never past the room's newest message, so nobody can mark future messages seen.
-    const { rowCount } = await query(
-      `UPDATE room_members SET
-         last_read_id = GREATEST(last_read_id, LEAST($3, coalesce((SELECT max(id) FROM room_messages WHERE room_id = $1), 0))),
-         last_delivered_id = GREATEST(last_delivered_id, LEAST($3, coalesce((SELECT max(id) FROM room_messages WHERE room_id = $1), 0))),
-         last_read_at = now()
-       WHERE room_id = $1 AND user_id = $2`,
-      [roomId, userId, messageId],
-    );
-    if (rowCount) queueRoomReceipts(roomId, userId);
-    socket.to(userChannel(userId)).emit('room:read', { roomId });
+    if (Number.isSafeInteger(messageId)) await readRoom(userId, roomId, messageId, socket.id);
     return {};
   }));
 }

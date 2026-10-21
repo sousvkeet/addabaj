@@ -6,9 +6,10 @@ import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { AppError, conflict, forbidden } from '../errors.js';
 import { clearAuthCookie, COOKIE_NAME, requireAuth, setAuthCookie, verifyToken } from '../auth.js';
-import { findSessionUser, SESSION_COLUMNS, sessionUser } from '../services/users.js';
+import { findSessionUser, HANDLE_RULES, normalizeHandle, SESSION_COLUMNS, sessionUser } from '../services/users.js';
 import { endSessions, getSettings } from '../services/site.js';
-import { hidesPresence, savePrivacy } from '../services/privacy.js';
+import { savePrivacy } from '../services/privacy.js';
+import { onlineContacts, tellContacts } from '../services/presence.js';
 import { presence } from '../realtime.js';
 import { getIO, userChannel } from '../realtime.js';
 
@@ -63,17 +64,22 @@ authRouter.post('/register', limiter, async (req, res) => {
   if (!getSettings().allowSignups) throw forbidden('New sign-ups are closed right now. Ask the host to add you.');
   const { name, email, password } = registerSchema.parse(req.body);
   const hash = await bcrypt.hash(password, 10);
-  try {
-    const row = await one(
-      `INSERT INTO users (email, name, password_hash, avatar_hue) VALUES ($1, $2, $3, $4)
-       RETURNING ${SESSION_COLUMNS}`,
-      [email, name, hash, await nextHue()],
-    );
-    setAuthCookie(res, row.id);
-    res.status(201).json({ user: sessionUser(row) });
-  } catch (err) {
-    if (err.code === '23505') throw conflict('An account with this email already exists. Log in instead.');
-    throw err;
+  // The database gives each account a user ID; two sign-ups getting the same one at once just try again.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const row = await one(
+        `INSERT INTO users (email, name, password_hash, avatar_hue) VALUES ($1, $2, $3, $4)
+         RETURNING ${SESSION_COLUMNS}`,
+        [email, name, hash, await nextHue()],
+      );
+      setAuthCookie(res, row.id);
+      res.status(201).json({ user: sessionUser(row) });
+      return;
+    } catch (err) {
+      if (err.code === '23505' && err.constraint === 'users_handle_key' && attempt < 3) continue;
+      if (err.code === '23505') throw conflict('An account with this email already exists. Log in instead.');
+      throw err;
+    }
   }
 });
 
@@ -115,26 +121,34 @@ authRouter.patch('/privacy', requireAuth, async (req, res) => {
   if (!saved) throw new AppError(404, 'Your account no longer exists.');
   const io = getIO();
   if (io && before && before.share_presence !== saved.sharePresence) {
-    const mine = io.in(userChannel(req.userId));
     if (saved.sharePresence) {
-      mine.socketsJoin('presence');
       const row = await one('SELECT last_seen_at FROM users WHERE id = $1', [req.userId]);
-      io.to('presence').except(userChannel(req.userId)).emit('presence:update', {
-        userId: req.userId, online: presence.isOnline(req.userId), lastSeenAt: row?.last_seen_at ?? null,
-      });
+      await tellContacts(req.userId, { userId: req.userId, online: presence.isOnline(req.userId), lastSeenAt: row?.last_seen_at ?? null });
     } else {
-      mine.socketsLeave('presence');
-      io.to('presence').emit('presence:update', { userId: req.userId, online: false, lastSeenAt: null, hidden: true });
+      await tellContacts(req.userId, { userId: req.userId, online: false, lastSeenAt: null, hidden: true });
     }
-    // Their own tabs reload who's online (everyone, or no one now that it works both ways).
+    // Their own apps reload who's online (their contacts, or no one now that it works both ways).
     io.to(userChannel(req.userId)).emit('presence:refresh');
   }
   res.json({ user: await findSessionUser(req.userId) });
 });
 
+// Your user ID: what people type to find you. Changing it frees the old one.
+authRouter.patch('/handle', limiter, requireAuth, async (req, res) => {
+  const handle = normalizeHandle(req.body?.handle);
+  if (!handle) throw new AppError(400, `That user ID won't work. ${HANDLE_RULES}`);
+  try {
+    await query('UPDATE users SET handle = $2 WHERE id = $1', [req.userId, handle]);
+  } catch (err) {
+    if (err.code === '23505') throw conflict('That user ID is taken. Try another.');
+    throw err;
+  }
+  res.json({ user: await findSessionUser(req.userId) });
+});
+
 // Who's online right now (for the presence:refresh above), as this person may see it.
-authRouter.get('/presence', requireAuth, (req, res) => {
-  res.json({ online: hidesPresence(req.userId) ? [] : presence.list().filter((id) => !hidesPresence(id)) });
+authRouter.get('/presence', requireAuth, async (req, res) => {
+  res.json({ online: await onlineContacts(req.userId) });
 });
 
 // Always 200 so a logged-out visit doesn't log an error; user is null then.

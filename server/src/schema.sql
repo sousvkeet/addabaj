@@ -150,3 +150,51 @@ ALTER TABLE room_members ADD COLUMN IF NOT EXISTS last_delivered_id bigint NOT N
 ALTER TABLE room_members ADD COLUMN IF NOT EXISTS last_read_at timestamptz;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS share_presence boolean NOT NULL DEFAULT true;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS read_receipts boolean NOT NULL DEFAULT true;
+
+-- Phones that get push notifications: Firebase Cloud Messaging tokens from the
+-- Android app. A token moves to whoever signs in on that phone.
+CREATE TABLE IF NOT EXISTS push_devices (
+  token      text PRIMARY KEY,
+  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  platform   text NOT NULL DEFAULT 'android',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS push_devices_user_idx ON push_devices (user_id);
+
+-- User IDs: a unique, shareable name (like "ana.rahman4821") for finding
+-- someone. There's no list of everyone: you find people by their exact user
+-- ID or email. Every account gets one automatically; people can change theirs.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS handle text;
+CREATE OR REPLACE FUNCTION adda_new_handle(display_name text) RETURNS text AS $$
+DECLARE
+  base text;
+  candidate text;
+BEGIN
+  base := left(trim(both '._' from lower(regexp_replace(coalesce(display_name, ''), '[^A-Za-z0-9]+', '.', 'g'))), 16);
+  base := trim(both '._' from base);
+  IF length(base) < 2 THEN base := 'user'; END IF;
+  LOOP
+    candidate := base || (1000 + floor(random() * 9000))::int;
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM users WHERE lower(handle) = candidate);
+  END LOOP;
+  RETURN candidate;
+END $$ LANGUAGE plpgsql;
+CREATE OR REPLACE FUNCTION adda_default_handle() RETURNS trigger AS $$
+BEGIN
+  IF NEW.handle IS NULL THEN NEW.handle := adda_new_handle(NEW.name); END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+CREATE OR REPLACE TRIGGER users_default_handle BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION adda_default_handle();
+UPDATE users SET handle = adda_new_handle(name) WHERE handle IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS users_handle_key ON users (lower(handle));
+
+-- Who someone has chatted with (their contacts see their online status).
+CREATE INDEX IF NOT EXISTS dm_sender_idx ON dm_messages (sender_id, recipient_id);
+CREATE INDEX IF NOT EXISTS dm_recipient_idx ON dm_messages (recipient_id, sender_id);
+
+-- Joining rooms with an invite code (made by the server), optionally with a
+-- password (bcrypt hash; no password means anyone with the code can join).
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS join_code text;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS join_password_hash text;
+CREATE UNIQUE INDEX IF NOT EXISTS rooms_join_code_key ON rooms (join_code);
