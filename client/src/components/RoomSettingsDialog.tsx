@@ -1,12 +1,15 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
+import { Camera } from 'lucide-react';
 import { errorMessage } from '../lib/api';
 import type { RoomDetail } from '../lib/types';
 import { useChat } from '../store/chat';
 import { toast } from '../store/ui';
+import { Avatar, hueFromId } from './ui/Avatar';
 import { Button } from './ui/Button';
 import { Dialog, Field, inputClass } from './ui/Dialog';
 import { MemberLimit } from './MemberLimit';
+import { PhotoEditor } from './PhotoEditor';
 
 export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: RoomDetail; open: boolean; onClose: () => void; isOwner: boolean }) {
   const updateRoom = useChat((s) => s.updateRoom);
@@ -18,6 +21,7 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<'save' | 'delete' | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -63,6 +67,17 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
   return (
     <Dialog open={open} onClose={onClose} title="Room settings">
       <form onSubmit={save} className="space-y-5" noValidate>
+        <div className="flex items-center gap-4">
+          <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={60} square />
+          <div className="min-w-0 flex-1">
+            <p className="font-semibold">Room photo</p>
+            <p className="text-[13px] text-ink-soft">{room.photo ? 'Everyone in the room sees it.' : 'Add one so the room is easy to spot.'}</p>
+          </div>
+          <Button size="sm" variant="soft" onClick={() => setPhotoOpen(true)}>
+            <Camera size={15} />
+            {room.photo ? 'Change' : 'Add photo'}
+          </Button>
+        </div>
         <Field label="Room name">
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={60} />
         </Field>
@@ -104,12 +119,13 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
               </Button>
             </div>
           ) : (
-            <Button size="sm" variant="outline" className="mt-3 text-danger" onClick={() => setConfirmDelete(true)}>
+            <Button size="sm" variant="danger-soft" className="mt-3" onClick={() => setConfirmDelete(true)}>
               Delete room
             </Button>
           )}
         </div>
       )}
+      <PhotoEditor room={room} open={photoOpen} onClose={() => setPhotoOpen(false)} />
     </Dialog>
   );
 }

@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { EllipsisVertical } from 'lucide-react';
 import { IconButton } from './Button';
+import { useBackClose } from '../../lib/back';
 
 export type MenuItem = { label: string; icon?: ReactNode; onSelect: () => void; danger?: boolean };
 
 export function Menu({ label, items }: { label: string; items: MenuItem[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  useBackClose(open, () => setOpen(false));
 
   useEffect(() => {
     if (!open) return;

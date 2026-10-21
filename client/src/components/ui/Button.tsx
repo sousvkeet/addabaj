@@ -1,13 +1,16 @@
 import { forwardRef, type ButtonHTMLAttributes } from 'react';
 import { LoaderCircle } from 'lucide-react';
 
-type Variant = 'primary' | 'live' | 'danger' | 'ghost' | 'outline' | 'soft' | 'on-dark';
+type Variant = 'primary' | 'live' | 'danger' | 'danger-ghost' | 'danger-soft' | 'ghost' | 'outline' | 'soft' | 'on-dark';
 type Size = 'sm' | 'md' | 'lg';
 
 const variants: Record<Variant, string> = {
   primary: 'bg-aurora text-on-brand shadow-glow hover:brightness-110 active:brightness-95',
   live: 'bg-live text-on-live shadow-[0_8px_24px_-10px_var(--live)] hover:brightness-105 active:brightness-95',
   danger: 'bg-danger text-white shadow-[0_8px_24px_-12px_var(--danger)] hover:brightness-110',
+  // Destructive but not the main action: red text (Log out, Remove photo).
+  'danger-ghost': 'text-danger hover:bg-danger/10',
+  'danger-soft': 'bg-danger/10 text-danger hover:bg-danger/15',
   ghost: 'text-ink hover:bg-subtle',
   outline: 'border border-line bg-surface/40 text-ink hover:border-brand/50 hover:bg-subtle',
   soft: 'bg-subtle text-ink hover:bg-brand/15',

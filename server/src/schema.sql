@@ -250,3 +250,6 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 CREATE INDEX IF NOT EXISTS sessions_user_idx ON sessions (user_id);
 ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES sessions(id) ON DELETE CASCADE;
+
+-- Room photos: like profile photos (room-<room id>-<version>.jpg), set by the room's admins.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS photo text;

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Crown, LogOut, MessageCircle, Settings, ShieldCheck, UserMinus, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Camera, Crown, LogOut, MessageCircle, Settings, ShieldCheck, UserMinus, UserPlus, X } from 'lucide-react';
 import { errorMessage } from '../lib/api';
 import { lastSeen } from '../lib/format';
 import { useNow } from '../lib/useMedia';
@@ -8,10 +8,11 @@ import type { RoomDetail, RoomMember } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { toast } from '../store/ui';
-import { Avatar } from './ui/Avatar';
+import { Avatar, hueFromId } from './ui/Avatar';
 import { Button, IconButton } from './ui/Button';
 import { Menu, type MenuItem } from './ui/Menu';
 import { RoomSettingsDialog } from './RoomSettingsDialog';
+import { PhotoEditor } from './PhotoEditor';
 import { RoomInviteCard } from './RoomInvite';
 import { UserPicker } from './UserPicker';
 import { VoiceTable } from './VoiceTable';
@@ -41,6 +42,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
   const leaveRoom = useChat((s) => s.leaveRoom);
   const navigate = useNavigate();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [photoOpen, setPhotoOpen] = useState(false);
   const [confirm, setConfirm] = useState<{ kind: 'remove'; member: RoomMember } | { kind: 'leave' } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -83,14 +85,43 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       {onClose && (
-        <div className="flex h-14 shrink-0 items-center justify-between px-4">
-          <h2 className="font-display text-[18px] font-semibold">In this room</h2>
-          <IconButton label="Close" onClick={onClose}>
-            <X size={19} />
+        <div className="flex h-14 shrink-0 items-center gap-2 px-2 md:justify-between md:px-4">
+          {/* Phones: a page of its own, so back. Wider screens: a side panel, so close. */}
+          <IconButton label="Close" onClick={onClose} className="ripple md:hidden">
+            <ArrowLeft size={20} />
           </IconButton>
+          <h2 className="font-display text-[18px] font-semibold">Room info</h2>
+          <span className="ml-auto hidden md:flex">
+            <IconButton label="Close" onClick={onClose}>
+              <X size={19} />
+            </IconButton>
+          </span>
         </div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {/* The room: its photo (admins can change it), name and what it's for. */}
+        <div className="flex flex-col items-center px-5 pt-3 pb-5 text-center">
+          {isAdmin ? (
+            <button
+              type="button"
+              onClick={() => setPhotoOpen(true)}
+              aria-label={room.photo ? 'Change the room photo' : 'Add a room photo'}
+              className="relative rounded-[32%] transition-transform active:scale-95"
+            >
+              <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={96} square />
+              <span aria-hidden className="absolute -right-1 -bottom-1 flex size-8 items-center justify-center rounded-full border-2 border-surface bg-aurora text-white">
+                <Camera size={15} />
+              </span>
+            </button>
+          ) : (
+            <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={96} square />
+          )}
+          <p className="mt-3 max-w-full truncate font-display text-[20px] font-semibold">{room.name}</p>
+          <p className="text-[13.5px] text-ink-soft">
+            Room · {room.memberCount} {room.memberCount === 1 ? 'member' : 'members'}
+          </p>
+          {room.description && <p className="mt-1.5 text-[14px] break-words text-ink-soft">{room.description}</p>}
+        </div>
         <VoiceTable roomId={room.id} members={room.members} />
 
         <section aria-labelledby="members-heading" className="border-t border-line/70 px-2 pt-4 pb-3">
@@ -178,7 +209,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
         )}
       </div>
 
-      <div className="shrink-0 border-t border-line/70 p-3 pb-[max(12px,env(safe-area-inset-bottom))]">
+      <div className="shrink-0 border-t border-line/70 p-3 pb-[max(12px,var(--safe-bottom))]">
         {confirm?.kind === 'leave' ? (
           <div className="flex flex-wrap items-center gap-2">
             <span className="flex-1 text-[14px]">Leave {room.name}?</span>
@@ -208,7 +239,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
               </Button>
             )}
             {!isOwner && (
-              <Button variant="ghost" className="flex-1 text-danger" onClick={() => setConfirm({ kind: 'leave' })}>
+              <Button variant="danger-ghost" className="flex-1" onClick={() => setConfirm({ kind: 'leave' })}>
                 <LogOut size={17} />
                 Leave room
               </Button>
@@ -218,6 +249,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
       </div>
 
       {isAdmin && <RoomSettingsDialog room={room} open={settingsOpen} onClose={() => setSettingsOpen(false)} isOwner={isOwner} />}
+      {isAdmin && <PhotoEditor room={room} open={photoOpen} onClose={() => setPhotoOpen(false)} />}
       {isAdmin && <UserPicker open={addOpen} onClose={() => setAddOpen(false)} mode="room" roomId={room.id} />}
     </div>
   );

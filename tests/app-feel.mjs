@@ -84,6 +84,7 @@ async function appPage(user, base = BASE) {
       callState() {},
       pushToken: () => '',
       haptic: (kind) => window.__haptics.push(kind),
+      setBackHandled: (open) => (window.__backOpen = open),
     };
     // Which way each screen change animates.
     const start = document.startViewTransition?.bind(document);
@@ -144,6 +145,97 @@ await check('The app looks like an app: the phone font, no zoom, no web fonts, n
   }));
   expect(!site.app && site.webFonts && site.bubble === 'text' && !site.kept.length, `browser: ${JSON.stringify(site)}`);
   await ctx.close();
+});
+
+await check('Headers fit even on phones whose WebView also reports the status bar (the app keeps the page clear of it)', async () => {
+  const p = await appPage(ana);
+  const cdp = await p.context().newCDPSession(p);
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: 30, topMax: 30, bottom: 24, bottomMax: 24, left: 0, right: 0 } });
+  await p.goto(`${BASE}/chats/${bo.id}`);
+  await thread(p).getByText('Bring the book you mentioned').waitFor();
+  const fit = await p.evaluate(() => {
+    const h = document.querySelector('main header');
+    const box = h.getBoundingClientRect();
+    return { pad: getComputedStyle(h).paddingTop, inside: [...h.querySelectorAll('h1, p')].every((e) => e.getBoundingClientRect().bottom <= box.bottom) };
+  });
+  expect(fit.pad === '0px' && fit.inside, `header: ${JSON.stringify(fit)}`);
+  await p.context().close();
+});
+
+/**
+ * Android's back button, as the app does it: while the page says it has
+ * something to do, the page closes what's open or goes back a screen;
+ * otherwise the app leaves.
+ */
+async function pressBack(p) {
+  const before = new URL(p.url()).pathname;
+  const handled = await p.evaluate(() => (window.__backOpen ? window.__addaBack() : false));
+  if (!handled) return (await p.evaluate(() => history.state?.idx ?? 0)) === 0 ? 'left the app' : 'left the app with screens to go back to';
+  await sleep(500);
+  const after = new URL(p.url()).pathname;
+  return after === before ? 'closed' : after;
+}
+
+await check('Back goes to the chats (the home screen) first, and from there leaves the app', async () => {
+  const p = await appPage(ana);
+  await p.goto(`${BASE}/chats`);
+  await p.getByRole('link', { name: /Bo/ }).waitFor();
+  // Around the tabs: Rooms, You, Invites, then Back.
+  for (const tab of ['Rooms', 'You: settings', 'Invites']) {
+    await p.getByRole('link', { name: tab, exact: true }).click();
+    await sleep(400);
+  }
+  expect((await pressBack(p)) === '/chats', 'Back from a tab did not go to the chats');
+  expect((await pressBack(p)) === 'left the app', 'Back from the chats did not leave');
+  // A chat, then back, then back.
+  await p.getByRole('link', { name: /Bo/ }).click();
+  await thread(p).getByText('Chai at six?').waitFor();
+  expect((await pressBack(p)) === '/chats', 'Back from a chat');
+  expect((await pressBack(p)) === 'left the app', 'leave after the chat');
+  // The chats tab from another tab goes back down to the chats.
+  await p.getByRole('link', { name: 'Rooms', exact: true }).click();
+  await sleep(300);
+  await p.getByRole('link', { name: /^Chats/ }).click();
+  await sleep(500);
+  expect(new URL(p.url()).pathname === '/chats' && (await pressBack(p)) === 'left the app', 'the Chats tab left history behind');
+  await p.context().close();
+});
+
+await check('Opened from a notification straight onto a chat: Back reaches the chats before leaving', async () => {
+  const p = await appPage(ana);
+  await p.goto(`${BASE}/chats/${bo.id}`);
+  await thread(p).getByText('Chai at six?').waitFor();
+  await sleep(500);
+  expect((await pressBack(p)) === '/chats', 'Back did not reach the chats');
+  await p.getByRole('link', { name: /Bo/ }).waitFor();
+  expect((await pressBack(p)) === 'left the app', 'did not leave from the chats');
+  await p.context().close();
+});
+
+await check('Back closes what’s open first: a sheet, the message menu, a menu', async () => {
+  const p = await appPage(ana);
+  await p.goto(`${BASE}/chats`);
+  await p.getByRole('button', { name: 'Start a new chat' }).click();
+  const sheet = p.getByRole('dialog', { name: 'Start a chat' });
+  await sheet.waitFor();
+  expect((await p.evaluate(() => window.__backOpen)) === true, 'the app was not told something is open');
+  expect((await pressBack(p)) === 'closed', 'Back did not close the sheet');
+  await sheet.waitFor({ state: 'hidden' });
+  expect((await p.evaluate(() => window.__backOpen)) === false, 'the app still thinks something is open');
+  expect(new URL(p.url()).pathname === '/chats', 'Back also left the chats');
+  // The message menu (press and hold).
+  await p.getByRole('link', { name: /Bo/ }).click();
+  const msg = thread(p).getByText('Chai at six?');
+  await msg.waitFor();
+  await sleep(400);
+  const b = await msg.boundingBox();
+  await p.touch([{ x: b.x + 20, y: b.y + 8 }], { hold: 700 });
+  const menu = p.getByRole('dialog', { name: 'Message actions' });
+  await menu.waitFor();
+  expect((await pressBack(p)) === 'closed', 'Back did not close the message menu');
+  await menu.waitFor({ state: 'detached' });
+  expect(new URL(p.url()).pathname === `/chats/${bo.id}`, 'Back left the chat too');
+  await p.context().close();
 });
 
 await check('Tabs at the bottom of the screen; the You tab is Settings', async () => {

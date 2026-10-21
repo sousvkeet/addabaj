@@ -89,7 +89,7 @@ export function ChatView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="glass relative z-10 flex h-[64px] shrink-0 items-center gap-2.5 border-b border-line/70 px-1.5 pt-[env(safe-area-inset-top)] md:h-[72px] md:gap-3 md:px-5">
+      <header className="glass relative z-10 flex h-[64px] shrink-0 items-center gap-2.5 border-b border-line/70 px-1.5 pt-[var(--safe-top)] md:h-[72px] md:gap-3 md:px-5">
         <IconButton label="Back to chats" className="ripple md:hidden" onClick={() => goBack(navigate, '/chats')}>
           <ArrowLeft size={20} />
         </IconButton>
@@ -120,14 +120,21 @@ export function ChatView() {
           </p>
         </div>
         {onCallWithThem ? (
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => openDevices(true)} aria-label="Microphone, speaker and camera">
-              <Settings2 size={16} />
-              <span className="hidden sm:inline">Devices</span>
+          // Phones: round icons with room to spare (the call bar above has the rest).
+          <div className="flex items-center gap-1.5 pr-1 md:gap-2 md:pr-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => openDevices(true)}
+              aria-label="Microphone, speaker and camera"
+              className="ripple max-md:size-10 max-md:rounded-full max-md:border-transparent max-md:bg-transparent max-md:px-0"
+            >
+              <Settings2 size={18} />
+              <span className="hidden md:inline">Devices</span>
             </Button>
-            <Button variant="danger" size="sm" onClick={endCall} aria-label="End call">
-              <PhoneOff size={16} />
-              <span className="hidden sm:inline">End call</span>
+            <Button variant="danger" size="sm" onClick={endCall} aria-label="End call" className="ripple max-md:size-10 max-md:rounded-full max-md:px-0">
+              <PhoneOff size={18} />
+              <span className="hidden md:inline">End call</span>
             </Button>
           </div>
         ) : (

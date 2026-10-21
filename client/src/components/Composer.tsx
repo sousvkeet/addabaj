@@ -196,7 +196,7 @@ export const Composer = forwardRef<ComposerHandle, Props>(function Composer({ pl
   const showMic = !text.trim() && tray.length === 0 && canRecordVoice();
 
   return (
-    <div className="shrink-0 px-3 pt-2 pb-[max(12px,env(safe-area-inset-bottom))] md:px-6 md:pb-5">
+    <div className="shrink-0 px-3 pt-2 pb-[max(12px,var(--safe-bottom))] md:px-6 md:pb-5">
       <div className="glass mx-auto max-w-[860px] rounded-[26px] border border-line/80 p-1.5 shadow-float transition-[border-color,box-shadow] focus-within:border-brand/60 focus-within:shadow-[0_0_0_4px_color-mix(in_srgb,var(--brand)_14%,transparent),var(--shadow)]">
         {replyTo && (
           <div className="mb-1.5 flex items-center gap-2.5 rounded-[20px] bg-subtle/80 py-1.5 pr-1.5 pl-3">

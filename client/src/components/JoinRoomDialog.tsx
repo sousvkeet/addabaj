@@ -94,7 +94,7 @@ export function JoinRoomDialog({ open, onClose, code: given = '' }: { open: bool
         </Field>
         {room && (
           <div className="flex items-center gap-3 rounded-2xl border border-line/70 p-3">
-            <Avatar name={room.name} hue={hueFromId(room.id)} size={46} square />
+            <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={46} square />
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5 font-semibold">
                 <span className="truncate">{room.name}</span>

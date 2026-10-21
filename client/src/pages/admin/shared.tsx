@@ -36,6 +36,7 @@ export type AdminUser = User & {
 export type AdminRoom = {
   id: string;
   name: string;
+  photo?: string | null;
   description: string;
   maxMembers: number;
   memberCount: number;
@@ -67,7 +68,7 @@ export function AdminPage({ title, subtitle, actions, children }: { title: strin
   const navigate = useNavigate();
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="glass relative z-10 flex h-[72px] shrink-0 items-center gap-3 border-b border-line/70 px-2 pt-[env(safe-area-inset-top)] md:px-6">
+      <header className="glass relative z-10 flex h-[72px] shrink-0 items-center gap-3 border-b border-line/70 px-2 pt-[var(--safe-top)] md:px-6">
         <IconButton label="Back to admin" className="md:hidden" onClick={() => goBack(navigate, '/admin')}>
           <ArrowLeft size={20} />
         </IconButton>
@@ -79,7 +80,7 @@ export function AdminPage({ title, subtitle, actions, children }: { title: strin
         </div>
         {actions}
       </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 pb-[calc(24px+env(safe-area-inset-bottom))] md:px-7">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 pb-[calc(24px+var(--safe-bottom))] md:px-7">
         <div className="mx-auto max-w-[1080px] space-y-5">{children}</div>
       </div>
     </div>

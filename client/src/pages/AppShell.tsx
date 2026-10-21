@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import { Outlet, useLocation } from 'react-router';
+import { Outlet, useLocation, useNavigate } from 'react-router';
+import { homeUnderneath, useBackSteps } from '../lib/back';
 import { useChat } from '../store/chat';
 import { Rail } from '../components/Rail';
 import { ChatList } from '../components/ChatList';
@@ -15,7 +16,14 @@ import { DeviceSettings } from '../components/DeviceSettings';
 import { ConnectionNotice } from '../components/ConnectionNotice';
 
 export function AppShell() {
-  const { pathname } = useLocation();
+  const { pathname, search, hash } = useLocation();
+  const navigate = useNavigate();
+  // Opened straight onto a chat or room (a notification, a link): the chats go underneath, so Back reaches them.
+  useEffect(() => {
+    void homeUnderneath(navigate, pathname + search + hash);
+    // Only as the app opens.
+  }, []);
+  useBackSteps();
   const section = pathname.startsWith('/rooms')
     ? 'rooms'
     : pathname.startsWith('/invites')

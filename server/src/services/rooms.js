@@ -2,7 +2,8 @@ import { randomInt } from 'node:crypto';
 import { one, query } from '../db.js';
 import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
 import { getIO, roomChannel, userChannel } from '../realtime.js';
-import { photoUrl, publicUser, USER_COLUMNS } from './users.js';
+import { photoUrl, publicUser, roomPhotoUrl, USER_COLUMNS } from './users.js';
+import { forgetRoomPhoto } from './photos.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
 import { publicWatch } from './watch.js';
@@ -109,7 +110,7 @@ export async function ensureRoomCodes() {
 }
 
 const SUMMARY_SELECT = `
-  SELECT r.id, r.name, r.description, r.owner_id, r.max_members, r.created_at, r.watch, rm.role,
+  SELECT r.id, r.name, r.description, r.photo, r.owner_id, r.max_members, r.created_at, r.watch, rm.role,
     r.join_code, (r.join_password_hash IS NOT NULL) AS has_password,
     (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
     (SELECT count(*)::int FROM room_messages m
@@ -132,6 +133,7 @@ function summary(row) {
     id: row.id,
     name: row.name,
     description: row.description,
+    photo: roomPhotoUrl(row.id, row.photo),
     ownerId: row.owner_id,
     maxMembers: row.max_members,
     memberCount: row.member_count,
@@ -249,7 +251,8 @@ export async function attachMember(roomId, userId) {
 export async function deleteRoom(roomId) {
   const { rows: members } = await query('SELECT user_id FROM room_members WHERE room_id = $1', [roomId]);
   const { rows: invites } = await query(`SELECT id, invitee_id FROM room_invites WHERE room_id = $1 AND status = 'pending'`, [roomId]);
-  await query('DELETE FROM rooms WHERE id = $1', [roomId]);
+  const gone = await one('DELETE FROM rooms WHERE id = $1 RETURNING photo', [roomId]);
+  await forgetRoomPhoto(roomId, gone?.photo);
   for (const m of members) detachMember(roomId, m.user_id, 'deleted');
   for (const i of invites) getIO()?.to(userChannel(i.invitee_id)).emit('invite:removed', { inviteId: i.id });
 }
@@ -265,7 +268,7 @@ export function detachMember(roomId, userId, reason) {
 
 export async function inviteForInvitee(inviteId) {
   const r = await one(
-    `SELECT i.id, i.created_at, r.id AS room_id, r.name AS room_name, r.description AS room_description,
+    `SELECT i.id, i.created_at, r.id AS room_id, r.name AS room_name, r.description AS room_description, r.photo AS room_photo,
             r.max_members,
             (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
             ${USER_COLUMNS.split(', ').map((c) => `u.${c} AS u_${c}`).join(', ')}
@@ -283,6 +286,7 @@ export async function inviteForInvitee(inviteId) {
       id: r.room_id,
       name: r.room_name,
       description: r.room_description,
+      photo: roomPhotoUrl(r.room_id, r.room_photo),
       memberCount: r.member_count,
       maxMembers: r.max_members,
     },

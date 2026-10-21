@@ -170,12 +170,19 @@ export const useChat = create<ChatState>()((set, get) => ({
         api<{ rooms: RoomSummary[] }>('/rooms'),
         api<{ invites: Invite[] }>('/invites'),
       ]);
+      // Whatever happened while this device was away (messages deleted for
+      // everyone, reactions, edits) shows when each chat is next opened: the
+      // open one reloads right below.
+      const outdated = <T,>(pages: Record<string, Paged<T>>, open: string | null) =>
+        Object.fromEntries(Object.entries(pages).map(([id, p]) => [id, id === open || !p.loaded ? p : { ...p, stale: true }]));
       set((s) => ({
         bootstrapped: true,
         conversations: Object.fromEntries(conversations.map((c) => [c.partner.id, c])),
         rooms: Object.fromEntries(rooms.map((r) => [r.id, r])),
         invites,
         users: { ...s.users, ...Object.fromEntries(conversations.map((c) => [c.partner.id, c.partner])) },
+        dms: outdated(s.dms, s.activeDm),
+        roomMessages: outdated(s.roomMessages, s.activeRoom),
       }));
       // Catch up on whatever was open while we were disconnected.
       const { activeDm, activeRoom } = get();

@@ -11,6 +11,9 @@ export const USER_COLUMNS = 'id, email, handle, name, avatar_hue, photo, last_se
  */
 export const photoUrl = (userId, version) => (version ? `/api/users/${userId}/photo/${version}` : null);
 
+/** A room's photo (set by its admins), or null for its letter. */
+export const roomPhotoUrl = (roomId, version) => (version ? `/api/rooms/${roomId}/photo/${version}` : null);
+
 /**
  * A person as others see them. Pass who is looking (`viewerId`): when either
  * of them doesn't share presence, online and last seen are left out.

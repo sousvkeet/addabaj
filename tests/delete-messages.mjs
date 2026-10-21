@@ -275,6 +275,35 @@ await check('In the app: a room admin deletes someone’s message for everyone',
   await pc.context().close();
 });
 
+await check('A phone that was away when a message was deleted for everyone doesn’t show it once it’s back', async () => {
+  const pa = await page(ana);
+  const pb = await page(bo, { width: 390, height: 844 });
+  await pa.goto(`${BASE}/chats/${bo.id}`);
+  await pb.goto(`${BASE}/chats/${ana.id}`);
+  await pa.getByLabel('Message Bo').fill('Delete me while you are away');
+  await pa.keyboard.press('Enter');
+  await pb.getByRole('log').getByText('Delete me while you are away').waitFor({ timeout: 8000 });
+  // Bo goes back to his chats, and his phone loses its connection (as Android does in the background).
+  await pb.getByRole('button', { name: 'Back to chats' }).click();
+  await pb.getByRole('link', { name: /Ana Rahman/ }).waitFor();
+  await pb.context().setOffline(true);
+  await sleep(1500);
+  const bubble = pa.getByRole('log').locator('[id^="msg-"]').filter({ hasText: 'Delete me while you are away' });
+  await bubble.hover();
+  await bubble.getByRole('button', { name: 'Delete message' }).click();
+  await pa.getByRole('dialog', { name: 'Delete message?' }).getByRole('button', { name: 'Delete for everyone' }).click();
+  await pa.getByRole('log').getByText('You deleted this message').last().waitFor({ timeout: 5000 });
+  // Back online, he opens the chat: the text is gone.
+  await pb.context().setOffline(false);
+  await pb.evaluate(() => window.dispatchEvent(new Event('online')));
+  await sleep(3000);
+  await pb.getByRole('link', { name: /Ana Rahman/ }).click();
+  await pb.getByRole('log').getByText('This message was deleted').last().waitFor({ timeout: 8000 });
+  expect(!(await pb.getByRole('log').getByText('Delete me while you are away').count()), 'Bo still sees the deleted text');
+  await pa.context().close();
+  await pb.context().close();
+});
+
 await browser.close();
 sA.disconnect();
 sB.disconnect();

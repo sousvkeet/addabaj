@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AudioLines, LoaderCircle, MonitorPlay, Radio, Search, Square, Trash2, Users } from 'lucide-react';
+import { AudioLines, ImageOff, LoaderCircle, MonitorPlay, Radio, Search, Square, Trash2, Users } from 'lucide-react';
 import { api, errorMessage } from '../../lib/api';
 import { listStamp } from '../../lib/format';
 import { toast } from '../../store/ui';
@@ -45,6 +45,17 @@ export function RoomsAdmin() {
     }
   }
 
+  /** Takes down a room's photo (back to its letter). */
+  async function removePhoto(room: AdminRoom) {
+    try {
+      await api(`/admin/rooms/${room.id}/photo`, { method: 'DELETE' });
+      setData((d) => d && { ...d, items: d.items.map((r) => (r.id === room.id ? { ...r, photo: null } : r)) });
+      toast(`${room.name}'s photo was removed.`);
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    }
+  }
+
   async function remove() {
     if (!deleting) return;
     setBusy(true);
@@ -63,6 +74,7 @@ export function RoomsAdmin() {
   const actions = (r: AdminRoom): MenuItem[] => [
     { label: 'Add or remove people', icon: <Users size={16} />, onSelect: () => setPeople(r) },
     ...(r.watching ? [{ label: r.live ? 'Stop the live stream' : 'Stop the video', icon: <Square size={15} />, onSelect: () => void stopVideo(r) }] : []),
+    ...(r.photo ? [{ label: 'Remove room photo', icon: <ImageOff size={16} />, onSelect: () => void removePhoto(r) }] : []),
     { label: 'Delete room', icon: <Trash2 size={16} />, danger: true, onSelect: () => setDeleting(r) },
   ];
 
@@ -97,7 +109,7 @@ export function RoomsAdmin() {
         <ul aria-label="Rooms" className="rounded-[26px] border border-line/70 bg-surface/60">
           {data.items.map((r) => (
             <li key={r.id} className="flex items-center gap-3 border-b border-line/60 px-4 py-3 last:border-b-0">
-              <Avatar name={r.name} hue={hueFromId(r.id)} size={44} square />
+              <Avatar name={r.name} hue={hueFromId(r.id)} photo={r.photo} size={44} square />
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="truncate font-semibold">{r.name}</span>

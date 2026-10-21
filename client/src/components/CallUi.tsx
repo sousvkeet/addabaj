@@ -148,7 +148,7 @@ export const useLive = () => {
 };
 
 const barClass =
-  'pop-in glass-deep fixed inset-x-2 top-[max(8px,env(safe-area-inset-top))] z-40 flex items-center gap-2 rounded-[22px] border border-white/10 p-2.5 pl-3 text-on-brand shadow-[0_16px_40px_-16px_rgb(4_6_18/0.7)] md:inset-x-auto md:top-auto md:bottom-6 md:left-[120px] md:w-[316px]';
+  'pop-in glass-deep fixed inset-x-2 top-[max(8px,var(--safe-top))] z-40 flex items-center gap-2 rounded-[22px] border border-white/10 p-2.5 pl-3 text-on-brand shadow-[0_16px_40px_-16px_rgb(4_6_18/0.7)] md:inset-x-auto md:top-auto md:bottom-6 md:left-[120px] md:w-[316px]';
 const barPrompt = 'inset-x-0 top-full mt-2 md:top-auto md:bottom-full md:mt-0 md:mb-2';
 
 /** Glows while your own microphone picks up sound, so you know it's working. */
@@ -315,7 +315,7 @@ export function CallStage() {
         )}
 
         {/* Name and timer stay legible over any picture. */}
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-[linear-gradient(rgb(0_0_0/0.55),transparent)] p-3 pt-[max(12px,env(safe-area-inset-top))]">
+        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-[linear-gradient(rgb(0_0_0/0.55),transparent)] p-3 pt-[max(12px,var(--safe-top))]">
           <div className="min-w-0 pl-1">
             <p className="truncate font-display text-[21px] leading-tight text-white">{peer.name}</p>
             <p className="truncate text-[13px] text-white/80 tabular-nums">
@@ -337,7 +337,7 @@ export function CallStage() {
         )}
       </div>
 
-      <div className="flex shrink-0 items-center justify-center gap-4 p-3 pb-[max(14px,env(safe-area-inset-bottom))]">
+      <div className="flex shrink-0 items-center justify-center gap-4 p-3 pb-[max(14px,var(--safe-bottom))]">
         {phase !== 'outgoing' && <MuteButton muted={muted} speaking={localSpeaking} onClick={toggleMute} size={50} />}
         <CameraButton size={50} />
         <SpeakerButton size={50} />

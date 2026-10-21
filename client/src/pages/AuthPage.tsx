@@ -59,7 +59,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
         />
       </div>
 
-      <div className="mx-auto flex w-full max-w-[1180px] flex-col items-center gap-10 px-5 pt-[max(28px,env(safe-area-inset-top))] pb-10 lg:flex-row lg:gap-16 lg:px-10">
+      <div className="mx-auto flex w-full max-w-[1180px] flex-col items-center gap-10 px-5 pt-[max(28px,var(--safe-top))] pb-10 lg:flex-row lg:gap-16 lg:px-10">
         <section className="w-full max-w-[560px] lg:flex-1">
           <div className="flex items-center gap-3">
             <Logo size={48} className="drop-shadow-[0_10px_24px_var(--logo-glow)]" />
@@ -177,7 +177,7 @@ export function AuthPage({ mode }: { mode: 'login' | 'signup' }) {
             {(signup || signupsOpen) && (
               <p className="mt-5 text-center text-[14px] text-ink-soft">
                 {signup ? 'Already have an account? ' : 'New here? '}
-                <Link to={signup ? '/login' : '/signup'} className="font-semibold text-brand underline-offset-4 hover:underline dark:text-live">
+                <Link to={signup ? '/login' : '/signup'} replace className="font-semibold text-brand underline-offset-4 hover:underline dark:text-live">
                   {signup ? 'Log in' : 'Create an account'}
                 </Link>
               </p>

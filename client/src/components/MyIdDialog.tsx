@@ -47,7 +47,8 @@ export function MyIdDialog({ open, onClose }: { open: boolean; onClose: () => vo
   return (
     <Dialog open={open} onClose={onClose} title="Your user ID" description="Friends find you on Adda Khana by your user ID or your email. Nobody is listed.">
       <div className="mb-5 flex flex-wrap items-center gap-2 rounded-2xl bg-subtle/70 px-4 py-3">
-        <span className="min-w-0 flex-1 truncate font-display text-[20px] font-semibold">@{handle}</span>
+        {/* The whole ID on its own line on a phone (it's what people type); buttons beside it when there's room. */}
+        <span className="min-w-0 basis-full font-display text-[20px] font-semibold break-all sm:basis-0 sm:flex-1">@{handle}</span>
         <Button size="sm" variant="ghost" onClick={() => void copyText(handle, 'Your user ID')}>
           <Copy size={15} />
           Copy

@@ -9,11 +9,11 @@ import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from 
 import { getIO, presence, userChannel } from '../realtime.js';
 import { videoTools } from '../stream/status.js';
 import { deleteRelease, listReleases, saveRelease, updateRelease } from '../services/appReleases.js';
-import { forgetPhoto, removePhoto } from '../services/photos.js';
+import { forgetPhoto, removePhoto, removeRoomPhoto } from '../services/photos.js';
 import { endOtherSessions } from '../services/sessions.js';
 import { announceRoomChanged, attachMember, deleteRoom, detachMember, lockSeat, postSystemMessage } from '../services/rooms.js';
 import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
-import { photoUrl, publicUser } from '../services/users.js';
+import { photoUrl, publicUser, roomPhotoUrl } from '../services/users.js';
 import { calls } from '../socket/calls.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
@@ -229,10 +229,20 @@ adminRouter.delete('/users/:id/photo', async (req, res) => {
 
 // ── Rooms ─────────────────────────────────────────────────────────────
 
+// Take down a room's photo (back to its letter; its admins can choose another).
+adminRouter.delete('/rooms/:id/photo', async (req, res) => {
+  const roomId = assertUuid(req.params.id, 'room');
+  if (await removeRoomPhoto(roomId)) {
+    await postSystemMessage(roomId, 'The host removed the room photo');
+    announceRoomChanged(roomId);
+  }
+  res.status(204).end();
+});
+
 adminRouter.get('/rooms', async (req, res) => {
   const { q, limit, offset } = page(req);
   const { rows } = await query(
-    `SELECT r.id, r.name, r.description, r.max_members, r.created_at,
+    `SELECT r.id, r.name, r.description, r.photo, r.max_members, r.created_at,
             r.watch -> 'source' ->> 'title' AS watching, r.watch -> 'source' ->> 'kind' AS watch_kind,
             o.id AS owner_id, o.name AS owner_name, o.avatar_hue AS owner_hue, o.photo AS owner_photo,
             (SELECT count(*)::int FROM room_members m WHERE m.room_id = r.id) AS member_count,
@@ -251,6 +261,7 @@ adminRouter.get('/rooms', async (req, res) => {
       id: r.id,
       name: r.name,
       description: r.description,
+      photo: roomPhotoUrl(r.id, r.photo),
       maxMembers: r.max_members,
       memberCount: r.member_count,
       messages: r.messages,

@@ -133,6 +133,10 @@ public class MainActivity extends Activity {
     private boolean darkBars = true;
     private Object backCallback; // OnBackInvokedCallback (Android 13+)
     private boolean backClaimed;
+    /** The page handles Back: something to close (a sheet, a photo, a menu) or a screen to go back to. */
+    private static volatile boolean pageBack;
+    /** Opened from the launcher (not a notification or an invite link). */
+    private boolean launcherTask;
     private boolean askedNotifications;
 
     private static final class PendingDownload {
@@ -156,6 +160,8 @@ public class MainActivity extends Activity {
         setTheme(R.style.AppTheme);
         super.onCreate(savedInstanceState);
         current = new WeakReference<>(this);
+        Intent opened = getIntent();
+        launcherTask = opened != null && Intent.ACTION_MAIN.equals(opened.getAction()) && opened.hasCategory(Intent.CATEGORY_LAUNCHER);
 
         root = new FrameLayout(this);
         root.setBackgroundColor(barColor);
@@ -422,6 +428,16 @@ public class MainActivity extends Activity {
             });
         }
 
+        /** The page has something for Back to do (a sheet, photo or menu to close, or a screen to go back to), or no longer. */
+        @JavascriptInterface
+        public void setBackHandled(boolean handled) {
+            main.post(() -> {
+                pageBack = handled;
+                MainActivity a = current.get();
+                if (a != null) a.updateBack();
+            });
+        }
+
         /** {code, name} of the installed app, for the update check. */
         @JavascriptInterface
         public String appVersion() {
@@ -587,6 +603,13 @@ public class MainActivity extends Activity {
 
         @Override
         public void doUpdateVisitedHistory(WebView view, String url, boolean isReload) {
+            updateBack();
+        }
+
+        /** A page (re)loading has nothing for Back to do until it says so. */
+        @Override
+        public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            pageBack = false;
             updateBack();
         }
 
@@ -929,11 +952,26 @@ public class MainActivity extends Activity {
 
     // ── Lifecycle ──────────────────────────────────────────────────────
 
-    /** Back leaves full screen, then steps back through the app's pages. */
+    /**
+     * Back leaves full screen, then lets the page close what it has open (a
+     * sheet, a photo) and step back through its screens (which always end at
+     * the chats, the home screen), and from there leaves the app.
+     */
     private void goBack() {
         if (customView != null) {
             exitFullscreen();
-        } else if (web.canGoBack()) {
+        } else if (pageBack) {
+            web.evaluateJavascript("!!(window.__addaBack && window.__addaBack())", handled -> {
+                if (!"true".equals(handled) && web != null) historyBack();
+            });
+        } else {
+            historyBack();
+        }
+    }
+
+    /** Pages without the above (an older site, the offline page). */
+    private void historyBack() {
+        if (web.canGoBack()) {
             web.goBack();
         } else {
             // Like other chat apps: go to the background, keeping calls and voice running.
@@ -952,11 +990,14 @@ public class MainActivity extends Activity {
     /**
      * Android 13+: claim the back gesture only while there's somewhere to go
      * back to. Otherwise the system plays its back-to-home animation and moves
-     * the app to the background (calls keep running).
+     * the app to the background (calls keep running). Android only does that
+     * for an app opened from the launcher; opened from a notification or an
+     * invite link it would close the page instead, so then the app always
+     * handles Back and moves itself to the background.
      */
     private void updateBack() {
         if (Build.VERSION.SDK_INT < 33 || web == null) return;
-        boolean wanted = customView != null || web.canGoBack();
+        boolean wanted = customView != null || pageBack || web.canGoBack() || !launcherTask;
         if (wanted == backClaimed) return;
         if (backCallback == null) backCallback = (OnBackInvokedCallback) this::goBack;
         OnBackInvokedDispatcher dispatcher = getOnBackInvokedDispatcher();

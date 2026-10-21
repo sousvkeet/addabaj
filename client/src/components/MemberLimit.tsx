@@ -9,7 +9,7 @@ export function MemberLimit({ value, onChange, min = ROOM_MIN }: { value: number
   const lo = Math.max(ROOM_MIN, min);
   const clamp = (n: number) => Math.min(ROOM_MAX, Math.max(lo, Math.round(n) || lo));
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex items-center gap-2">
       <IconButton label="Fewer people" variant="outline" size={40} disabled={value <= lo} onClick={() => onChange(clamp(value - 1))}>
         <Minus size={16} />
       </IconButton>
@@ -17,7 +17,7 @@ export function MemberLimit({ value, onChange, min = ROOM_MIN }: { value: number
         type="number"
         inputMode="numeric"
         aria-label="Maximum members"
-        className={`${inputClass} w-[72px] text-center text-[17px] font-semibold tabular-nums`}
+        className={`${inputClass.replace('w-full', '')} w-[64px] shrink-0 px-1 text-center text-[17px] font-semibold tabular-nums`}
         min={lo}
         max={ROOM_MAX}
         value={value}
@@ -34,7 +34,7 @@ export function MemberLimit({ value, onChange, min = ROOM_MIN }: { value: number
         max={ROOM_MAX}
         value={Math.min(ROOM_MAX, Math.max(lo, value || lo))}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="ml-1 min-w-[120px] flex-1 accent-[var(--brand)]"
+        className="ml-1 min-w-0 flex-1 accent-[var(--brand)]"
       />
     </div>
   );

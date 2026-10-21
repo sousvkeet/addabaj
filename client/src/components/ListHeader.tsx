@@ -4,7 +4,7 @@ import { StatusLine } from './ConnectionNotice';
 
 export function ListHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
   return (
-    <div className="flex min-h-[64px] shrink-0 items-center justify-between gap-2 px-5 pt-[max(12px,env(safe-area-inset-top))] pb-2 md:pt-[max(18px,env(safe-area-inset-top))] md:pb-3">
+    <div className="flex min-h-[64px] shrink-0 items-center justify-between gap-2 px-5 pt-[max(12px,var(--safe-top))] pb-2 md:pt-[max(18px,var(--safe-top))] md:pb-3">
       <div className="min-w-0">
         <h1 className="font-display text-[24px] leading-tight font-bold tracking-[-0.02em] md:text-[26px]">{title}</h1>
         {subtitle && <p className="hidden truncate text-[13px] text-ink-soft md:block">{subtitle}</p>}

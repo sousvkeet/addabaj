@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
@@ -7,7 +7,8 @@ import { limits } from '../config.js';
 import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, userChannel } from '../realtime.js';
 import { announceRoomChanged, attachMember, detachMember, inviteForInvitee, listRooms, lockSeat, normalizeRoomCode, postSystemMessage, renewRoomCode, requireAdmin, requireMember, roomDetail, roomMessage, ROOM_MESSAGE_SELECT, deleteRoom } from '../services/rooms.js';
-import { findUser, publicUser } from '../services/users.js';
+import { findUser, publicUser, roomPhotoUrl } from '../services/users.js';
+import { MAX_PHOTO_BYTES, removeRoomPhoto, roomPhotoFile, saveRoomPhoto } from '../services/photos.js';
 import { enrich } from '../services/messages.js';
 import { readRoom, sendRoomMessage } from '../services/chat.js';
 
@@ -89,7 +90,7 @@ async function roomByCode(value) {
   const code = normalizeRoomCode(value);
   if (!code) throw badRequest('Room codes are 8 letters and numbers, like K7PQ-2XMB.');
   const room = await one(
-    `SELECT id, name, description, max_members, join_password_hash,
+    `SELECT id, name, description, photo, max_members, join_password_hash,
        (SELECT count(*)::int FROM room_members m WHERE m.room_id = rooms.id) AS member_count
      FROM rooms WHERE join_code = $1`,
     [code],
@@ -107,6 +108,7 @@ roomsRouter.get('/join/:code', codeLookups, async (req, res) => {
       id: room.id,
       name: room.name,
       description: room.description,
+      photo: roomPhotoUrl(room.id, room.photo),
       memberCount: room.member_count,
       maxMembers: room.max_members,
       needsPassword: !!room.join_password_hash,
@@ -201,6 +203,40 @@ roomsRouter.patch('/:id', async (req, res) => {
     await postSystemMessage(roomId, `${user.name} set the member limit to ${input.maxMembers}`);
   }
   announceRoomChanged(roomId);
+  res.json({ room: await roomDetail(roomId, req.userId) });
+});
+
+// ── Room photo (its admins choose it; members see it in the list, the header and notifications) ──
+
+// For anyone signed in: invitations and invite-code previews show it before joining.
+roomsRouter.get('/:id/photo/:version', async (req, res) => {
+  const version = String(req.params.version);
+  if (!/^[0-9a-f]{16}$/.test(version)) throw notFound('That photo has changed.');
+  const file = await roomPhotoFile(assertUuid(req.params.id, 'room'), version);
+  res.setHeader('Content-Type', 'image/jpeg');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.sendFile(file);
+});
+
+roomsRouter.put('/:id/photo', express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), async (req, res) => {
+  const roomId = req.params.id;
+  await requireAdmin(roomId, req.userId);
+  const user = await me(req);
+  await saveRoomPhoto(roomId, Buffer.isBuffer(req.body) ? req.body : null);
+  await postSystemMessage(roomId, `${user.name} changed the room photo`);
+  announceRoomChanged(roomId);
+  res.json({ room: await roomDetail(roomId, req.userId) });
+});
+
+roomsRouter.delete('/:id/photo', async (req, res) => {
+  const roomId = req.params.id;
+  await requireAdmin(roomId, req.userId);
+  const user = await me(req);
+  if (await removeRoomPhoto(roomId)) {
+    await postSystemMessage(roomId, `${user.name} removed the room photo`);
+    announceRoomChanged(roomId);
+  }
   res.json({ room: await roomDetail(roomId, req.userId) });
 });
 

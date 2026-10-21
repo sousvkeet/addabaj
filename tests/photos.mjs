@@ -183,6 +183,41 @@ await check('Removing a photo (yourself, or the host) goes back to initials ever
   expect(!filesOf(stranger).length, 'the photo file was left behind');
 });
 
+await check('Room photos: only its admins set one; members, invitees and the join preview see it; it goes with the room', async () => {
+  const r2 = (await call(ana.cookie, 'POST', '/rooms', { name: `Photo room two ${stamp}`, description: '', maxMembers: 5 })).data.room;
+  await call(ana.cookie, 'POST', `/rooms/${r2.id}/members`, { userId: cy.id });
+  const put = (u, body = PICTURE) => call(u.cookie, 'PUT', `/rooms/${r2.id}/photo`, body);
+  expect((await put(cy)).status === 403, 'a member who is not an admin set it');
+  expect((await put(stranger)).status === 403 || (await put(stranger)).status === 404, 'an outsider set it');
+  const set = await put(ana);
+  const photo = set.data?.room?.photo;
+  expect(set.status === 200 && /^\/api\/rooms\/[0-9a-f-]+\/photo\/[0-9a-f]{16}$/.test(photo ?? ''), `set: ${set.status} ${JSON.stringify(set.data)}`);
+  expect(readdirSync(PHOTOS).some((f) => f.startsWith(`room-${r2.id}-`)), 'no file');
+  expect((await call(cy.cookie, 'GET', '/rooms')).data.rooms.find((r) => r.id === r2.id)?.photo === photo, 'not in Cy’s room list');
+  const msgs = (await call(cy.cookie, 'GET', `/rooms/${r2.id}/messages`)).data.messages;
+  expect(msgs.some((m) => m.kind === 'system' && /Ana changed the room photo/.test(m.body)), 'no "changed the room photo"');
+  // People not in it see it too: an invitation, and the invite code's preview.
+  const bob = (await call(bo.cookie, 'GET', '/auth/me')).data.user;
+  expect((await call(ana.cookie, 'POST', `/rooms/${r2.id}/invites`, { userId: bob.id })).status < 300, 'invite Bo');
+  expect((await call(bo.cookie, 'GET', '/invites')).data.invites.find((i) => i.room.id === r2.id)?.room.photo === photo, 'not on the invitation');
+  const code = (await call(ana.cookie, 'GET', `/rooms/${r2.id}`)).data.room.joinCode;
+  expect((await call(bo.cookie, 'GET', `/rooms/join/${code}`)).data.room.photo === photo, 'not in the join preview');
+  expect((await fetch(API + photo, { headers: { cookie: bo.cookie } })).status === 200, 'Bo cannot see it');
+  expect((await fetch(API + photo)).status === 401, 'signed out could see it');
+  const admin = (await call(host.cookie, 'GET', `/admin/rooms?q=${encodeURIComponent(`Photo room two ${stamp}`)}`)).data.items;
+  expect(admin[0]?.photo === photo, 'not on the admin page');
+  // Removing it (the room's admin), then the host taking a new one down.
+  const off = await call(ana.cookie, 'DELETE', `/rooms/${r2.id}/photo`);
+  expect(off.status === 200 && off.data.room.photo === null, 'not removed');
+  await put(ana);
+  expect((await call(host.cookie, 'DELETE', `/admin/rooms/${r2.id}/photo`)).status === 204, 'the host could not');
+  expect((await call(cy.cookie, 'GET', `/rooms/${r2.id}`)).data.room.photo === null, 'the host did not take it down');
+  // Deleting the room takes its photo with it.
+  await put(ana);
+  expect((await call(ana.cookie, 'DELETE', `/rooms/${r2.id}`)).status === 204, 'delete room');
+  expect(!readdirSync(PHOTOS).some((f) => f.startsWith(`room-${r2.id}-`)), 'the photo file was left behind');
+});
+
 // ── In the app ──
 
 const browser = await chromium.launch();
@@ -260,6 +295,37 @@ await check('In the app: choose a photo, fit it in the circle, and it shows at o
   await p.getByText('Profile photo removed.').waitFor({ timeout: 6000 });
   expect(!(await p.getByRole('button', { name: 'Add a profile photo' }).locator('img').count()), 'still shows a photo');
   await p.context().close();
+});
+
+await check('In the app: a room admin adds the room photo from Room info; members see it; the header has a Join button', async () => {
+  const p = await appPage(ana);
+  await p.goto(`${BASE}/rooms/${room.id}`);
+  const join = p.getByRole('button', { name: 'Join voice' });
+  await join.waitFor();
+  expect((await join.innerText()).trim() === 'Join', `the voice button says “${await join.innerText()}”`);
+  await p.getByRole('button', { name: 'Members and voice' }).click();
+  await p.getByRole('heading', { name: 'Room info' }).waitFor();
+  expect(p.url().endsWith('#info'), 'Room info is not a page of its own');
+  await p.getByRole('button', { name: 'Add a room photo' }).click();
+  await p.getByLabel('Choose a photo').last().setInputFiles(new URL('./fixtures/photo.jpg', import.meta.url).pathname);
+  await p.getByRole('dialog', { name: 'Fit the room photo' }).getByRole('button', { name: 'Use photo' }).click();
+  await p.getByText('Room photo updated.').waitFor({ timeout: 8000 });
+  await sleep(500);
+  expect((await shownPhoto(p.getByRole('button', { name: 'Change the room photo' }))) > 0, 'not in Room info');
+  await p.screenshot({ path: `${SHOTS}photo-5-room-info.png` });
+  // Back closes Room info (as on a phone), not the room.
+  await p.goBack();
+  await p.getByRole('heading', { name: 'Room info' }).waitFor({ state: 'detached' });
+  expect(p.url().endsWith(`/rooms/${room.id}`), `back went to ${p.url()}`);
+  expect((await shownPhoto(p.locator('header').first())) > 0, 'not in the room header');
+  await p.context().close();
+  const c = await appPage(cy);
+  await c.goto(`${BASE}/rooms`);
+  const row = c.getByRole('link', { name: new RegExp(`Photo room ${stamp}`) });
+  await row.waitFor();
+  await sleep(500);
+  expect((await shownPhoto(row)) > 0, 'not in Cy’s room list');
+  await c.context().close();
 });
 
 await check('On a computer: the account menu has Profile photo; the host can take one down from People', async () => {

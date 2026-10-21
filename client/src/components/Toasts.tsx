@@ -8,7 +8,7 @@ export function Toasts() {
     <div
       aria-live="polite"
       // In the app on a phone they rise from the bottom, like Android's own.
-      className="pointer-events-none fixed inset-x-0 top-[max(12px,env(safe-area-inset-top))] z-[60] flex flex-col items-center gap-2 px-4 app:max-md:top-auto app:max-md:bottom-[calc(84px+env(safe-area-inset-bottom))]"
+      className="pointer-events-none fixed inset-x-0 top-[max(12px,var(--safe-top))] z-[60] flex flex-col items-center gap-2 px-4 app:max-md:top-auto app:max-md:bottom-[calc(84px+var(--safe-bottom))]"
     >
       {toasts.map((t) => (
         <div

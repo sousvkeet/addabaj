@@ -11,7 +11,7 @@ import { rootDir } from '../config.js';
 import { one } from '../db.js';
 import { AppError, notFound } from '../errors.js';
 import { getIO, userChannel } from '../realtime.js';
-import { contactIds, photoUrl } from './users.js';
+import { contactIds, photoUrl, roomPhotoUrl } from './users.js';
 
 export const photoDir = process.env.PHOTO_DIR || resolve(rootDir, 'server/data/photos');
 mkdirSync(photoDir, { recursive: true });
@@ -21,6 +21,7 @@ const MIN_SIDE = 64;
 const MAX_SIDE = 2048;
 
 const fileFor = (userId, version) => join(photoDir, `${userId}-${version}.jpg`);
+const roomFileFor = (roomId, version) => join(photoDir, `room-${roomId}-${version}.jpg`);
 const notAPhoto = () => new AppError(400, "That isn't a picture the app can use. Try another one.");
 
 // Start-of-frame markers (they carry the picture's size): C0–CF except DHT (C4), JPG (C8) and DAC (CC).
@@ -80,12 +81,17 @@ async function announce(userId, version) {
   io.to(channels).emit('user:updated', { user: { id: userId, photo } });
 }
 
-/** Sets someone's photo from a JPEG; returns the new address. */
-export async function savePhoto(userId, buf) {
+/** A checked, cleaned photo and its version (from its contents). */
+function prepare(buf) {
   if (!buf?.length) throw notAPhoto();
   if (buf.length > MAX_PHOTO_BYTES) throw new AppError(413, 'That photo is too big. Choose a smaller one.');
   const { jpeg } = cleanJpeg(buf);
-  const version = createHash('sha256').update(jpeg).digest('hex').slice(0, 16);
+  return { jpeg, version: createHash('sha256').update(jpeg).digest('hex').slice(0, 16) };
+}
+
+/** Sets someone's photo from a JPEG; returns the new address. */
+export async function savePhoto(userId, buf) {
+  const { jpeg, version } = prepare(buf);
   await writeFile(fileFor(userId, version), jpeg);
   const row = await one(
     `UPDATE users u SET photo = $2 FROM (SELECT id, photo FROM users WHERE id = $1) old
@@ -125,4 +131,44 @@ export async function photoFile(userId, version) {
 /** An account is being removed: its photo goes too. */
 export async function forgetPhoto(userId, version) {
   if (version) await rm(fileFor(userId, version), { force: true });
+}
+
+// ── Room photos ───────────────────────────────────────────────────────
+
+/** Sets a room's photo from a JPEG; returns its address. (The caller checks the person is the room's admin.) */
+export async function saveRoomPhoto(roomId, buf) {
+  const { jpeg, version } = prepare(buf);
+  await writeFile(roomFileFor(roomId, version), jpeg);
+  const row = await one(
+    `UPDATE rooms r SET photo = $2 FROM (SELECT id, photo FROM rooms WHERE id = $1) old WHERE r.id = old.id RETURNING old.photo AS previous`,
+    [roomId, version],
+  );
+  if (!row) {
+    await rm(roomFileFor(roomId, version), { force: true });
+    throw notFound("That room doesn't exist.");
+  }
+  if (row.previous && row.previous !== version) await rm(roomFileFor(roomId, row.previous), { force: true });
+  return roomPhotoUrl(roomId, version);
+}
+
+/** Back to the room's letter; false when it had no photo. */
+export async function removeRoomPhoto(roomId) {
+  const row = await one(
+    `UPDATE rooms r SET photo = NULL FROM (SELECT id, photo FROM rooms WHERE id = $1) old WHERE r.id = old.id RETURNING old.photo AS previous`,
+    [roomId],
+  );
+  if (!row) throw notFound("That room doesn't exist.");
+  if (row.previous) await rm(roomFileFor(roomId, row.previous), { force: true });
+  return !!row.previous;
+}
+
+export async function roomPhotoFile(roomId, version) {
+  const row = await one('SELECT photo FROM rooms WHERE id = $1', [roomId]);
+  if (!row?.photo || row.photo !== version) throw notFound('That photo has changed.');
+  return roomFileFor(roomId, version);
+}
+
+/** A room is being deleted: its photo goes too. */
+export async function forgetRoomPhoto(roomId, version) {
+  if (version) await rm(roomFileFor(roomId, version), { force: true });
 }

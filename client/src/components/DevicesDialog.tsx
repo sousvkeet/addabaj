@@ -108,7 +108,7 @@ export function DevicesDialog({ open, onClose }: { open: boolean; onClose: () =>
         </p>
       </div>
       {!s.current && (
-        <Button size="sm" variant="ghost" className="text-danger" onClick={() => setEnding(s)} aria-label={`Log out ${s.name}`}>
+        <Button size="sm" variant="danger-ghost" onClick={() => setEnding(s)} aria-label={`Log out ${s.name}`}>
           <LogOut size={15} />
           <span className="hidden sm:inline">Log out</span>
         </Button>
@@ -136,7 +136,7 @@ export function DevicesDialog({ open, onClose }: { open: boolean; onClose: () =>
               {others.map(row)}
             </ul>
             {others.length > 0 ? (
-              <Button variant="soft" className="w-full text-danger" onClick={() => setEnding('others')}>
+              <Button variant="danger-soft" className="w-full" onClick={() => setEnding('others')}>
                 <LogOut size={16} />
                 Log out of all other devices
               </Button>

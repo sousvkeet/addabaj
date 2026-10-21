@@ -152,7 +152,7 @@ function Settings({ onDone }: { onDone: () => void }) {
           >
             <div className="h-full rounded-full bg-live transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
           </div>
-          <span className="w-[92px] text-right text-[12.5px] text-ink-soft">{level > 0.08 ? 'Hearing you' : 'Say something'}</span>
+          <span className="shrink-0 text-right text-[12.5px] whitespace-nowrap text-ink-soft">{level > 0.08 ? 'Hearing you' : 'Say something'}</span>
         </div>
         {micError && <p className="mt-2 text-[13.5px] text-danger">{micError}</p>}
       </Section>

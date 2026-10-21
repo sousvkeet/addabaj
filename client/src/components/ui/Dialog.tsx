@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type CSSProperties, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { Button, IconButton } from './Button';
+import { useBackClose } from '../../lib/back';
 
 type Props = {
   open: boolean;
@@ -24,6 +25,8 @@ export function Dialog({ open, onClose, title, description, children, width = 44
   const titleId = useId();
   const descriptionId = useId();
   const drag = useRef<{ y: number; dy: number } | null>(null);
+  // Android's back closes it, as in other apps (one that must be finished stays).
+  useBackClose(open && dismissible, onClose);
 
   useEffect(() => {
     const d = ref.current;
@@ -113,7 +116,7 @@ export function Dialog({ open, onClose, title, description, children, width = 44
               )}
             </header>
           </div>
-          <div className={`min-h-0 flex-1 overflow-y-auto px-6 ${alert ? 'pb-5' : 'pb-[max(24px,env(safe-area-inset-bottom))]'}`}>{children}</div>
+          <div className={`min-h-0 flex-1 overflow-y-auto px-6 ${alert ? 'pb-5' : 'pb-[max(24px,var(--safe-bottom))]'}`}>{children}</div>
         </div>
       )}
     </dialog>

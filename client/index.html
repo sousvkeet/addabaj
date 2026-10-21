@@ -10,10 +10,12 @@
     <script>
       // The Android app: phone font, no zooming, app-like touch (see .app in
       // index.css), all before the first paint. Browsers get the web fonts.
+      // The app already keeps the page clear of the status and navigation bars,
+      // so the page doesn't reach under them (see --safe-top in index.css).
       var app = /AddaKhanaApp\//.test(navigator.userAgent);
       if (app) {
         document.documentElement.classList.add('app');
-        document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+        document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no');
       } else {
         var font = document.createElement('link');
         font.rel = 'stylesheet';

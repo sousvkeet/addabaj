@@ -25,6 +25,7 @@ What the app adds:
 - **Feels like an app, not a website.**
   - Tabs along the bottom, Settings under You, and a round button for a new chat or room.
   - Screens slide in and out, also with Android's back gesture; forms slide up from the bottom and swipe down to close.
+  - Back works like WhatsApp's: it closes what's open first (a form, a photo, a message's menu), then goes back to the list, then to Chats, and only leaves the app from Chats, keeping it running in the background. A chat opened from a notification goes back to Chats as well (1.6.1 on: the page steps through its own screens, because the WebView's Back skips screens the page added by itself).
   - Press and hold a message for its menu (with a buzz), swipe it right to reply, and pinch or double-tap photos.
   - The phone's font, press ripples, and no accidental zooming or text selection. Dialogs from the app itself use the phone's own style.
 - **Opens at once, even offline.**
@@ -36,7 +37,7 @@ What the app adds:
   - Microphone and camera for calls.
   - The photo and file picker; downloads go to Downloads.
   - Full-screen video.
-  - The back button steps through chats and rooms.
+  - The back button steps through screens (see above).
   - Links to other sites open outside.
   - An offline page that reconnects by itself.
   - Bars in the app's light or dark colours.

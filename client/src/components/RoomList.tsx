@@ -68,7 +68,7 @@ export function RoomList() {
                 viewTransition
                 className={({ isActive }) => listRowClass(isActive)}
               >
-                <Avatar name={room.name} hue={hueFromId(room.id)} size={48} square />
+                <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={48} square />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
                     <span className="truncate font-semibold">{room.name}</span>

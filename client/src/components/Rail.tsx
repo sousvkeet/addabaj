@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { NavLink } from 'react-router';
+import { NavLink, useLocation, useNavigate } from 'react-router';
+import { goTab } from '../lib/back';
+import { inApp } from '../lib/native';
 import { AtSign, Camera, EyeOff, KeyRound, LogOut, Mail, MessageCircle, MonitorSmartphone, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -29,6 +31,14 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
   const toggleTheme = useUi((s) => s.toggleTheme);
   const siteAdmin = useAuth((s) => !!s.user?.siteAdmin);
   const user = useAuth((s) => s.user);
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  // In the app, tabs don't pile up history: Back goes to the chats, then leaves (lib/back.ts).
+  const tab = (to: string) => (e: React.MouseEvent) => {
+    if (!inApp) return;
+    e.preventDefault();
+    goTab(navigate, to, pathname);
+  };
 
   const items = [
     { to: '/chats', label: 'Chats', Icon: MessageCircle, badge: chatUnread },
@@ -40,7 +50,7 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
   return (
     <nav
       aria-label="Main"
-      className={`bottom-nav ${hiddenOnMobile ? 'hidden md:flex' : 'flex'} relative z-30 h-[calc(68px+env(safe-area-inset-bottom))] shrink-0 items-start justify-around border-t border-rail-line bg-rail px-1 pt-2 pb-[env(safe-area-inset-bottom)] text-rail-ink md:z-[44] md:h-full md:w-[84px] md:flex-col md:items-center md:justify-start md:gap-2 md:rounded-[28px] md:border md:px-0 md:pt-5 md:pb-4 md:shadow-float`}
+      className={`bottom-nav ${hiddenOnMobile ? 'hidden md:flex' : 'flex'} relative z-30 h-[calc(68px+var(--safe-bottom))] shrink-0 items-start justify-around border-t border-rail-line bg-rail px-1 pt-2 pb-[var(--safe-bottom)] text-rail-ink md:z-[44] md:h-full md:w-[84px] md:flex-col md:items-center md:justify-start md:gap-2 md:rounded-[28px] md:border md:px-0 md:pt-5 md:pb-4 md:shadow-float`}
     >
       <Logo size={44} className="mb-5 hidden drop-shadow-[0_8px_18px_var(--logo-glow)] md:block" />
       {items.map(({ to, label, Icon, badge }) => (
@@ -48,6 +58,7 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
           key={to}
           to={to}
           viewTransition
+          onClick={tab(to)}
           aria-label={badge ? `${label}, ${badge} new` : label}
           className="group flex min-w-0 flex-1 flex-col items-center gap-1 text-[12px] font-semibold md:w-[72px] md:flex-none md:text-[11.5px]"
         >
@@ -70,7 +81,7 @@ export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
       ))}
       {/* Phones: settings is a tab, like other messengers. */}
       {user && (
-        <NavLink to="/settings" viewTransition aria-label="You: settings" className="group flex min-w-0 flex-1 flex-col items-center gap-1 text-[12px] font-semibold md:hidden">
+        <NavLink to="/settings" viewTransition onClick={tab('/settings')} aria-label="You: settings" className="group flex min-w-0 flex-1 flex-col items-center gap-1 text-[12px] font-semibold md:hidden">
           {({ isActive }) => (
             <>
               <span className={`flex h-8 w-14 items-center justify-center rounded-full transition-colors ${isActive ? 'bg-brand/18 dark:bg-brand/40' : ''}`}>

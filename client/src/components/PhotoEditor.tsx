@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, ImagePlus, Minus, Plus, Trash2 } from 'lucide-react';
 import { api, errorMessage } from '../lib/api';
-import type { User } from '../lib/types';
+import type { RoomDetail, RoomSummary, User } from '../lib/types';
 import { useAuth } from '../store/auth';
+import { useChat } from '../store/chat';
 import { toast } from '../store/ui';
-import { Avatar } from './ui/Avatar';
+import { Avatar, hueFromId } from './ui/Avatar';
 import { Button } from './ui/Button';
 import { Dialog } from './ui/Dialog';
 
@@ -29,14 +30,15 @@ function load(file: File) {
 }
 
 /**
- * Your profile photo: choose a picture, fit it in the circle (drag, pinch,
- * scroll or the zoom buttons), and save; or remove it to go back to initials.
- * The app sends a 512-pixel square JPEG, which also drops the original's
- * camera details and location.
+ * Your profile photo, or a room's (`room`, for its admins): choose a picture,
+ * fit it in the frame (drag, pinch, scroll or the zoom buttons), and save; or
+ * remove it to go back to initials. The app sends a 512-pixel square JPEG,
+ * which also drops the original's camera details and location.
  */
-export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function PhotoEditor({ open, onClose, room }: { open: boolean; onClose: () => void; room?: RoomSummary | RoomDetail }) {
   const user = useAuth((s) => s.user);
   const setUser = useAuth((s) => s.setUser);
+  const upsertRoom = useChat((s) => s.upsertRoom);
   const picker = useRef<HTMLInputElement>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
   const [view, setView] = useState<View>({ zoom: 1, x: 0, y: 0 });
@@ -56,6 +58,10 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
   }, [open]);
 
   if (!user) return null;
+  // Whose photo: mine, or the room's.
+  const who = room ? { name: room.name, hue: hueFromId(room.id), photo: room.photo ?? null } : { name: user.name, hue: user.hue, photo: user.photo ?? null };
+  const endpoint = room ? `/rooms/${room.id}/photo` : '/auth/photo';
+  const frame = room ? 'rounded-[32%]' : 'rounded-full';
 
   // How big the picture is drawn: it always covers the circle.
   const base = img ? stage / Math.min(img.naturalWidth, img.naturalHeight) : 1;
@@ -102,9 +108,10 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
       ctx.drawImage(img, -left / scale, -top / scale, side, side, 0, 0, OUT, OUT);
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.88));
       if (!blob) throw new Error("Couldn't prepare the photo. Try another one.");
-      const { user: saved } = await api<{ user: User }>('/auth/photo', { method: 'PUT', body: blob });
-      setUser(saved);
-      toast('Profile photo updated.');
+      const saved = await api<{ user?: User; room?: RoomDetail }>(endpoint, { method: 'PUT', body: blob });
+      if (saved.room) upsertRoom(saved.room);
+      if (saved.user) setUser(saved.user);
+      toast(room ? 'Room photo updated.' : 'Profile photo updated.');
       onClose();
     } catch (err) {
       setError(errorMessage(err));
@@ -117,9 +124,10 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
     setBusy(true);
     setError('');
     try {
-      const { user: saved } = await api<{ user: User }>('/auth/photo', { method: 'DELETE' });
-      setUser(saved);
-      toast('Profile photo removed.');
+      const saved = await api<{ user?: User; room?: RoomDetail }>(endpoint, { method: 'DELETE' });
+      if (saved.room) upsertRoom(saved.room);
+      if (saved.user) setUser(saved.user);
+      toast(room ? 'Room photo removed.' : 'Profile photo removed.');
       onClose();
     } catch (err) {
       setError(errorMessage(err));
@@ -176,8 +184,14 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
     <Dialog
       open={open}
       onClose={busy ? () => {} : onClose}
-      title={img ? 'Fit your photo' : 'Profile photo'}
-      description={img ? 'Drag to move it, pinch or scroll to zoom.' : 'People see it next to your name, in chats, rooms, calls and notifications.'}
+      title={img ? (room ? 'Fit the room photo' : 'Fit your photo') : room ? 'Room photo' : 'Profile photo'}
+      description={
+        img
+          ? 'Drag to move it, pinch or scroll to zoom.'
+          : room
+            ? 'Everyone in the room sees it: in their room list, in the room and in notifications.'
+            : 'People see it next to your name, in chats, rooms, calls and notifications.'
+      }
       width={420}
     >
       <input ref={picker} type="file" accept="image/*" hidden aria-label="Choose a photo" onChange={(e) => void pick(e.target.files?.[0]).finally(() => (e.target.value = ''))} />
@@ -186,7 +200,7 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
           <div
             {...handlers}
             role="img"
-            aria-label="Your photo, to fit in the circle"
+            aria-label={room ? 'The room photo, to fit in the frame' : 'Your photo, to fit in the circle'}
             className="relative mx-auto touch-none overflow-hidden rounded-3xl bg-black select-none"
             style={{ width: stage, height: stage, cursor: 'grab' }}
           >
@@ -198,7 +212,7 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
               style={{ width: drawn.w, height: drawn.h, transform: `translate(${left}px, ${top}px)` }}
             />
             {/* Everything outside the circle is dimmed: that's what people will see. */}
-            <span aria-hidden className="pointer-events-none absolute inset-0 rounded-full shadow-[0_0_0_9999px_rgb(0_0_0/0.55)] ring-2 ring-white/70" />
+            <span aria-hidden className={`pointer-events-none absolute inset-0 ${frame} shadow-[0_0_0_9999px_rgb(0_0_0/0.55)] ring-2 ring-white/70`} />
           </div>
           <div className="flex items-center justify-center gap-3">
             <Button variant="ghost" size="sm" aria-label="Zoom out" onClick={() => zoomBy(1 / 1.2)} disabled={view.zoom <= 1}>
@@ -238,7 +252,7 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
       ) : (
         <div className="space-y-5">
           <div className="flex justify-center pt-1">
-            <Avatar name={user.name} hue={user.hue} photo={user.photo} size={148} />
+            <Avatar name={who.name} hue={who.hue} photo={who.photo} size={148} square={!!room} />
           </div>
           {error && (
             <p role="alert" className="rounded-xl bg-danger/10 px-3.5 py-2.5 text-[14px] text-danger">
@@ -247,11 +261,11 @@ export function PhotoEditor({ open, onClose }: { open: boolean; onClose: () => v
           )}
           <div className="flex flex-col gap-2">
             <Button onClick={() => picker.current?.click()} disabled={busy}>
-              {user.photo ? <ImagePlus size={17} /> : <Camera size={17} />}
-              {user.photo ? 'Choose a new photo' : 'Choose a photo'}
+              {who.photo ? <ImagePlus size={17} /> : <Camera size={17} />}
+              {who.photo ? 'Choose a new photo' : 'Choose a photo'}
             </Button>
-            {user.photo && (
-              <Button variant="ghost" className="text-danger" onClick={() => void remove()} busy={busy}>
+            {who.photo && (
+              <Button variant="danger-ghost" onClick={() => void remove()} busy={busy}>
                 <Trash2 size={17} />
                 Remove photo
               </Button>

@@ -178,7 +178,7 @@ export function RoomMembers({
                   </span>
                   <span className="block truncate text-[12.5px] text-ink-soft">{m.handle ? `@${m.handle}` : m.email}</span>
                 </span>
-                <Button size="sm" variant="ghost" className="text-danger" disabled={!!busy} onClick={() => setRemoving(m)} aria-label={`Remove ${m.name}`}>
+                <Button size="sm" variant="danger-ghost" disabled={!!busy} onClick={() => setRemoving(m)} aria-label={`Remove ${m.name}`}>
                   <UserMinus size={15} />
                   Remove
                 </Button>

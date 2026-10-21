@@ -180,6 +180,8 @@ export type RoomSummary = {
   id: string;
   name: string;
   description: string;
+  /** The room's photo (its admins choose it), or null for its letter. */
+  photo?: string | null;
   ownerId: string;
   maxMembers: number;
   memberCount: number;
@@ -200,6 +202,7 @@ export type RoomPreview = {
   id: string;
   name: string;
   description: string;
+  photo?: string | null;
   memberCount: number;
   maxMembers: number;
   needsPassword: boolean;
@@ -236,7 +239,7 @@ export type RoomDetail = RoomSummary & {
 export type Invite = {
   id: string;
   createdAt: string;
-  room: { id: string; name: string; description: string; memberCount: number; maxMembers: number };
+  room: { id: string; name: string; description: string; photo?: string | null; memberCount: number; maxMembers: number };
   inviter: User;
 };
 

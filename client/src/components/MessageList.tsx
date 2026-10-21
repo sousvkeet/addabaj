@@ -4,6 +4,7 @@ import {
 } from 'lucide-react';
 import { attachmentLabel, clock, dayLabel, deletedText, duration, formatBytes, sameDay } from '../lib/format';
 import { haptic, inApp } from '../lib/native';
+import { useBackClose } from '../lib/back';
 import { toast } from '../store/ui';
 import type { Attachment, Draft, Reaction, Receipt, ReplyRef } from '../lib/types';
 import { Avatar } from './ui/Avatar';
@@ -367,7 +368,7 @@ function Message(props: MessageProps) {
 
   if (item.kind === 'system') {
     return (
-      <p className="mx-auto my-2.5 w-fit max-w-[85%] rounded-full bg-subtle/60 px-3.5 py-1 text-center text-[12.5px] text-ink-soft">
+      <p className="mx-auto my-2.5 w-fit max-w-[85%] rounded-xl bg-subtle/60 px-3.5 py-1 text-center text-[12.5px] text-ink-soft">
         {item.body}
         <span className="ml-1.5 opacity-70">{clock(item.createdAt)}</span>
       </p>
@@ -432,7 +433,7 @@ function Message(props: MessageProps) {
           </span>
         )}
         <div
-          className={`text-[15px] leading-[1.5] select-text ${media ? 'p-1' : 'px-4 py-2.5'} ${
+          className={`max-w-full text-[15px] leading-[1.5] select-text ${media ? 'p-1' : 'px-4 py-2.5'} ${
             item.mine
               ? `rounded-[22px] bg-aurora text-white shadow-[0_8px_24px_-14px_var(--brand)] ${groupStart ? 'rounded-tr-[8px]' : ''}`
               : `rounded-[22px] border border-line/70 bg-surface text-ink shadow-[0_6px_18px_-14px_rgb(0_0_0/0.5)] ${groupStart ? 'rounded-tl-[8px]' : ''}`
@@ -808,6 +809,7 @@ function usePhotoGestures(onClose: () => void) {
 /** A photo shown full screen, with a download button. */
 function Lightbox({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
   const photo = usePhotoGestures(onClose);
+  useBackClose(true, onClose);
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', esc);
@@ -816,7 +818,7 @@ function Lightbox({ attachment, onClose }: { attachment: Attachment; onClose: ()
   return (
     <div role="dialog" aria-label={attachment.name} className="fixed inset-0 z-[70] flex flex-col" onClick={onClose}>
       <div ref={photo.backdrop} aria-hidden className="absolute inset-0 bg-[rgb(4_6_18/0.94)] backdrop-blur-md" />
-      <div className="relative flex shrink-0 items-center justify-end gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]" onClick={(e) => e.stopPropagation()}>
+      <div className="relative flex shrink-0 items-center justify-end gap-2 p-3 pt-[max(12px,var(--safe-top))]" onClick={(e) => e.stopPropagation()}>
         <a href={`${attachment.url}?download=1`} download={attachment.name} className="flex items-center gap-2 rounded-full bg-white/15 px-3.5 py-2 text-[14px] font-semibold text-white hover:bg-white/25">
           <Download size={16} />
           Download
@@ -876,6 +878,7 @@ function ActionSheet({
 }) {
   // Only a tap that starts on the backdrop closes it: lifting the finger that just opened it doesn't.
   const fromBackdrop = useRef(false);
+  useBackClose(true, onClose);
   return (
     <div
       className="fixed inset-0 z-[65] flex items-end bg-[rgb(6_8_22/0.55)] backdrop-blur-[3px]"
@@ -885,7 +888,7 @@ function ActionSheet({
       <div
         role="dialog"
         aria-label="Message actions"
-        className="pop-in w-full rounded-t-[28px] border-t border-line bg-surface p-4 pb-[max(16px,env(safe-area-inset-bottom))]"
+        className="pop-in w-full rounded-t-[28px] border-t border-line bg-surface p-4 pb-[max(16px,var(--safe-bottom))]"
         onClick={(e) => e.stopPropagation()}
       >
         {!item.deleted && (

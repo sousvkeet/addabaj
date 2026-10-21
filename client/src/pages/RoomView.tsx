@@ -61,7 +61,15 @@ export function RoomView() {
   const wide = useMedia('(min-width: 1280px)');
   const navigate = useNavigate();
   const location = useLocation();
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Room info is a page of its own on phones (#info), so Android's back closes it rather than the room.
+  const panelOpen = !wide && location.hash === '#info';
+  const setPanelOpen = (open: boolean) => {
+    if (open && !panelOpen) void navigate({ hash: 'info' });
+    else if (!open && panelOpen) {
+      if (((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0) void navigate(-1);
+      else void navigate({ hash: '' }, { replace: true });
+    }
+  };
   const [addOpen, setAddOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
@@ -70,7 +78,6 @@ export function RoomView() {
 
   useEffect(() => {
     openRoom(roomId);
-    setPanelOpen(false);
     setReplyTo(null);
     return () => openRoom(null);
   }, [roomId, openRoom]);
@@ -79,8 +86,7 @@ export function RoomView() {
   useEffect(() => {
     if ((location.state as { addPeople?: boolean } | null)?.addPeople && detail) {
       setAddOpen(true);
-      if (!wide) setPanelOpen(true);
-      navigate(location.pathname, { replace: true, state: null });
+      navigate({ pathname: location.pathname, hash: wide ? '' : 'info' }, { replace: true, state: null });
     }
   }, [location.state, location.pathname, detail, wide, navigate]);
 
@@ -153,22 +159,23 @@ export function RoomView() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass relative z-10 flex h-[64px] shrink-0 items-center gap-2.5 border-b border-line/70 px-1.5 pt-[env(safe-area-inset-top)] md:h-[72px] md:gap-3 md:px-5">
+        <header className="glass relative z-10 flex h-[64px] shrink-0 items-center gap-2.5 border-b border-line/70 px-1.5 pt-[var(--safe-top)] md:h-[72px] md:gap-3 md:px-5">
           <IconButton label="Back to rooms" className="ripple md:hidden" onClick={() => goBack(navigate, '/rooms')}>
             <ArrowLeft size={20} />
           </IconButton>
           <span className="md:hidden">
-            <Avatar name={room.name} hue={hueFromId(room.id)} size={40} square />
+            <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={40} square />
           </span>
           <span className="hidden md:block">
-            <Avatar name={room.name} hue={hueFromId(room.id)} size={44} square />
+            <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={44} square />
           </span>
           <div className="min-w-0 flex-1">
             <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{room.name}</h1>
             <p className="flex items-center gap-2 truncate text-[13px] text-ink-soft">
               <StatusLine>
                 <span className="truncate">
-                  {room.memberCount} of {room.maxMembers} members
+                  {room.memberCount}
+                  <span className="hidden sm:inline"> of {room.maxMembers}</span> members
                 </span>
                 {voiceList.length > 0 && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-live-ink">
@@ -186,10 +193,12 @@ export function RoomView() {
               onClick={() => void joinVoice(roomId)}
               disabled={inCall}
               aria-label="Join voice"
-              title={inCall ? 'End your call to join voice' : undefined}
-              className={`${phoneIcon} max-md:text-live-ink`}
+              title={inCall ? 'End your call to join voice' : 'Join the room’s voice chat'}
+              className="ripple max-md:h-8 max-md:rounded-full max-md:px-3.5"
             >
-              <Headphones size={16} className="max-md:size-[21px]" />
+              <Headphones size={16} />
+              {/* A word, not just an icon: what it does is clear at a glance. */}
+              <span className="sm:hidden">Join</span>
               <span className="hidden sm:inline">Join voice</span>
             </Button>
           )}
@@ -246,8 +255,9 @@ export function RoomView() {
         <aside className="flex w-[340px] shrink-0 flex-col border-l border-line/70 bg-subtle/30">{panel}</aside>
       ) : (
         panelOpen && (
+          // Phones: a full page (like a group's info); between phone and wide: a side panel.
           <div className="fixed inset-0 z-[45] flex justify-end bg-[rgb(6_8_22/0.5)]" onMouseDown={(e) => e.target === e.currentTarget && setPanelOpen(false)}>
-            <aside className="pop-in flex h-full w-[min(370px,100%)] flex-col border-l border-line bg-surface pt-[env(safe-area-inset-top)] shadow-2xl">{panel}</aside>
+            <aside className="panel-in flex h-full w-full flex-col bg-surface pt-[var(--safe-top)] shadow-2xl md:w-[min(370px,100%)] md:border-l md:border-line">{panel}</aside>
           </div>
         )
       )}

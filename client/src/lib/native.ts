@@ -20,6 +20,7 @@ type Bridge = {
   appVersion?(): string;
   installUpdate?(url: string, sha256: string): void;
   haptic?(kind: string): void;
+  setBackHandled?(handled: boolean): void;
 };
 
 /** What the app tells the page (window event "addanative"). */
@@ -113,6 +114,9 @@ export function nativeSession(session: Session) {
  * vibration settings; nothing in a browser.
  */
 export const haptic = (kind: 'press' | 'tick' | 'confirm') => bridge?.haptic?.(kind);
+
+/** The page handles Android's back (something to close, or a screen to go back to); see lib/back.ts. App 1.6.1 on. */
+export const nativeBackHandled = (handled: boolean) => bridge?.setBackHandled?.(handled);
 
 /** A chat was read here: drop its notifications. */
 export const nativeClearChat = (scope: 'dm' | 'room', id: string) => bridge?.clearChat?.(scope, id);

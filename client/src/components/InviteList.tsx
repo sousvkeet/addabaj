@@ -43,7 +43,7 @@ export function InviteList() {
             <li key={inv.id} className="relative overflow-hidden rounded-3xl border border-line bg-surface/80 p-4 shadow-float">
               <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-aurora" />
               <div className="flex items-start gap-3">
-                <Avatar name={inv.room.name} hue={hueFromId(inv.room.id)} size={48} square />
+                <Avatar name={inv.room.name} hue={hueFromId(inv.room.id)} photo={inv.room.photo} size={48} square />
                 <div className="min-w-0 flex-1">
                   <p className="flex items-baseline gap-2">
                     <span className="truncate font-semibold">{inv.room.name}</span>
