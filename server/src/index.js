@@ -6,7 +6,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { Server } from 'socket.io';
 import { ZodError } from 'zod';
-import { config, limits, rootDir } from './config.js';
+import { config, limits, rootDir, streaming } from './config.js';
 import { requireAuth } from './auth.js';
 import { migrate } from './migrate.js';
 import { setIO } from './realtime.js';
@@ -28,7 +28,10 @@ import { loadPrivacy } from './services/privacy.js';
 import { ensureRoomCodes } from './services/rooms.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
-import { ytdlpPath } from './stream/ytdlp.js';
+import { ensureYtdlp, ytdlpPath, ytdlpVersion } from './stream/ytdlp.js';
+import { warmAdBlocker } from './stream/adblock.js';
+import { checkBrowser } from './stream/sniff.js';
+import { recordBrowserCheck } from './stream/status.js';
 import { ffmpegPath } from './stream/ffmpeg.js';
 import { resumeMerges } from './stream/merge.js';
 import { live } from './socket/live.js';
@@ -186,6 +189,32 @@ const io = new Server(server, {
 setIO(io);
 initSocket(io);
 
+/**
+ * Finding videos needs yt-dlp, FFmpeg and a background browser, none of which
+ * are in git. Install yt-dlp when it's missing, check the browser starts, and
+ * say plainly what's missing (also shown in Host admin › Overview).
+ */
+async function videoToolsAtStart() {
+  if (!ytdlpPath() && streaming.autoInstallYtdlp) {
+    console.log('Watch together: yt-dlp is missing; installing it…');
+    await ensureYtdlp().catch((err) => console.error(`Watch together: couldn't install yt-dlp (${err.message}); run \`npm run setup:yt-dlp\``));
+  }
+  const version = await ytdlpVersion();
+  console.log(
+    version
+      ? `Watch together: yt-dlp ${version} ready (site support on)`
+      : 'Watch together: yt-dlp not installed; run `npm run setup:yt-dlp` for site support',
+  );
+  warmAdBlocker();
+  const browser = await checkBrowser().catch((err) => ({ ok: false, problem: err.message }));
+  recordBrowserCheck(browser);
+  console.log(
+    browser.ok
+      ? `Watch together: background browser ready (deep scan on${streaming.adBlock ? ', ads blocked' : ''})`
+      : `Watch together: deep scan unavailable. ${browser.problem}`,
+  );
+}
+
 server.listen(config.port, async () => {
   console.log(`Adda Khana server listening on http://localhost:${config.port}`);
   if (config.cloudflareTurn) {
@@ -195,11 +224,7 @@ server.listen(config.port, async () => {
   }
   if (config.forceTurnRelay) console.log('FORCE_TURN_RELAY is on: all call audio goes through TURN');
   console.log(pushEnabled() ? 'Push notifications: on (Firebase Cloud Messaging)' : 'Push notifications: off (set FCM_SERVICE_ACCOUNT to turn them on)');
-  console.log(
-    ytdlpPath()
-      ? 'Watch together: yt-dlp found (site support on)'
-      : 'Watch together: yt-dlp not installed; run `npm run setup:yt-dlp` for site support',
-  );
+  void videoToolsAtStart();
   console.log(
     ffmpegPath()
       ? 'Watch together: FFmpeg found (separate picture and sound can be joined)'

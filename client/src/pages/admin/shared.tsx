@@ -13,6 +13,13 @@ export type Overview = {
   days: { day: string; signups: number; messages: number }[];
   server: { uptime: number; memory: number; node: string };
   signupsOpen: boolean;
+  /** What "Find videos" can use on this server. */
+  videoTools?: {
+    ytdlp: { version: string | null; fix: string };
+    ffmpeg: { installed: boolean; fix: string };
+    browser: { enabled: boolean; checked: boolean; ok: boolean; problem: string | null; fix: string };
+    adBlock: { enabled: boolean; ready: boolean; rules: number; updatedAt: string | null; error: string | null };
+  };
 };
 
 export type AdminUser = User & {

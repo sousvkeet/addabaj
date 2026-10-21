@@ -27,6 +27,27 @@ export function ytdlpPath() {
   return found;
 }
 
+let version = null;
+/** yt-dlp's version ("2026.08.19"), or null when it's missing or won't run. */
+export function ytdlpVersion() {
+  const path = ytdlpPath();
+  if (!path) return Promise.resolve(null);
+  version ??= new Promise((resolve) =>
+    execFile(path, ['--version'], { timeout: 20_000 }, (err, out) => resolve(err ? null : String(out).trim() || null)),
+  );
+  return version;
+}
+
+/** Installs yt-dlp when there's none (a fresh deploy has no server/bin/). */
+export async function ensureYtdlp() {
+  if (ytdlpPath()) return { installed: false };
+  const { installYtdlp } = await import('./ytdlp-install.js');
+  const result = await installYtdlp();
+  found = undefined;
+  version = null;
+  return { installed: !!ytdlpPath(), ...result };
+}
+
 // At most two yt-dlp runs at once; each can take a few seconds.
 let running = 0;
 const queue = [];
@@ -46,7 +67,9 @@ function reasonFrom(stderr) {
   if (/log(ged)?[ -]?in|sign in|cookies|account/i.test(line)) return { reason: 'login' };
   if (/private|unavailable|removed|not exist|404/i.test(line)) return { reason: 'unavailable' };
   if (/country|geo/i.test(line)) return { reason: 'geo' };
-  if (/private or local address|403: forbidden/i.test(line)) return { reason: 'blocked' };
+  if (/private or local address/i.test(line)) return { reason: 'blocked' };
+  // The site turned the server away (blocks servers, or limits how often it's visited).
+  if (/HTTP Error (403|412|429)|forbidden|too many requests|precondition failed|captcha|rate.?limit/i.test(line)) return { reason: 'refused' };
   return { reason: 'failed', detail: line.replace(/^ERROR:\s*/, '').slice(0, 200) };
 }
 
@@ -57,7 +80,8 @@ function siteName(entry, info) {
   return entry.extractor_key && entry.extractor_key !== 'Generic' ? entry.extractor_key : null;
 }
 
-function normalize(info) {
+/** `keepYouTubeFiles`: list YouTube's own files (to fetch through the server) instead of its player. */
+function normalize(info, { keepYouTubeFiles = false } = {}) {
   const entries = info._type === 'playlist' ? (info.entries ?? []).filter(Boolean) : [info];
   const videos = [];
   const skipped = { drm: 0, split: 0, codec: 0 };
@@ -71,7 +95,7 @@ function normalize(info) {
       page: e.webpage_url ?? info.webpage_url ?? null,
     };
     // YouTube videos play in YouTube's own player instead of being relayed.
-    if (/^youtube$/i.test(e.extractor_key ?? '') && /^[\w-]{11}$/.test(e.id ?? '')) {
+    if (!keepYouTubeFiles && /^youtube$/i.test(e.extractor_key ?? '') && /^[\w-]{11}$/.test(e.id ?? '')) {
       videos.push({ ...meta, site: 'YouTube', options: finishOptions([{ kind: 'youtube', videoId: e.id }]) });
       continue;
     }
@@ -155,7 +179,37 @@ export async function ytdlpFind(url) {
   return second.videos.length ? second : first;
 }
 
-async function ytdlpRun(url, extra) {
+// YouTube decides which qualities each of its "player clients" may see. As in
+// IDM-CLI, try several and keep what gives the most: yt-dlp's own choice
+// (it follows YouTube's changes; usually the whole ladder, picture and sound
+// apart, joined here) together with android/ios (a ready-made 360p file),
+// then IDM-CLI's other clients when YouTube refuses those.
+const PLAYER_CLIENTS = [null, ['android', 'ios'], ['tv_embedded'], ['web_safari'], ['mweb'], ['tv'], ['web']];
+const clientArgs = (clients) => (clients ? ['--extractor-args', `youtube:player_client=${clients.join(',')}`] : []);
+
+/**
+ * A YouTube video's own files, fetched the way IDM-CLI does, so it can play
+ * through the server when YouTube's player can't be used (embedding turned
+ * off, age checks, regions). Returns { title, duration, thumbnail, options } or null.
+ */
+export async function youtubeFiles(url, { budgetMs = 30_000 } = {}) {
+  if (!ytdlpPath()) return null;
+  const deadline = Date.now() + budgetMs;
+  const heights = (v) => new Set((v?.options ?? []).map((o) => o.height).filter(Boolean)).size;
+  const run = (clients) => ytdlpRun(url, clientArgs(clients), { keepYouTubeFiles: true }).then((r) => r.videos[0] ?? null);
+  // The two best clients at once; their qualities complement each other.
+  const firstTwo = (await Promise.all(PLAYER_CLIENTS.slice(0, 2).map(run))).filter(Boolean);
+  let best = firstTwo[0] ?? null;
+  if (firstTwo.length > 1) best = { ...firstTwo[0], options: finishOptions(firstTwo.flatMap((v) => v.options).map((o) => ({ ...o, recommended: false }))) };
+  for (const clients of PLAYER_CLIENTS.slice(2)) {
+    if (heights(best) >= 3 || Date.now() > deadline) break;
+    const v = await run(clients);
+    if (heights(v) > heights(best)) best = v;
+  }
+  return best?.options.length ? best : null;
+}
+
+async function ytdlpRun(url, extra, { keepYouTubeFiles = false } = {}) {
   const bin = ytdlpPath();
   if (!bin) return { videos: [], reason: 'missing' };
   const proxy = await guardProxy();
@@ -163,7 +217,11 @@ async function ytdlpRun(url, extra) {
   try {
     const args = [
       '-J', '--ignore-config', '--no-warnings', '--skip-download', '--no-playlist',
-      '--playlist-items', '1:8', '--socket-timeout', '15', '--proxy', proxy.url, ...extra, '--', url,
+      '--playlist-items', '1:8', '--socket-timeout', '15', '--proxy', proxy.url,
+      // YouTube needs a JavaScript runtime to solve its challenges; without one it
+      // hides formats and throttles downloads. Node (running this server) will do.
+      '--js-runtimes', `node:${process.execPath}`,
+      ...extra, '--', url,
     ];
     const { stdout, stderr, timedOut } = await new Promise((resolve) => {
       execFile(bin, args, { timeout: 60_000, maxBuffer: 48 * 1024 * 1024 }, (err, out, errOut) =>
@@ -174,7 +232,7 @@ async function ytdlpRun(url, extra) {
     // On failure yt-dlp prints "null"; the reason is on stderr.
     const info = stdout.trim() ? JSON.parse(stdout) : null;
     if (!info) return { videos: [], ...reasonFrom(stderr) };
-    return normalize(info);
+    return normalize(info, { keepYouTubeFiles });
   } catch (err) {
     return { videos: [], reason: 'failed', detail: err.message };
   } finally {

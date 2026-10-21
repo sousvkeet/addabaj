@@ -86,6 +86,8 @@ export function Overview() {
             <Bars title="Messages" hint="Chats and rooms, last 14 days" values={data.days.map((d) => ({ day: d.day, value: d.messages }))} />
           </div>
 
+          {data.videoTools && <VideoTools tools={data.videoTools} />}
+
           <Panel title="Server">
             <dl className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <Fact label="Up for">{uptime(data.server.uptime)}</Fact>
@@ -100,6 +102,76 @@ export function Overview() {
       )}
       <ChangePasswordDialog open={changing} onClose={() => setChanging(false)} />
     </AdminPage>
+  );
+}
+
+/** One tool "Find videos" relies on: what it is, whether it works, and the command that fixes it. */
+function Tool({ name, what, ok, off, status, fix }: { name: string; what: string; ok: boolean | null; off?: boolean; status: ReactNode; fix?: string }) {
+  return (
+    <li className="flex flex-wrap items-start gap-x-3 gap-y-1 py-3 first:pt-0 last:pb-0">
+      <span className="min-w-[180px] flex-1">
+        <span className="block font-semibold">{name}</span>
+        <span className="block text-[13px] text-ink-soft">{what}</span>
+      </span>
+      <span className="flex max-w-full flex-col items-end gap-1 text-right">
+        {off ? (
+          <Chip tone="muted">Off</Chip>
+        ) : ok === null ? (
+          <Chip tone="muted">Checking…</Chip>
+        ) : ok ? (
+          <Chip tone="live">Working</Chip>
+        ) : (
+          <Chip tone="danger">Not working</Chip>
+        )}
+        <span className="text-[13px] text-ink-soft">{status}</span>
+        {!off && !ok && ok !== null && fix && (
+          <code className="rounded-lg bg-subtle px-2 py-0.5 text-[12.5px] break-all">{fix}</code>
+        )}
+      </span>
+    </li>
+  );
+}
+
+function VideoTools({ tools }: { tools: NonNullable<Data['videoTools']> }) {
+  const { ytdlp, ffmpeg, browser, adBlock } = tools;
+  const broken = !ytdlp.version || !ffmpeg.installed || (browser.enabled && browser.checked && !browser.ok);
+  return (
+    <Panel
+      title="Finding videos"
+      hint={
+        broken
+          ? 'Something "Find videos" needs is missing, so links from some sites won’t work. Run the command shown on the server, in the project folder, then restart it.'
+          : 'What the server uses to find the video on a pasted link, like a download manager.'
+      }
+    >
+      <ul className="divide-y divide-line/70">
+        <Tool name="yt-dlp" what="Understands about 1,800 sites" ok={!!ytdlp.version} status={ytdlp.version ? `Version ${ytdlp.version}` : 'Not installed'} fix={ytdlp.fix} />
+        <Tool name="FFmpeg" what="Joins sites’ separate picture and sound" ok={ffmpeg.installed} status={ffmpeg.installed ? 'Installed' : 'Not installed'} fix={ffmpeg.fix} />
+        <Tool
+          name="Background browser"
+          what="Opens pages and catches the stream when nothing else finds it"
+          ok={browser.checked ? browser.ok : null}
+          off={!browser.enabled}
+          status={!browser.enabled ? 'Turned off (DEEP_SCAN=false)' : browser.ok ? 'Ready' : browser.problem ?? ''}
+          fix={browser.enabled ? browser.fix : undefined}
+        />
+        <Tool
+          name="Ad blocking"
+          what="Blocks ads and trackers while searching, with the filter lists Brave uses"
+          ok={adBlock.ready ? true : adBlock.error ? false : null}
+          off={!adBlock.enabled}
+          status={
+            !adBlock.enabled
+              ? 'Turned off (AD_BLOCK=false)'
+              : adBlock.ready
+                ? `${adBlock.rules.toLocaleString()} rules${adBlock.updatedAt ? `, updated ${dayName.format(new Date(adBlock.updatedAt))}` : ''}`
+                : adBlock.error
+                  ? `Couldn’t download the filter lists: ${adBlock.error}`
+                  : 'Downloading the filter lists…'
+          }
+        />
+      </ul>
+    </Panel>
   );
 }
 

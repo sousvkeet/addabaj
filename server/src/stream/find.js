@@ -4,14 +4,15 @@
 // hidden browser. Results stay on the server; people only see option ids.
 import { randomUUID } from 'node:crypto';
 import { badRequest } from '../errors.js';
-import { fileTitle, youtubeLink, youtubeTitle } from '../services/watch.js';
+import { fileTitle, youtubeInfo, youtubeLink } from '../services/watch.js';
 import { finishOptions, playlistHasDrm } from './formats.js';
+import { adBlocker, isAd } from './adblock.js';
 import { assertPublicHost } from './guard.js';
 import { probeDuration } from './probe.js';
 import { guardedRequest, isMediaType, isPlaylistType, readText } from './http.js';
 import { scanPage } from './scan.js';
 import { deepScan } from './sniff.js';
-import { ytdlpFind, ytdlpPath } from './ytdlp.js';
+import { youtubeFiles, ytdlpFind, ytdlpPath } from './ytdlp.js';
 
 const DIRECT = /\.(mp4|m4v|webm|mov|m3u8)$/i;
 const SCAN_TTL_MS = 20 * 60 * 1000;
@@ -95,6 +96,26 @@ async function withoutDrm(videos, skipped) {
   return kept;
 }
 
+/**
+ * Leaves out ad videos (pre-rolls, promos from ad networks) that a finder
+ * picked up, using the same filter lists as the ad blocker.
+ */
+function withoutAds(videos, pageUrl, skipped) {
+  const urls = (o) => (o.kind === 'merge' ? [o.video?.url, o.audio?.url] : [o.url]).filter(Boolean);
+  const ad = (o) => urls(o).some((u) => isAd(u, { sourceUrl: pageUrl, type: o.kind === 'hls' ? 'xhr' : 'media' }));
+  const kept = [];
+  for (const v of videos) {
+    const options = v.options.filter((o) => !ad(o));
+    if (!options.length) {
+      skipped.ads++;
+      continue;
+    }
+    if (options.length < v.options.length && !options.some((o) => o.recommended)) options[0].recommended = true;
+    kept.push({ ...v, options });
+  }
+  return kept;
+}
+
 /** Public embed players for sites whose main page asks for a login (used with yt-dlp). */
 function embedAlternative(url) {
   const vimeo = /^(?:www\.)?vimeo\.com$/.test(url.hostname) && /^\/(\d+)(?:\/|$)/.exec(url.pathname);
@@ -149,6 +170,7 @@ function rank(videos, skipped, { byLength }) {
 }
 
 const NOTES = {
+  ads: 'Ad videos on the page were left out.',
   short: 'Short clips on the page (previews or ads) were left out.',
   drm: 'Some videos were skipped because they are protected (DRM).',
   split: 'Some qualities were skipped because their picture and sound are separate files.',
@@ -162,6 +184,8 @@ const FAILURES = {
   geo: 'This video isn’t available in the server’s country.',
   split: 'This site keeps picture and sound in separate files, which can’t be played together here.',
   blocked: 'That link points to a private or local address, which this server won’t fetch.',
+  refused:
+    'The site is turning this server away right now. Sites do this to servers, or when they’re visited too often. Try again in a while, or paste a direct link to the video file.',
   unreachable: 'Couldn’t open that page. Check the link, or try again in a moment.',
 };
 
@@ -169,19 +193,39 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
   const url = parseLink(raw);
   const progress = (message) => onProgress?.(message);
   const reasons = new Set();
-  const skipped = { drm: 0, split: 0, codec: 0, short: 0 };
+  const skipped = { drm: 0, split: 0, codec: 0, short: 0, ads: 0 };
+  let adsBlocked = 0;
   let byLength = false;
   const collect = (r) => {
     if (r?.reason) reasons.add(r.reason);
+    adsBlocked += r?.adsBlocked ?? 0;
     for (const k of Object.keys(skipped)) skipped[k] += r?.skipped?.[k] ?? 0;
   };
   let videos = [];
 
+  const extraNotes = [];
   const yt = youtubeLink(url);
   if (yt) {
+    // YouTube's own player when it's allowed (instant, no load on the server),
+    // and, like IDM-CLI, the video's own files fetched through the server: they
+    // play even where YouTube's player won't.
     progress('Checking the YouTube video…');
-    const title = (await youtubeTitle(yt.videoId)) ?? 'YouTube video';
-    videos = [{ title, site: 'YouTube', thumbnail: `https://i.ytimg.com/vi/${yt.videoId}/mqdefault.jpg`, options: finishOptions([{ kind: 'youtube', videoId: yt.videoId, start: yt.start }]) }];
+    const info = await youtubeInfo(yt.videoId);
+    progress('Asking YouTube for its qualities…');
+    const files = await youtubeFiles(`https://www.youtube.com/watch?v=${yt.videoId}`).catch(() => null);
+    const options = [
+      ...(info.embeddable ? [{ kind: 'youtube', videoId: yt.videoId, start: yt.start }] : []),
+      ...(files?.options ?? []).map((o) => ({ ...o, recommended: false })),
+    ];
+    if (!options.length) throw badRequest("This video's owner doesn't allow it to be played on other sites, and it couldn't be fetched another way. Try another video.");
+    if (!info.embeddable) extraNotes.push('The owner doesn’t allow YouTube’s player on other sites, so this video plays through this server.');
+    videos = [{
+      title: info.title ?? files?.title ?? 'YouTube video',
+      site: 'YouTube',
+      thumbnail: `https://i.ytimg.com/vi/${yt.videoId}/mqdefault.jpg`,
+      duration: files?.duration ?? null,
+      options: finishOptions(options),
+    }];
   }
   const direct = !yt && DIRECT.test(url.pathname) ? await directKind(url) : null;
   if (direct) {
@@ -194,6 +238,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
     }];
   } else if (!yt) {
     await assertPublicHost(url.hostname); // clear error up front for local links
+    await adBlocker(); // the filter lists, to tell ad videos apart from the real one
 
     if (ytdlpPath()) {
       progress('Asking the site for its videos…');
@@ -204,7 +249,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
         if (embedded.videos.length) r = embedded;
       }
       collect(r);
-      videos = await withoutDrm(r.videos, skipped);
+      videos = await withoutDrm(withoutAds(r.videos, url.href, skipped), skipped);
       // Generic page players often come back without a length: check it, so a
       // preview clip found this way can't pass for the real video.
       if (videos.some((v) => v.duration == null && !v.live)) {
@@ -223,7 +268,8 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
           videos = [{ title: fileTitle(new URL(r.direct.url)), site: url.hostname.replace(/^www\./, ''), options: finishOptions([{ ...r.direct, headers: {} }]) }];
         } else {
           collect(r);
-          const found = await withoutDrm(r.videos, skipped);
+          if ([403, 412, 429].includes(r.status)) reasons.add('refused');
+          const found = await withoutDrm(withoutAds(r.videos, url.href, skipped), skipped);
           if (found.length) {
             progress('Checking how long each video is…');
             videos = merge(videos, await withDurations(found));
@@ -239,7 +285,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
       progress('Looking deeper: opening the page in a background browser…');
       const r = await deepScan(url.href, { onProgress: progress });
       collect(r);
-      const found = await withoutDrm(r.videos, skipped);
+      const found = await withoutDrm(withoutAds(r.videos, url.href, skipped), skipped);
       if (found.length) {
         progress('Checking how long each video is…');
         videos = merge(videos, await withDurations(found));
@@ -250,10 +296,17 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
   }
 
   if (!videos.length) {
-    const why = ['drm', 'login', 'unavailable', 'geo', 'blocked', 'split', 'unreachable'].find((r) => reasons.has(r) || skipped[r]);
-    throw badRequest(
-      FAILURES[why] ?? 'No playable video was found on this page. Try the page of the video itself, or a direct link to the video file.',
-    );
+    const why = ['drm', 'login', 'unavailable', 'geo', 'blocked', 'split', 'refused', 'unreachable'].find((r) => reasons.has(r) || skipped[r]);
+    if (FAILURES[why]) throw badRequest(FAILURES[why]);
+    // Say so when the server is missing a tool, rather than blaming the page.
+    const missing = [!ytdlpPath() && 'yt-dlp', reasons.has('missing') && 'the background browser'].filter(Boolean);
+    if (missing.length) {
+      throw badRequest(
+        `This server can’t fully search pages right now: ${missing.join(' and ')} ${missing.length > 1 ? 'aren’t' : 'isn’t'} set up. ` +
+          'The site’s host can fix this (see Host admin › Overview). Until then, paste a direct link to the video file.',
+      );
+    }
+    throw badRequest('No playable video was found on this page. Try the page of the video itself, or a direct link to the video file.');
   }
 
   // Several videos with the same page title get numbered, in list order.
@@ -289,7 +342,11 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
         relay: o.kind !== 'youtube' && !o.direct,
       })),
     })),
-    notes: Object.entries(skipped).filter(([, n]) => n > 0).map(([k]) => NOTES[k]),
+    notes: [
+      ...extraNotes,
+      ...(adsBlocked ? [`Blocked ${adsBlocked} ${adsBlocked === 1 ? 'ad or tracker' : 'ads and trackers'} while searching.`] : []),
+      ...Object.entries(skipped).filter(([, n]) => n > 0).map(([k]) => NOTES[k]),
+    ],
   };
 }
 

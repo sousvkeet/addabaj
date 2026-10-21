@@ -56,6 +56,10 @@ export const streaming = {
   allowPrivate: process.env.STREAM_ALLOW_PRIVATE === 'true',
   // Open pages in a hidden browser when nothing else finds a video.
   deepScan: process.env.DEEP_SCAN !== 'false',
+  // Block ads and trackers while finding videos, with the filter lists Brave uses (see stream/adblock.js).
+  adBlock: process.env.AD_BLOCK !== 'false',
+  // Install yt-dlp by itself when it's missing (a fresh deploy doesn't include server/bin/).
+  autoInstallYtdlp: process.env.YTDLP_AUTO_INSTALL !== 'false',
   // Relayed video files are fetched once into this folder and shared by all
   // viewers. Disk use is capped; 0 turns the shared download off.
   cacheDir: process.env.STREAM_CACHE_DIR || resolve(rootDir, 'server/cache'),

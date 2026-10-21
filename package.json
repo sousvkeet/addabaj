@@ -12,11 +12,13 @@
     "db:migrate": "npm run migrate -w server",
     "test:e2e": "node tests/e2e.mjs",
     "test:watch": "node tests/watch-together.mjs",
+    "setup": "npm run setup -w server",
     "setup:yt-dlp": "npm run setup:yt-dlp -w server",
     "test:find": "node tests/find-videos.mjs",
     "test:attachments": "node tests/attachments.mjs",
     "test:live": "node tests/live-stream.mjs",
     "setup:ffmpeg": "npm run setup:ffmpeg -w server",
+    "setup:browser": "npm run setup:browser -w server",
     "admin:reset": "npm run admin:reset -w server",
     "test:admin": "node tests/admin.mjs",
     "test:security": "node tests/security.mjs",
@@ -30,5 +32,12 @@
   },
   "engines": {
     "node": ">=20.19"
+  },
+  "overrides": {
+    "@ghostery/adblocker": "2.18.2",
+    "@ghostery/adblocker-content": "2.18.2",
+    "@ghostery/adblocker-extended-selectors": "2.18.2",
+    "tldts-experimental": "7.4.18",
+    "tldts-core": "7.4.18"
   }
 }

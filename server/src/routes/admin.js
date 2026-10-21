@@ -7,6 +7,7 @@ import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, presence, userChannel } from '../realtime.js';
+import { videoTools } from '../stream/status.js';
 import { deleteRoom, postSystemMessage } from '../services/rooms.js';
 import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
 import { publicUser } from '../services/users.js';
@@ -52,7 +53,7 @@ async function otherActiveAdmins(userId) {
 // ── Overview ──────────────────────────────────────────────────────────
 
 adminRouter.get('/overview', async (_req, res) => {
-  const [users, rooms, messages, files, series] = await Promise.all([
+  const [users, rooms, messages, files, series, tools] = await Promise.all([
     one(`SELECT count(*)::int AS total,
                 count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS new_this_week,
                 count(*) FILTER (WHERE disabled_at IS NOT NULL)::int AS disabled,
@@ -74,6 +75,7 @@ adminRouter.get('/overview', async (_req, res) => {
                   ((SELECT count(*) FROM dm_messages m WHERE date_trunc('day', m.created_at) = d.day)
                     + (SELECT count(*) FROM room_messages m WHERE date_trunc('day', m.created_at) = d.day))::int AS messages
            FROM days d ORDER BY d.day`),
+    videoTools(),
   ]);
   res.json({
     users: { total: users.total, newThisWeek: users.new_this_week, disabled: users.disabled, admins: users.admins, online: presence.list().length },
@@ -84,6 +86,7 @@ adminRouter.get('/overview', async (_req, res) => {
     days: series.rows,
     server: { uptime: Math.round(process.uptime()), memory: process.memoryUsage().rss, node: process.version },
     signupsOpen: getSettings().allowSignups,
+    videoTools: tools,
   });
 });
 

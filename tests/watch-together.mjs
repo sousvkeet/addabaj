@@ -272,6 +272,25 @@ await check('YouTube plays for everyone (and appears live on a phone already in 
   if (err) throw new Error('error overlay shown');
 });
 
+await check('YouTube through the server too (like IDM-CLI): its own files are offered, and play for everyone', async () => {
+  const found = await find(A.page, 'https://www.youtube.com/watch?v=M7lc1UVf-VE');
+  if (found.outcome !== 'choose') throw new Error(found.error);
+  const labels = await found.dlg.getByRole('radio').evaluateAll((els) => els.map((e) => e.closest('label').innerText.split('\n')[0]));
+  console.log(`     choices: ${labels.join(', ')}`);
+  if (labels[0] !== 'YouTube') throw new Error(`YouTube's player should come first: ${labels}`);
+  if (!labels.includes('360p')) throw new Error(`no server quality offered: ${labels}`);
+  await play(found.dlg, '360p');
+  await A.page.waitForTimeout(1500);
+  await watchAlong(A.page);
+  await watchAlong(B.page);
+  const r = await waitFor(async () => {
+    const a = await vid(A.page), b = await vid(B.page);
+    return { ok: a && b && !a.paused && !b.paused && a.t > 1 && Math.abs(a.t - b.t) < 1.5, a, b };
+  }, 40000, 'YouTube file not playing in sync through the server');
+  if (!(await usesRelay(A.page)) || !(await usesRelay(B.page))) throw new Error('not played through the relay');
+  console.log(`     YouTube file through the server at ${r.a.t.toFixed(2)}s / ${r.b.t.toFixed(2)}s`);
+});
+
 await check('a video page: find, pick a quality, everyone watches through the server (shared download)', async () => {
   const found = await find(A.page, 'https://commons.wikimedia.org/wiki/File:Big_Buck_Bunny_4K.webm');
   if (found.outcome !== 'choose') throw new Error(found.error);

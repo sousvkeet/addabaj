@@ -151,19 +151,32 @@ A room admin picks something to watch, and everyone in the room sees it in sync 
 
 1. **Site support** by [yt-dlp](https://github.com/yt-dlp/yt-dlp): about 1,800 sites (Facebook, Instagram, X, Dailymotion, Vimeo, TikTok, Reddit, Archive.org, news sites…) plus generic web players.
 2. **Page scan:** `<video>` tags, video metadata and video links anywhere in the page.
-3. **Deep scan:** opens the page in a hidden browser, presses play (skipping ads where it can) and records the video requests it makes. It recognises streams by their content, not only by a `.m3u8` name.
+3. **Deep scan:** opens the page in a hidden browser, presses play and records the video requests it makes. It recognises streams by their content, not only by a `.m3u8` name, and stops as soon as a long video is playing.
+
+**Ads are blocked, like Brave.** The finder uses the same filter lists as Brave and uBlock Origin: EasyList, EasyPrivacy, Peter Lowe's list, uBlock Origin's lists and cookie-notice rules (about 190,000 rules, refreshed daily and kept in `server/data/`).
+- **In the hidden browser:** ad and tracker requests never load, so pre-roll ads don't play and the real video starts straight away. Ad overlays and cookie banners covering the play button are hidden, and uBlock Origin's anti-ad scripts run.
+- **Redirects:** once the page has loaded, its tab can't be sent to another site, so an invisible ad layer that hijacks the first click does nothing.
+- **Results:** ad videos found by any finder are left out of what's offered.
+- **Relayed streams:** ad breaks stitched into a finished HLS stream from ad networks are dropped.
+- The finder says how many ads and trackers it blocked. Set `AD_BLOCK=false` to turn all of this off.
+
+**YouTube, like [IDM-CLI](https://github.com/rj41-w2/idm-cli).** A YouTube link offers YouTube's own player, which is recommended: it starts at once and puts no load on the server. Below it, the video's own files are offered too:
+- **What's offered:** an adaptive stream, a ready-made 360p file, and higher qualities joined from separate picture and sound.
+- **How they're found:** yt-dlp asks YouTube's player clients for them, as IDM-CLI does: yt-dlp's own choice and android/ios together, with IDM-CLI's other clients as fallbacks.
+- **When they help:** these play through the server where YouTube's player can't. That includes videos whose owner turned off playing on other sites, which used to be refused.
+- **JavaScript runtime:** yt-dlp gets Node.js as its runtime, which YouTube now requires for solving its challenges. Without it, formats go missing and downloads are throttled.
 
 Each find is checked for length. Short clips under 30 seconds (previews, intros, ads) are dropped when there's a real video of a minute or longer on the page. If only short clips turn up, the next finder still runs.
 
 How linked videos play:
 
-- **Relay:** YouTube plays in YouTube's player. Videos found on web pages play through the server's relay, which adds the headers the site expects and supports seeking. Streams are relayed segment by segment through signed links, so the relay only fetches parts listed in a playlist it served. Direct links play straight from their source and fall back to the relay if a browser can't play them, for example when the site blocks cross-site playback or the link is `http://` on an HTTPS page.
+- **Relay:** YouTube plays in YouTube's player (or through the server, if you pick one of its files). Videos found on web pages play through the server's relay, which adds the headers the site expects and supports seeking. Streams are relayed segment by segment through signed links, so the relay only fetches parts listed in a playlist it served. Direct links play straight from their source and fall back to the relay if a browser can't play them, for example when the site blocks cross-site playback or the link is `http://` on an HTTPS page.
 - **Shared download:** a relayed file is fetched once into a temporary file that every viewer reads from as it fills, the way a download manager works.
   - The site sees one download however many people watch, everyone gets the same data, and seeking back is instant. Stream segments are fetched once and shared as well.
   - Disk use is capped by `STREAM_CACHE_GB` (default 10). Files are removed when the video stops or after 10 idle minutes, and the folder is cleared on start.
-- **Extra connections:** like IDM, the server can download over several connections at once, up to `STREAM_CONNECTIONS` (default 4). It adds them only while they help: while the file arrives slower than 4 MB/s, and only if each one speeds things up. Sites that limit each connection get much faster, and fast sites stay on one. When the room jumps far ahead, a connection starts right at that point.
+- **Extra connections:** like IDM, the server can download over several connections at once, up to `STREAM_CONNECTIONS` (default 4). It adds them only while they help: while the file arrives slower than 4 MB/s, and only if each one speeds things up. Sites that limit each connection get much faster, and fast sites stay on one. When the room jumps far ahead, a connection starts right at that point. Each request asks for at most 10 MB, as download managers do. Sites like YouTube slow a connection to playback speed when it asks for more, so this makes a YouTube 720p join about 18 times faster (seconds instead of a minute and a half).
 - **Separate picture and sound:** many sites keep their better qualities as a silent video file plus a separate sound file. With FFmpeg installed, Find videos offers these too, for example "720p MP4, picture and sound joined first". The server downloads both and joins them without re-encoding, so it's quick and loses no quality. The room sees "Getting the video ready…" with progress, and playback starts for everyone together. This approach comes from [IDM-CLI](https://github.com/rj41-w2/idm-cli).
-- **Getting past blocks:** if a site blocks yt-dlp, the server retries while imitating Chrome's network fingerprint (this needs the standalone `yt-dlp_linux` build that `npm run setup:yt-dlp` installs). If a site answers 403 to a video request, the relay retries once as `curl/8.0`.
+- **Getting past blocks:** if a site blocks yt-dlp, the server retries while imitating Chrome's network fingerprint (this needs the standalone `yt-dlp_linux` build that `npm run setup:yt-dlp` installs). If a site answers 403 to a video request, the relay retries once as `curl/8.0`. If a site turns the server away altogether (sites do this to servers, or when they're visited too often), Find videos says so instead of "No playable video was found".
 
 **Live from your device.** Instead of a link, an admin can pick **From your device**:
 
@@ -233,6 +246,8 @@ Server settings:
 | `TURN_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | Another TURN server instead of Cloudflare |
 | `YTDLP_PATH`, `FFMPEG_PATH` | Custom tool paths (the setup scripts install them to `server/bin/`) |
 | `DEEP_SCAN` | Open pages in a hidden browser when nothing else finds a video (default `true`) |
+| `AD_BLOCK` | Block ads and trackers while finding videos, with Brave's filter lists (default `true`) |
+| `YTDLP_AUTO_INSTALL` | Install yt-dlp by itself on start when it's missing, for example after a fresh deploy (default `true`) |
 | `STREAM_ALLOW_PRIVATE` | `true` lets the relay fetch from your own network, for example a NAS |
 | `STREAM_CACHE_GB`, `STREAM_CACHE_DIR` | Disk cap and folder for the shared download |
 | `STREAM_CONNECTIONS` | Most parallel connections per relayed file (default 4, 1 = off) |
@@ -249,9 +264,17 @@ To change the API port, change `PORT` in `server/.env` and the port in `API_URL`
 ## Production
 
 ```sh
+npm install                    # include the server's packages (Playwright is one of them)
+npm run setup                  # yt-dlp, FFmpeg and the background browser, for Find videos
 npm run build                  # builds client/dist
 NODE_ENV=production npm start  # serves the app and the API on PORT
 ```
+
+**Video tools aren't in git.** yt-dlp and FFmpeg go in `server/bin/`, and the background browser goes in Playwright's cache.
+- **On a fresh deploy:** run `npm run setup` (and `sudo npx playwright install-deps chromium` once, for the browser's system libraries). Otherwise links from many sites stop working.
+- **yt-dlp:** the server installs it by itself on start when it's missing.
+- **Checking:** **Host admin › Overview › Finding videos** shows what's working and the command that fixes what isn't, and the startup log says the same.
+- **Updating:** re-run `npm run setup:yt-dlp` now and then; sites change, and yt-dlp keeps up.
 
 Then log in as `admin` / `admin` straight away and choose a new password.
 
@@ -344,7 +367,9 @@ See [android/README.md](android/README.md) for the Firebase steps, signing, inst
 | `npm start` | Starts the server (serves `client/dist` when it exists) |
 | `npm run db:migrate` | Applies the database schema (also done on every start) |
 | `npm run setup:yt-dlp` | Downloads yt-dlp to `server/bin/` and checks its checksum. Re-run now and then; sites change. |
+| `npm run setup` | All three video tools at once: yt-dlp, FFmpeg and the background browser |
 | `npm run setup:ffmpeg` | Downloads a static FFmpeg to `server/bin/` and checks its checksum |
+| `npm run setup:browser` | Installs the background browser Find videos uses (Chromium's headless shell, via Playwright) |
 | `npm run admin:reset` | Puts the host admin login back to `ADMIN_USERNAME` / `ADMIN_PASSWORD` (or `admin` / `admin`) |
 | `npm run test:*` | Browser tests, see below |
 
@@ -356,8 +381,8 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 |---|---|
 | `npm run test:e2e` | Sign-up and login errors; chat with typing and read ticks; voice calls with mute, hang-up and decline; a video call with real frames both ways, camera off/on and switching microphone mid-call; rooms with add, invite and the member limit; three-way room voice; removing a member; the themes. It also checks the TURN relay with a relay-only connection. |
 | `npm run test:attachments` | A large photo shrunk and delivered live; a file that only downloads; video in the chat; paste and drag; voice messages; replies and reactions; retrying a failed upload; the size limit; history after reload; files private to their chat or room; the phone's press-and-hold menu. |
-| `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses. Needs internet. |
-| `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. |
+| `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube in its player and through the server; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses. Needs internet. |
+| `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. Ad blocking: an ad-heavy page with a pre-roll ad and a click-hijacking layer still finds the movie, the filter lists tell ads from videos, and ad breaks are cut from finished streams. |
 | `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; a movie with Dolby Digital 5.1 sound converted in the host's browser and heard by viewers, in sync after a jump; pause and seek for viewers; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
 | `npm run test:receipts` | One tick to someone offline, two ticks the moment they come back (for every waiting message), two at once when they're online, coloured when they open the chat; message info times; "Last seen just now" and back to "Online"; read receipts off (the sender only sees delivered, both ways, even after a reload); last seen hidden (no status either way, and the API doesn't reveal it); room ticks and "Seen by", room message info and member status; a faked read-ahead and someone else's message info refused. |
 | `npm run test:push` | Push notifications against a fake Firebase (starts its own server, no dev servers needed): the Google sign-in; who gets a push and when (offline, app in the background, not while looking); what it carries; clearing after reading elsewhere; room messages; calls ringing a closed app, answered or declined from the phone, and missed; replying and marking read from a notification; uninstalled apps forgotten; signing out and password changes; outsiders and other websites refused. |

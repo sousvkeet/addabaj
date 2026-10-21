@@ -163,7 +163,12 @@ export function YouTubeView({ source, controls, startAt, onReady, onUserAction, 
 
     return () => {
       disposed = true;
-      player?.destroy();
+      // YouTube's destroy() throws when its iframe hasn't loaded yet (the video changed quickly).
+      try {
+        player?.destroy();
+      } catch {
+        /* nothing left to tear down */
+      }
       mount.remove();
     };
     // A new video or role means a fresh player; position changes are handled by sync.

@@ -14,6 +14,10 @@ import { requestMedia as guardedRequest } from './http.js';
 
 const IDLE_MS = 10 * 60 * 1000;
 const CHUNK = 256 * 1024;
+// Each request asks for at most this much, the way download managers (and
+// yt-dlp, for YouTube) do: sites like YouTube slow a connection down to
+// playback speed when it asks for a big or open-ended range.
+const MAX_RANGE = 10 * 1024 * 1024;
 
 // Start clean: partial files from a previous run are useless.
 try {
@@ -91,7 +95,7 @@ class CachedFile extends EventEmitter {
   /** Resolves once the size and type are known; rejects if the file can't be cached. */
   async start() {
     this.file = await open(this.path, 'w+');
-    const { res } = await guardedRequest(this.url, { headers: { ...this.headers, range: 'bytes=0-' }, timeout: 30_000 });
+    const { res } = await guardedRequest(this.url, { headers: { ...this.headers, range: `bytes=0-${MAX_RANGE - 1}` }, timeout: 30_000 });
     const total = Number(/\/(\d+)$/.exec(res.headers['content-range'] ?? '')?.[1] ?? (res.statusCode === 200 ? res.headers['content-length'] : NaN));
     if (res.statusCode >= 400 || !Number.isFinite(total) || total <= 0) {
       res.resume();
@@ -202,7 +206,8 @@ class CachedFile extends EventEmitter {
     while (part.pos < part.end && !this.closed) {
       if (!res) {
         try {
-          ({ res } = await guardedRequest(this.url, { headers: { ...this.headers, range: `bytes=${part.pos}-${part.end - 1}` }, timeout: 30_000 }));
+          const to = Math.min(part.end, part.pos + MAX_RANGE) - 1;
+          ({ res } = await guardedRequest(this.url, { headers: { ...this.headers, range: `bytes=${part.pos}-${to}` }, timeout: 30_000 }));
           if (res.statusCode !== 206) {
             res.resume();
             throw new RangeRefused(`the site refused a range request (${res.statusCode})`);

@@ -8,6 +8,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { config } from '../config.js';
 import { one } from '../db.js';
 import { isUuid, notFound } from '../errors.js';
+import { withoutAdSegments } from '../stream/adblock.js';
 import { playlistHasDrm } from '../stream/formats.js';
 import { cachedFile, localFile, sharedSegment } from '../stream/cache.js';
 import { isPlaylistType, readText, requestMedia as guardedRequest } from '../stream/http.js';
@@ -46,11 +47,14 @@ async function streamFor(roomId, token, userId) {
 
 const PLAYLIST_TAGS = /^#EXT-X-(MEDIA|I-FRAME-STREAM-INF|RENDITION-REPORT)\b/;
 
-/** Points every URI in a playlist back at the relay. */
+/**
+ * Points every URI in a playlist back at the relay, after leaving out
+ * segments served by ad networks (see withoutAdSegments).
+ */
 function rewrite(text, base, roomId, token) {
   const through = (uri, playlist) => (/^(data|skd):/i.test(uri) ? uri : relayPath(roomId, token, new URL(uri, base).href, playlist));
   let nextIsPlaylist = false;
-  return text
+  return withoutAdSegments(text, base)
     .split(/\r?\n/)
     .map((line) => {
       const t = line.trim();

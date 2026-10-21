@@ -23,6 +23,7 @@ const { cachedFile } = await import('../server/src/stream/cache.js');
 const { ffmpegPath } = await import('../server/src/stream/ffmpeg.js');
 const { prepareJoined } = await import('../server/src/stream/merge.js');
 const { pairForJoining } = await import('../server/src/stream/formats.js');
+const { adBlocker, adBlockStatus, isAd, withoutAdSegments } = await import('../server/src/stream/adblock.js');
 const { execFileSync, spawnSync } = await import('node:child_process');
 
 // ── Fixtures ─────────────────────────────────────────────────────────
@@ -58,6 +59,25 @@ writeFileSync(
   `<!doctype html><title>My 13 minute movie</title>
    <video src="/preview-5s.mp4" autoplay muted loop></video>
    <button class="big-play-button" onclick="fetch('/movie/stream-playlist').then((r) => r.text())">Play</button>`,
+);
+
+// An ad-heavy page, like many free video sites: a pre-roll ad from an ad
+// network, an ad script, and an invisible layer whose first click sends the
+// whole tab to an ad. The real movie loads only after Play.
+writeFileSync(
+  join(site, 'ad-page.html'),
+  `<!doctype html><title>Movie night</title>
+   <script src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+   <video src="https://securepubads.g.doubleclick.net/preroll-ad-30s.mp4" autoplay muted></video>
+   <div id="trap" style="position:fixed;inset:0;z-index:9" onclick="this.remove(); location.href = 'https://ads.example-adnetwork.com/landing'"></div>
+   <button class="big-play-button" onclick="window.played = true; fetch('/movie/stream-playlist').then((r) => r.text())">Play</button>`,
+);
+// A finished stream with an ad break stitched in from an ad network.
+writeFileSync(
+  join(site, 'with-ads.m3u8'),
+  '#EXTM3U\n#EXT-X-TARGETDURATION:10\n#EXTINF:10.0,\nseg0.ts\n#EXT-X-DISCONTINUITY\n' +
+    '#EXTINF:10.0,\nhttps://securepubads.g.doubleclick.net/ad/break1.ts\n#EXTINF:5.0,\nhttps://securepubads.g.doubleclick.net/ad/break2.ts\n' +
+    '#EXT-X-DISCONTINUITY\n#EXTINF:10.0,\nseg1.ts\n#EXT-X-ENDLIST\n',
 );
 
 // A silent H.264 picture file and a separate AAC sound file, 20 s each, like
@@ -147,6 +167,38 @@ await check('a page with a 5 s preview finds the 13 min movie, not the preview',
   if (lengths.includes(5)) throw new Error(`the 5 s preview is still offered (${lengths})`);
   if (!r.notes.some((n) => /Short clips/.test(n))) throw new Error('no note about the skipped clip');
 });
+
+// The filter lists are downloaded once a day; without a saved copy and no internet, these are skipped.
+const adLists = !!(await adBlocker()) && adBlockStatus().ready;
+if (!adLists) console.log('SKIP ad blocking checks: no filter lists (run once with internet)');
+
+if (adLists) {
+  await check('ads are blocked like Brave: an ad-heavy page finds the movie, not the ad, and keeps its tab', async () => {
+    const r = await findVideos(`${base}/ad-page.html`, { userId: 'test' });
+    const all = JSON.stringify(r);
+    if (/doubleclick|example-adnetwork/.test(all)) throw new Error('an ad was offered');
+    const lengths = r.videos.map((v) => Math.round(v.duration ?? -1));
+    if (lengths[0] !== 780) throw new Error(`first video lasts ${lengths[0]} s (all: ${lengths})`);
+    if (!r.notes.some((n) => /Blocked \d+ ads? (and|or) trackers?/.test(n))) throw new Error(`no note about blocked ads: ${r.notes}`);
+  });
+
+  await check('the filter lists tell ads from videos', async () => {
+    const page = 'https://news.example.com/video';
+    const ads = ['https://imasdk.googleapis.com/js/sdkloader/ima3.js', 'https://securepubads.g.doubleclick.net/gampad/ads?sz=640x480'];
+    const fine = ['https://upload.wikimedia.org/wikipedia/commons/c/c0/Big_Buck_Bunny_4K.webm', 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'];
+    for (const u of ads) if (!isAd(u, { sourceUrl: page, type: 'script' })) throw new Error(`not blocked: ${u}`);
+    for (const u of fine) if (isAd(u, { sourceUrl: page, type: 'media' })) throw new Error(`blocked: ${u}`);
+  });
+
+  await check('ad breaks stitched into a finished stream are left out; live streams are left alone', async () => {
+    const vod = readFileSync(join(site, 'with-ads.m3u8'), 'utf8');
+    const clean = withoutAdSegments(vod, `${base}/with-ads.m3u8`);
+    if (/doubleclick/.test(clean)) throw new Error('ad segments still there');
+    if ((clean.match(/#EXTINF/g) ?? []).length !== 2 || !/seg0\.ts/.test(clean) || !/seg1\.ts/.test(clean)) throw new Error(`wrong segments left:\n${clean}`);
+    const live = vod.replace('#EXT-X-ENDLIST\n', '');
+    if (withoutAdSegments(live, `${base}/with-ads.m3u8`) !== live) throw new Error('a live playlist was changed');
+  });
+}
 
 await check('a file handed out in 64 KB pieces downloads completely and intact', async () => {
   const entry = await cachedFile('pieces', `${base}/clip.webm?pieces`, {});

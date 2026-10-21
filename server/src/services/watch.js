@@ -27,23 +27,24 @@ export function youtubeLink(url) {
   return { videoId: id, start: parseStart(url.searchParams.get('t') ?? url.searchParams.get('start')) };
 }
 
-/** Asks YouTube whether the video exists and may be embedded, and for its title. */
-export async function youtubeTitle(videoId) {
+/**
+ * Asks YouTube whether the video exists and may be shown in its player on
+ * other sites, and for its title: { title, embeddable } (title may be null).
+ */
+export async function youtubeInfo(videoId) {
   const target = `https://www.youtube.com/watch?v=${videoId}`;
   try {
     const res = await fetch(`https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(target)}`, {
       signal: AbortSignal.timeout(4000),
     });
-    if (res.status === 401 || res.status === 403) {
-      throw badRequest("This video's owner doesn't allow it to be played on other sites. Try another video.");
-    }
+    if (res.status === 401 || res.status === 403) return { title: null, embeddable: false };
     if (res.status === 404 || res.status === 400) throw badRequest("That YouTube video doesn't exist or is private.");
-    if (!res.ok) return null;
+    if (!res.ok) return { title: null, embeddable: true };
     const data = await res.json();
-    return typeof data.title === 'string' ? data.title.slice(0, 200) : null;
+    return { title: typeof data.title === 'string' ? data.title.slice(0, 200) : null, embeddable: true };
   } catch (err) {
     if (err.expose) throw err;
-    return null; // YouTube unreachable: still try to play it
+    return { title: null, embeddable: true }; // YouTube unreachable: still try to play it
   }
 }
 
