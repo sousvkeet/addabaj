@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { api, errorMessage } from '../lib/api';
 import { emitAck, socket } from '../lib/socket';
 import type {
-  Attachment, Conversation, DmMessage, Draft, Invite, Paged, PreparedFile, Reaction, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
+  Attachment, Conversation, DmMessage, Draft, Invite, Paged, PreparedFile, Reaction, ReplyRef, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
 } from '../lib/types';
 import { uploadFile } from '../lib/upload';
 import { nativeClearChat } from '../lib/native';
@@ -49,6 +49,10 @@ type ChatState = {
   sendRoomMessage: (roomId: string, draft: Draft, retryOf?: string) => Promise<void>;
   react: (scope: 'dm' | 'room', messageId: number, emoji: string) => Promise<void>;
   applyReactions: (e: { scope: 'dm' | 'room'; messageId: number; reactions: Reaction[]; between?: string[]; roomId?: string }) => void;
+  /** Delete a message for me, or (my own; any, for room admins) for everyone. `chatId`: the partner or room. */
+  deleteMessage: (scope: 'dm' | 'room', chatId: string, messageId: number, forEveryone: boolean) => Promise<boolean>;
+  applyDeleted: (e: { scope: 'dm' | 'room'; messageId: number; deletedAt: string; between?: string[]; roomId?: string; byAdmin?: boolean }) => void;
+  applyHidden: (e: { scope: 'dm' | 'room'; messageId: number; chatId: string }) => void;
   receiveRoomMessage: (message: RoomMessage) => void;
   markRoomRead: (roomId: string) => void;
   setRoomTyping: (e: { roomId: string; userId: string; name: string; typing: boolean }) => void;
@@ -644,6 +648,74 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 
+  deleteMessage: async (scope, chatId, messageId, forEveryone) => {
+    try {
+      const res = await emitAck<{ deletedAt?: string; hidden?: boolean; byAdmin?: boolean }>('msg:delete', { scope, messageId, forEveryone });
+      // Shown here at once; the server also tells my other tabs and devices (and, for everyone, the others).
+      if (res.hidden) get().applyHidden({ scope, messageId, chatId });
+      else if (res.deletedAt) {
+        get().applyDeleted({ scope, messageId, deletedAt: res.deletedAt, byAdmin: res.byAdmin, ...(scope === 'dm' ? { between: [myId(), chatId] } : { roomId: chatId }) });
+      }
+      return true;
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+      return false;
+    }
+  },
+
+  applyDeleted: ({ scope, messageId, deletedAt, between, roomId, byAdmin }) => {
+    if (scope === 'dm') {
+      const me = myId();
+      const partner = between?.find((id) => id !== me) ?? me;
+      const fields = { deletedAt, meta: null } as Partial<DmMessage>;
+      set((s) => {
+        const conv = s.conversations[partner];
+        return {
+          dms: s.dms[partner] ? { ...s.dms, [partner]: { ...s.dms[partner], items: erased(s.dms[partner].items, messageId, fields) } } : s.dms,
+          conversations:
+            conv?.lastMessage?.id === messageId
+              ? { ...s.conversations, [partner]: { ...conv, lastMessage: erased([conv.lastMessage], messageId, fields)[0] } }
+              : s.conversations,
+        };
+      });
+    } else if (roomId) {
+      const fields = { deletedAt, deletedByAdmin: !!byAdmin } as Partial<RoomMessage>;
+      set((s) => {
+        const room = s.rooms[roomId];
+        return {
+          roomMessages: s.roomMessages[roomId]
+            ? { ...s.roomMessages, [roomId]: { ...s.roomMessages[roomId], items: erased(s.roomMessages[roomId].items, messageId, fields) } }
+            : s.roomMessages,
+          rooms:
+            room?.lastMessage?.id === messageId
+              ? { ...s.rooms, [roomId]: { ...room, lastMessage: erased([room.lastMessage], messageId, fields)[0] } }
+              : s.rooms,
+        };
+      });
+    }
+  },
+
+  applyHidden: ({ scope, messageId, chatId }) => {
+    if (scope === 'dm') {
+      const wasLast = get().conversations[chatId]?.lastMessage?.id === messageId;
+      set((s) => (s.dms[chatId] ? { dms: { ...s.dms, [chatId]: { ...s.dms[chatId], items: s.dms[chatId].items.filter((m) => m.id !== messageId) } } } : s));
+      // The chat list now shows the message before it (or no chat at all).
+      if (wasLast) {
+        void api<{ conversations: Conversation[] }>('/dms')
+          .then(({ conversations }) => set({ conversations: Object.fromEntries(conversations.map((c) => [c.partner.id, c])) }))
+          .catch(() => {});
+      }
+    } else {
+      const wasLast = get().rooms[chatId]?.lastMessage?.id === messageId;
+      set((s) =>
+        s.roomMessages[chatId]
+          ? { roomMessages: { ...s.roomMessages, [chatId]: { ...s.roomMessages[chatId], items: s.roomMessages[chatId].items.filter((m) => m.id !== messageId) } } }
+          : s,
+      );
+      if (wasLast) void get().loadRoom(chatId);
+    }
+  },
+
   applyReactions: ({ scope, messageId, reactions, between, roomId }) => {
     const update = <T extends { id: number; reactions?: Reaction[] }>(items: T[]) =>
       items.map((m) => (m.id === messageId ? { ...m, reactions } : m));
@@ -660,6 +732,20 @@ export const useChat = create<ChatState>()((set, get) => ({
     }
   },
 }));
+
+/**
+ * A message deleted for everyone keeps its place as a marker; replies to it
+ * show it as deleted.
+ */
+function erased<T extends { id: number; replyTo?: ReplyRef | null }>(items: T[], messageId: number, fields: Partial<T>): T[] {
+  return items.map((m) =>
+    m.id === messageId
+      ? { ...m, body: '', attachment: null, reactions: [], replyTo: null, replyToId: null, ...fields }
+      : m.replyTo?.id === messageId
+        ? { ...m, replyTo: { ...m.replyTo, body: '', attachment: null, deleted: true } }
+        : m,
+  );
+}
 
 function meAsSender() {
   const u = useAuth.getState().user;

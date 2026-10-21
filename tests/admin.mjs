@@ -182,6 +182,48 @@ await check('the admin sees every room and can delete one; its members are told'
   await C.page.getByText(`Late night ${stamp} was deleted.`).waitFor({ timeout: 5000 });
 });
 
+await check('the host adds anyone to any room and removes anyone, even its owner (the room passes on)', async () => {
+  const { data } = await api(B.page, '/rooms', { method: 'POST', body: JSON.stringify({ name: `Book club ${stamp}`, maxMembers: 3 }) });
+  const roomId = data.room.id;
+  const denied = await api(C.page, `/admin/rooms/${roomId}/members`, { method: 'POST', body: JSON.stringify({ userId: C.id }) });
+  if (denied.status !== 403) throw new Error(`a member used the host's add: ${denied.status}`);
+
+  await H.page.goto(`${BASE}/admin/rooms`);
+  await H.page.getByLabel('Search rooms').fill(`Book club ${stamp}`);
+  const row = H.page.getByRole('list', { name: 'Rooms' }).getByRole('listitem').filter({ hasText: `Book club ${stamp}` });
+  await row.getByRole('button', { name: /^Actions for/ }).click();
+  await H.page.getByRole('menuitem', { name: 'Add or remove people' }).click();
+  const dlg = H.page.getByRole('dialog', { name: `People in Book club ${stamp}` });
+  const members = dlg.getByRole('list', { name: 'Members' });
+  await members.getByText('Rahul Das', { exact: true }).waitFor();
+  await dlg.getByLabel('Find someone to add').fill(C.email);
+  await dlg.getByRole('button', { name: 'Add Mitali Roy' }).click();
+  await members.getByText('Mitali Roy').waitFor({ timeout: 5000 });
+  await C.page.getByText(`You were added to Book club ${stamp}.`).waitFor({ timeout: 5000 });
+  await row.getByText('2 of 3').waitFor();
+  await H.page.screenshot({ path: `${SHOTS}admin-07-room-people.png` });
+  const twice = await api(H.page, `/admin/rooms/${roomId}/members`, { method: 'POST', body: JSON.stringify({ userId: C.id }) });
+  if (twice.status !== 409) throw new Error(`added twice: ${twice.status}`);
+
+  // Rahul started the room; removing him hands it to Mitali.
+  await dlg.getByRole('button', { name: 'Remove Rahul Das' }).click();
+  await dlg.getByText(/Mitali Roy will run it/).waitFor();
+  await dlg.getByRole('button', { name: 'Remove', exact: true }).click();
+  await B.page.getByText(`You were removed from Book club ${stamp}.`).waitFor({ timeout: 5000 });
+  await members.getByText('Rahul Das', { exact: true }).waitFor({ state: 'detached', timeout: 5000 });
+  const people = (await api(H.page, `/admin/rooms/${roomId}/members`)).data;
+  const [only] = people.members;
+  if (people.members.length !== 1 || only.id !== C.id || !only.owner || only.role !== 'admin') throw new Error(`after: ${JSON.stringify(people.members)}`);
+  await row.getByText('Mitali Roy').waitFor();
+  const notes = (await api(C.page, `/rooms/${roomId}/messages`)).data.messages.filter((m) => m.kind === 'system').map((m) => m.body);
+  for (const want of ['The host added Mitali Roy', 'The host removed Rahul Das', 'Mitali Roy now runs the room']) {
+    if (!notes.includes(want)) throw new Error(`no "${want}" in the room (${notes})`);
+  }
+  const last = await api(H.page, `/admin/rooms/${roomId}/members/${C.id}`, { method: 'DELETE' });
+  if (last.status !== 409) throw new Error(`removed the last person: ${last.status}`);
+  await H.page.keyboard.press('Escape');
+});
+
 await check('closing sign-ups shows a closed sign-up page and the server refuses new accounts', async () => {
   await H.page.goto(`${BASE}/admin/settings`);
   await H.page.getByRole('switch', { name: /Let new people create accounts/ }).click({ force: true });

@@ -12,7 +12,7 @@ import { Avatar, hueFromId } from '../components/ui/Avatar';
 import { Button, IconButton } from '../components/ui/Button';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { FileDrop } from '../components/FileDrop';
-import { MessageList, TypingLine, replyRefFor, type ThreadItem } from '../components/MessageList';
+import { MessageList, TypingLine, recentEnoughToDelete, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
 import { RoomPanel } from '../components/RoomPanel';
 import { WatchDialog, WatchStage } from '../components/watch/WatchStage';
@@ -48,6 +48,7 @@ export function RoomView() {
   const loadRoomMessages = useChat((s) => s.loadRoomMessages);
   const sendRoomMessage = useChat((s) => s.sendRoomMessage);
   const react = useChat((s) => s.react);
+  const deleteMessage = useChat((s) => s.deleteMessage);
   const voiceRoom = useVoice((s) => s.roomId);
   const voiceStatus = useVoice((s) => s.status);
   const joinVoice = useVoice((s) => s.join);
@@ -79,6 +80,7 @@ export function RoomView() {
   }, [location.state, location.pathname, detail, wide, navigate]);
 
   const members = detail?.members;
+  const isRoomAdmin = (detail ?? room)?.myRole === 'admin';
   const items = useMemo<ThreadItem[]>(() => {
     const list = page?.items ?? [];
     const others = (members ?? []).filter((x) => x.id !== me?.id);
@@ -111,9 +113,13 @@ export function RoomView() {
         reactions: m.reactions,
         upload: m.upload,
         draft: m.draft,
+        deleted: !!m.deletedAt,
+        deletedByAdmin: !!m.deletedByAdmin,
+        // My own recent messages; room admins can delete anyone's.
+        canDeleteForEveryone: m.kind === 'text' && m.id > 0 && !m.deletedAt && (isRoomAdmin || (mine && recentEnoughToDelete(m.createdAt))),
       };
     });
-  }, [page?.items, me?.id, members]);
+  }, [page?.items, me?.id, members, isRoomAdmin]);
 
   if (!room) {
     return (
@@ -203,6 +209,7 @@ export function RoomView() {
             onReply={(item) => setReplyTo(replyRefFor(item))}
             onInfo={(item) => setInfo({ scope: 'room', roomId, messageId: item.id, sentAt: item.createdAt })}
             onReact={(item, emoji) => void react('room', item.id, emoji)}
+            onDelete={(item, forEveryone) => deleteMessage('room', roomId, item.id, forEveryone)}
           />
           <TypingLine text={typingText(typingNames)} />
           <Composer

@@ -13,7 +13,7 @@ import { Avatar } from '../components/ui/Avatar';
 import { Button, IconButton } from '../components/ui/Button';
 import { Composer, type ComposerHandle } from '../components/Composer';
 import { FileDrop } from '../components/FileDrop';
-import { MessageList, replyRefFor, type ThreadItem } from '../components/MessageList';
+import { MessageList, recentEnoughToDelete, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
 
 export function ChatView() {
@@ -30,6 +30,7 @@ export function ChatView() {
   const loadDm = useChat((s) => s.loadDm);
   const sendDm = useChat((s) => s.sendDm);
   const react = useChat((s) => s.react);
+  const deleteMessage = useChat((s) => s.deleteMessage);
   const callPhase = useCall((s) => s.phase);
   const callPeer = useCall((s) => s.peer?.id);
   const startCall = useCall((s) => s.startCall);
@@ -71,6 +72,8 @@ export function ChatView() {
           reactions: m.reactions,
           upload: m.upload,
           draft: m.draft,
+          deleted: !!m.deletedAt,
+          canDeleteForEveryone: mine && m.kind === 'text' && m.id > 0 && !m.deletedAt && recentEnoughToDelete(m.createdAt),
         };
       }),
     [page?.items, me, partner],
@@ -144,6 +147,7 @@ export function ChatView() {
             if (m) setInfo({ scope: 'dm', sentAt: m.createdAt, deliveredAt: m.deliveredAt, readAt: m.readAt, partnerName: name });
           }}
           onReact={(item, emoji) => void react('dm', item.id, emoji)}
+          onDelete={(item, forEveryone) => deleteMessage('dm', userId, item.id, forEveryone)}
           onCallBack={callPhase === 'idle' ? (video) => call(video) : undefined}
           empty={
             <div className="mx-auto max-w-sm py-16 text-center">

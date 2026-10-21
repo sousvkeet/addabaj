@@ -230,6 +230,17 @@ await check('Reading on one device clears the notification on the phone', async 
   expect(pushesFor(TOKEN_BO, 'read').length === n, 'a second read push for nothing');
 });
 
+await check('Deleting for everyone takes the message out of the phone’s notification', async () => {
+  const sent = await emit(anaSock, 'dm:send', { to: bo.id, body: 'Oops, delete me' });
+  const id = String(sent.message.id);
+  expect(await waitFor(() => pushesFor(TOKEN_BO, 'message').find((x) => x.data.messageId === id)), 'no message push first');
+  const res = await emit(anaSock, 'msg:delete', { scope: 'dm', messageId: sent.message.id, forEveryone: true });
+  expect(res.ok, `delete: ${JSON.stringify(res)}`);
+  const p = await waitFor(() => pushesFor(TOKEN_BO, 'deleted').find((x) => x.data.messageId === id));
+  expect(p && p.data.scope === 'dm' && p.data.chatId === ana.id, `deleted push: ${JSON.stringify(p?.data)}`);
+  expect(!pushesFor(TOKEN_CY, 'deleted').length, 'someone else’s phone was told');
+});
+
 let roomId;
 await check('Room messages buzz every member who is away, with the room name', async () => {
   const room = await call(ana, 'POST', '/rooms', { name: `Push room ${stamp}`, description: '', maxMembers: 5 });

@@ -4,11 +4,11 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { config } from '../config.js';
-import { one, query } from '../db.js';
+import { one, query, transaction } from '../db.js';
 import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, presence, userChannel } from '../realtime.js';
 import { videoTools } from '../stream/status.js';
-import { deleteRoom, postSystemMessage } from '../services/rooms.js';
+import { announceRoomChanged, attachMember, deleteRoom, detachMember, lockSeat, postSystemMessage } from '../services/rooms.js';
 import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
 import { publicUser } from '../services/users.js';
 import { calls } from '../socket/calls.js';
@@ -103,7 +103,7 @@ const adminUser = (r) => ({
 });
 
 const USER_SELECT = `
-  SELECT u.id, u.email, u.name, u.avatar_hue, u.last_seen_at, u.created_at, u.site_role, u.disabled_at, u.must_change_password,
+  SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at, u.created_at, u.site_role, u.disabled_at, u.must_change_password,
          (SELECT count(*)::int FROM room_members m WHERE m.user_id = u.id) AS rooms,
          ((SELECT count(*) FROM dm_messages d WHERE d.sender_id = u.id)
            + (SELECT count(*) FROM room_messages r WHERE r.sender_id = u.id))::int AS messages
@@ -112,7 +112,7 @@ const USER_SELECT = `
 adminRouter.get('/users', async (req, res) => {
   const { q, limit, offset } = page(req);
   const filter = String(req.query.filter ?? 'all');
-  const where = ['($1 = \'\' OR u.name ILIKE $2 OR u.email ILIKE $2)'];
+  const where = ['($1 = \'\' OR u.name ILIKE $2 OR u.email ILIKE $2 OR u.handle ILIKE $2)'];
   const params = [q, like(q)];
   if (filter === 'online') {
     params.push(presence.list());
@@ -259,6 +259,89 @@ adminRouter.post('/rooms/:id/stop-video', async (req, res) => {
   if (!previous) throw new AppError(409, 'Nothing is playing in this room.');
   await postSystemMessage(id, 'The host stopped the video');
   res.status(204).end();
+});
+
+// ── A room's people: the host can add anyone to any room and remove anyone ──
+
+async function roomPeople(roomId) {
+  const room = await one('SELECT id, name, owner_id, max_members FROM rooms WHERE id = $1', [roomId]);
+  if (!room) throw notFound("That room doesn't exist.");
+  const { rows } = await query(
+    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at, rm.role, rm.joined_at
+     FROM room_members rm JOIN users u ON u.id = rm.user_id
+     WHERE rm.room_id = $1
+     ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,
+    [roomId, room.owner_id],
+  );
+  return {
+    room: { id: room.id, name: room.name, maxMembers: room.max_members, memberCount: rows.length, ownerId: room.owner_id },
+    members: rows.map((r) => ({ ...publicUser(r), role: r.role, owner: r.id === room.owner_id, joinedAt: r.joined_at })),
+  };
+}
+
+adminRouter.get('/rooms/:id/members', async (req, res) => {
+  res.json(await roomPeople(assertUuid(req.params.id, 'room')));
+});
+
+adminRouter.post('/rooms/:id/members', async (req, res) => {
+  const roomId = assertUuid(req.params.id, 'room');
+  const userId = assertUuid(String(req.body?.userId ?? ''), 'person');
+  const target = await one('SELECT name, disabled_at FROM users WHERE id = $1', [userId]);
+  if (!target) throw notFound("That person doesn't exist.");
+  if (target.disabled_at) throw conflict(`${target.name}'s account is switched off. Switch it on first.`);
+  const cancelled = await transaction(async (c) => {
+    const { rows: [member] } = await c.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, userId]);
+    if (member) throw conflict(`${target.name} is already in this room.`);
+    await lockSeat(c, roomId);
+    await c.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)', [roomId, userId]);
+    // An invite they hadn't answered yet isn't needed any more.
+    const { rows } = await c.query(
+      `UPDATE room_invites SET status = 'cancelled', responded_at = now()
+       WHERE room_id = $1 AND invitee_id = $2 AND status = 'pending' RETURNING id`,
+      [roomId, userId],
+    );
+    return rows;
+  });
+  for (const inv of cancelled) getIO()?.to(userChannel(userId)).emit('invite:removed', { inviteId: inv.id });
+  await attachMember(roomId, userId);
+  await postSystemMessage(roomId, `The host added ${target.name}`);
+  announceRoomChanged(roomId);
+  res.status(201).json(await roomPeople(roomId));
+});
+
+adminRouter.delete('/rooms/:id/members/:userId', async (req, res) => {
+  const roomId = assertUuid(req.params.id, 'room');
+  const userId = assertUuid(req.params.userId, 'person');
+  const room = await one('SELECT name, owner_id FROM rooms WHERE id = $1', [roomId]);
+  if (!room) throw notFound("That room doesn't exist.");
+  const target = await one(
+    'SELECT u.name FROM room_members rm JOIN users u ON u.id = rm.user_id WHERE rm.room_id = $1 AND rm.user_id = $2',
+    [roomId, userId],
+  );
+  if (!target) throw notFound("That person isn't in this room.");
+  // Removing whoever started the room hands it to its longest-serving admin
+  // (else its longest-standing member), who becomes an admin.
+  const heir = await transaction(async (c) => {
+    let next = null;
+    if (room.owner_id === userId) {
+      ({ rows: [next] } = await c.query(
+        `SELECT rm.user_id, u.name FROM room_members rm JOIN users u ON u.id = rm.user_id
+         WHERE rm.room_id = $1 AND rm.user_id <> $2
+         ORDER BY (rm.role = 'admin') DESC, rm.joined_at LIMIT 1`,
+        [roomId, userId],
+      ));
+      if (!next) throw conflict(`${target.name} is the only one in ${room.name}. Delete the room instead.`);
+      await c.query('UPDATE rooms SET owner_id = $2 WHERE id = $1', [roomId, next.user_id]);
+      await c.query(`UPDATE room_members SET role = 'admin' WHERE room_id = $1 AND user_id = $2`, [roomId, next.user_id]);
+    }
+    await c.query('DELETE FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, userId]);
+    return next;
+  });
+  detachMember(roomId, userId, 'removed');
+  await postSystemMessage(roomId, `The host removed ${target.name}`);
+  if (heir) await postSystemMessage(roomId, `${heir.name} now runs the room`);
+  announceRoomChanged(roomId);
+  res.json(await roomPeople(roomId));
 });
 
 adminRouter.delete('/rooms/:id', async (req, res) => {

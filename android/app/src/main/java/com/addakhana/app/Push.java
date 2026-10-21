@@ -59,6 +59,9 @@ final class Push {
             case "read":
                 Notifications.clearChat(c, data.get("scope"), data.get("chatId"));
                 break;
+            case "deleted":
+                Notifications.removeMessage(c, data.get("scope"), data.get("chatId"), data.get("messageId"));
+                break;
             case "call":
                 IncomingCall.ring(c, data);
                 break;

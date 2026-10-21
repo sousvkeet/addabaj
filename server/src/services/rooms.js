@@ -20,6 +20,9 @@ export function roomMessage(row) {
       ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue }
       : null,
     replyToId: row.reply_to_id ?? null,
+    deletedAt: row.deleted_at ?? null,
+    // Deleted by a room admin rather than by whoever sent it.
+    deletedByAdmin: !!row.deleted_at && !!row.deleted_by && row.deleted_by !== row.sender_id,
     attachment: null,
     replyTo: null,
     reactions: [],
@@ -27,7 +30,7 @@ export function roomMessage(row) {
 }
 
 export const ROOM_MESSAGE_SELECT = `
-  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id,
+  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id, m.deleted_at, m.deleted_by,
          u.name AS sender_name, u.avatar_hue AS sender_hue
   FROM room_messages m LEFT JOIN users u ON u.id = m.sender_id`;
 
@@ -110,13 +113,17 @@ const SUMMARY_SELECT = `
     r.join_code, (r.join_password_hash IS NOT NULL) AS has_password,
     (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
     (SELECT count(*)::int FROM room_messages m
-       WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id <> rm.user_id) AS unread,
+       WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id <> rm.user_id AND m.deleted_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = rm.user_id AND h.message_id = m.id)) AS unread,
     lm.id AS lm_id, lm.kind AS lm_kind, lm.body AS lm_body, lm.created_at AS lm_created_at,
-    lm.sender_id AS lm_sender_id, lu.name AS lm_sender_name, lu.avatar_hue AS lm_sender_hue
+    lm.sender_id AS lm_sender_id, lm.deleted_at AS lm_deleted_at, lm.deleted_by AS lm_deleted_by,
+    lu.name AS lm_sender_name, lu.avatar_hue AS lm_sender_hue
   FROM room_members rm
   JOIN rooms r ON r.id = rm.room_id
   LEFT JOIN LATERAL (
-    SELECT * FROM room_messages m WHERE m.room_id = r.id ORDER BY m.id DESC LIMIT 1
+    SELECT * FROM room_messages m
+    WHERE m.room_id = r.id AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = rm.user_id AND h.message_id = m.id)
+    ORDER BY m.id DESC LIMIT 1
   ) lm ON true
   LEFT JOIN users lu ON lu.id = lm.sender_id`;
 
@@ -138,7 +145,7 @@ function summary(row) {
     lastMessage: row.lm_id
       ? roomMessage({
           id: row.lm_id, room_id: row.id, kind: row.lm_kind, body: row.lm_body,
-          created_at: row.lm_created_at, sender_id: row.lm_sender_id,
+          created_at: row.lm_created_at, sender_id: row.lm_sender_id, deleted_at: row.lm_deleted_at, deleted_by: row.lm_deleted_by,
           sender_name: row.lm_sender_name, sender_hue: row.lm_sender_hue,
         })
       : null,

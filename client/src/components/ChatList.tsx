@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { NavLink } from 'react-router';
-import { Check, CheckCheck, Clock, MessageCircle, PhoneMissed, Phone, SquarePen, Video } from 'lucide-react';
+import { Ban, Check, CheckCheck, Clock, MessageCircle, Phone, PhoneMissed, SquarePen, Video } from 'lucide-react';
 import { listStamp, messagePreview } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -72,7 +72,9 @@ export function ChatList() {
                       ) : (
                         <>
                           {/* Where my last message has got to: sending, sent, delivered, read. */}
-                          {mine &&
+                          {m.deletedAt ? (
+                            <Ban size={14} className="shrink-0" aria-hidden />
+                          ) : mine &&
                             (m.pending === 'sending' ? (
                               <Clock size={14} className="shrink-0" aria-label="Sending" />
                             ) : m.readAt ? (
@@ -82,7 +84,7 @@ export function ChatList() {
                             ) : m.pending !== 'failed' ? (
                               <Check size={14} className="shrink-0" aria-label="Sent" />
                             ) : null)}
-                          <span className="truncate">{messagePreview(m)}</span>
+                          <span className={`truncate ${m.deletedAt ? 'italic' : ''}`}>{messagePreview(m, mine)}</span>
                         </>
                       )}
                     </span>

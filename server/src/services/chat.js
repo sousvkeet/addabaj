@@ -1,6 +1,8 @@
 // Sending and reading chat and room messages. Used by the live connection and
 // by the REST routes the Android app's notifications call (reply, mark read).
 // `except` is the socket that did it, which already knows.
+import { rm } from 'node:fs/promises';
+import { join } from 'node:path';
 import { query, one, transaction } from '../db.js';
 import { limits } from '../config.js';
 import { AppError, isUuid } from '../errors.js';
@@ -11,9 +13,9 @@ import { DM_COLUMNS, dmMessage } from './dms.js';
 import { enrich } from './messages.js';
 import { receiptsShared } from './privacy.js';
 import { introduce } from './presence.js';
-import { pushChatRead, pushDm, pushRoomMessage } from './push.js';
+import { pushChatRead, pushDeleted, pushDm, pushRoomMessage } from './push.js';
 import { roomMessage } from './rooms.js';
-import { linkAttachment } from './uploads.js';
+import { linkAttachment, uploadDir } from './uploads.js';
 import { findUser } from './users.js';
 
 /** Message text; may be empty when a photo, file or voice message goes with it. */
@@ -150,4 +152,91 @@ export async function readRoom(userId, roomId, messageId, except = null) {
   queueRoomReceipts(roomId, userId);
   toUser(userId, except)?.emit('room:read', { roomId });
   pushChatRead(userId, 'room', roomId);
+}
+
+// ── Deleting ──────────────────────────────────────────────────────────
+
+/** Your own messages can be deleted for everyone this long after sending, as on WhatsApp. */
+export const DELETE_FOR_EVERYONE_MS = 48 * 60 * 60 * 1000;
+
+const TABLES = {
+  dm: { messages: 'dm_messages', hidden: 'dm_hidden', reactions: 'dm_reactions', fk: 'dm_message_id' },
+  room: { messages: 'room_messages', hidden: 'room_hidden', reactions: 'room_reactions', fk: 'room_message_id' },
+};
+const GONE = "That message doesn't exist.";
+
+/** Empties a message for everyone: text, reply, reactions, attachment (its file too). */
+async function eraseMessage(scope, messageId, deletedBy) {
+  const t = TABLES[scope];
+  const files = await transaction(async (c) => {
+    await c.query(
+      scope === 'room'
+        ? `UPDATE room_messages SET body = '', reply_to_id = NULL, deleted_at = now(), deleted_by = $2 WHERE id = $1`
+        : `UPDATE dm_messages SET body = '', meta = NULL, reply_to_id = NULL, deleted_at = now() WHERE id = $1`,
+      scope === 'room' ? [messageId, deletedBy] : [messageId],
+    );
+    await c.query(`DELETE FROM ${t.reactions} WHERE message_id = $1`, [messageId]);
+    const { rows } = await c.query(`DELETE FROM attachments WHERE ${t.fk} = $1 RETURNING stored`, [messageId]);
+    return rows;
+  });
+  for (const f of files) await rm(join(uploadDir, f.stored), { force: true }).catch(() => {});
+  return new Date().toISOString();
+}
+
+/**
+ * Deletes a chat or room message. `forEveryone`: replaced by "This message was
+ * deleted" for everybody (your own messages, within two days; room admins:
+ * anyone's, any time). Otherwise it's hidden from you only, on all your devices.
+ */
+export async function deleteMessage(user, { scope, messageId, forEveryone }) {
+  const id = asId(messageId);
+  if (!id || !TABLES[scope]) throw new AppError(404, GONE);
+  const io = getIO();
+
+  if (scope === 'dm') {
+    const m = await one('SELECT sender_id, recipient_id, kind, created_at, deleted_at FROM dm_messages WHERE id = $1', [id]);
+    if (!m || (m.sender_id !== user.id && m.recipient_id !== user.id)) throw new AppError(404, GONE);
+    const partnerId = m.sender_id === user.id ? m.recipient_id : m.sender_id;
+    if (!forEveryone) {
+      await query('INSERT INTO dm_hidden (user_id, message_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [user.id, id]);
+      io?.to(userChannel(user.id)).emit('msg:hidden', { scope, messageId: id, chatId: partnerId });
+      return { hidden: true };
+    }
+    if (m.deleted_at) return { deletedAt: m.deleted_at };
+    if (m.sender_id !== user.id || m.kind !== 'text') throw new AppError(403, 'You can only delete your own messages for everyone.');
+    if (Date.now() - new Date(m.created_at).getTime() > DELETE_FOR_EVERYONE_MS) {
+      throw new AppError(403, 'Messages can be deleted for everyone only within two days of sending. You can still delete it for yourself.');
+    }
+    const deletedAt = await eraseMessage('dm', id);
+    io?.to(userChannel(m.sender_id)).to(userChannel(m.recipient_id)).emit('msg:deleted', {
+      scope, messageId: id, between: [m.sender_id, m.recipient_id], deletedAt,
+    });
+    pushDeleted([m.recipient_id], { scope, chatId: m.sender_id, messageId: id });
+    return { deletedAt };
+  }
+
+  const m = await one(
+    `SELECT m.room_id, m.sender_id, m.kind, m.created_at, m.deleted_at, rm.role
+     FROM room_messages m JOIN room_members rm ON rm.room_id = m.room_id AND rm.user_id = $2
+     WHERE m.id = $1`,
+    [id, user.id],
+  );
+  if (!m) throw new AppError(404, GONE);
+  if (!forEveryone) {
+    await query('INSERT INTO room_hidden (user_id, message_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [user.id, id]);
+    io?.to(userChannel(user.id)).emit('msg:hidden', { scope, messageId: id, chatId: m.room_id, roomId: m.room_id });
+    return { hidden: true };
+  }
+  if (m.deleted_at) return { deletedAt: m.deleted_at };
+  if (m.kind !== 'text') throw new AppError(403, 'Room notices can only be deleted for yourself.');
+  const own = m.sender_id === user.id;
+  if (!own && m.role !== 'admin') throw new AppError(403, 'Only room admins can delete other people’s messages for everyone.');
+  if (own && m.role !== 'admin' && Date.now() - new Date(m.created_at).getTime() > DELETE_FOR_EVERYONE_MS) {
+    throw new AppError(403, 'Messages can be deleted for everyone only within two days of sending. You can still delete it for yourself.');
+  }
+  const deletedAt = await eraseMessage('room', id, user.id);
+  io?.to(roomChannel(m.room_id)).emit('msg:deleted', { scope, roomId: m.room_id, messageId: id, deletedAt, byAdmin: !own });
+  const { rows } = await query('SELECT user_id FROM room_members WHERE room_id = $1 AND user_id <> $2', [m.room_id, user.id]);
+  pushDeleted(rows.map((r) => r.user_id), { scope, chatId: m.room_id, messageId: id });
+  return { deletedAt, byAdmin: !own };
 }

@@ -73,6 +73,9 @@ export function bindRealtime() {
   socket.on('dm:typing', ({ from, typing }: { from: string; typing: boolean }) => chat().setDmTyping(from, typing));
   socket.on('dm:read', (e: { readerId: string; partnerId: string; readAt: string }) => chat().applyDmRead(e));
   socket.on('msg:reactions', (e: Parameters<ReturnType<typeof useChat.getState>['applyReactions']>[0]) => chat().applyReactions(e));
+  // Deleted for everyone (the marker stays), or hidden by me on another device.
+  socket.on('msg:deleted', (e: Parameters<ReturnType<typeof useChat.getState>['applyDeleted']>[0]) => chat().applyDeleted(e));
+  socket.on('msg:hidden', (e: Parameters<ReturnType<typeof useChat.getState>['applyHidden']>[0]) => chat().applyHidden(e));
 
   // Rooms
   socket.on('room:message', (m: RoomMessage, ack?: (ok: boolean) => void) => {

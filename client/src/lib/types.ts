@@ -82,6 +82,8 @@ export type DmMessage = MessageExtras & {
   /** When the other person's app got it (null: not yet). */
   deliveredAt: string | null;
   readAt: string | null;
+  /** Deleted for everyone: only a "This message was deleted" marker remains. */
+  deletedAt?: string | null;
   /** Client-only: optimistic send state. */
   pending?: 'sending' | 'failed';
   tempId?: string;
@@ -100,6 +102,9 @@ export type RoomMessage = MessageExtras & {
   body: string;
   createdAt: string;
   sender: { id: string; name: string; hue: number } | null;
+  /** Deleted for everyone (by its sender, or by a room admin). */
+  deletedAt?: string | null;
+  deletedByAdmin?: boolean;
   pending?: 'sending' | 'failed';
   tempId?: string;
 };

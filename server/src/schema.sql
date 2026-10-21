@@ -198,3 +198,21 @@ CREATE INDEX IF NOT EXISTS dm_recipient_idx ON dm_messages (recipient_id, sender
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS join_code text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS join_password_hash text;
 CREATE UNIQUE INDEX IF NOT EXISTS rooms_join_code_key ON rooms (join_code);
+
+-- Deleting messages. "For everyone" empties a message (text, file, reactions)
+-- and leaves a "This message was deleted" marker in its place; in rooms,
+-- deleted_by says when an admin did it. "For me" hides a message from one
+-- person only.
+ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS deleted_by uuid REFERENCES users(id) ON DELETE SET NULL;
+CREATE TABLE IF NOT EXISTS dm_hidden (
+  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id bigint NOT NULL REFERENCES dm_messages(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, message_id)
+);
+CREATE TABLE IF NOT EXISTS room_hidden (
+  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  message_id bigint NOT NULL REFERENCES room_messages(id) ON DELETE CASCADE,
+  PRIMARY KEY (user_id, message_id)
+);

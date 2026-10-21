@@ -220,8 +220,9 @@ roomsRouter.get('/:id/messages', async (req, res) => {
   const { rows } = await query(
     `${ROOM_MESSAGE_SELECT}
      WHERE m.room_id = $1 AND ($2::bigint IS NULL OR m.id < $2)
+       AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = $4 AND h.message_id = m.id)
      ORDER BY m.id DESC LIMIT $3`,
-    [roomId, before, limit + 1],
+    [roomId, before, limit + 1, req.userId],
   );
   res.json({ messages: await enrich('room', rows.slice(0, limit).reverse().map(roomMessage)), hasMore: rows.length > limit });
 });

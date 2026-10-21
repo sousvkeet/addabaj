@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router';
 import { AudioLines, KeyRound, MonitorPlay, Plus, Users } from 'lucide-react';
-import { listStamp, messagePreview } from '../lib/format';
+import { deletedText, listStamp, messagePreview } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { Avatar, hueFromId } from './ui/Avatar';
@@ -58,7 +58,7 @@ export function RoomList() {
         {list.map((room) => {
           const m = room.lastMessage;
           const talking = voice[room.id]?.length ?? 0;
-          const sender = m?.kind === 'text' ? (m.sender?.id === me?.id ? 'You' : m.sender?.name.split(' ')[0]) : null;
+          const sender = m?.kind === 'text' && !m.deletedAt ? (m.sender?.id === me?.id ? 'You' : m.sender?.name.split(' ')[0]) : null;
           return (
             <li key={room.id}>
               <NavLink
@@ -77,7 +77,13 @@ export function RoomList() {
                   </span>
                   <span className="flex items-center gap-2">
                     <span className={`min-w-0 flex-1 truncate text-[14px] ${room.unread ? 'font-medium text-ink' : 'text-ink-soft'}`}>
-                      {m ? (sender ? `${sender}: ${messagePreview(m)}` : m.body) : room.description || 'No messages yet'}
+                      {m
+                        ? m.deletedAt
+                          ? deletedText(m.sender?.id === me?.id, m.deletedByAdmin)
+                          : sender
+                            ? `${sender}: ${messagePreview(m)}`
+                            : m.body
+                        : room.description || 'No messages yet'}
                     </span>
                     {room.watching && (
                       <span className="inline-flex items-center rounded-full bg-brand-2/15 px-1.5 leading-5 text-brand-2" title={`Watching ${room.watching}`}>

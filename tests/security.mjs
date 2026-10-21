@@ -329,7 +329,7 @@ await check('bad input gets a clear 4xx answer, never a crash or a 500', async (
   expect(await alive(), 'the server went down');
 });
 
-const EVENTS = ['call:accept', 'call:camera', 'call:decline', 'call:end', 'call:mute', 'call:signal', 'call:start', 'dm:read', 'dm:send', 'dm:typing', 'live:leave', 'live:progress', 'live:resume', 'live:signal', 'live:start', 'live:stop', 'live:watch', 'msg:react', 'room:read', 'room:send', 'room:typing', 'time:now', 'voice:join', 'voice:leave', 'voice:mute', 'voice:signal', 'watch:control', 'watch:scan', 'watch:set', 'watch:stop'];
+const EVENTS = ['call:accept', 'call:camera', 'call:decline', 'call:end', 'call:mute', 'call:signal', 'call:start', 'dm:read', 'dm:send', 'dm:typing', 'live:leave', 'live:progress', 'live:resume', 'live:signal', 'live:start', 'live:stop', 'live:watch', 'msg:delete', 'msg:react', 'room:read', 'room:send', 'room:typing', 'time:now', 'voice:join', 'voice:leave', 'voice:mute', 'voice:signal', 'watch:control', 'watch:scan', 'watch:set', 'watch:stop'];
 const BAD = [null, 42, 'text', [], true, { roomId: {}, to: [], callId: null }, { roomId: 'x'.repeat(5000), body: { $ne: 1 } }, { roomId: room.id, messageId: '1; DROP TABLE users', emoji: '<script>' }, { to: B.id, data: { sdp: { type: 'offer', sdp: 42 } }, callId: '../../' }];
 
 await check('every live event survives garbage: the server stays up and answers with an error', async () => {

@@ -120,6 +120,12 @@ To try calls by yourself, open a second browser profile or an incognito window a
   - Tap the microphone to record a voice message (up to 5 minutes), then send or discard it. Voice messages show a waveform you can tap to jump around, and play at 1×, 1.5× or 2×.
   - Upload progress shows on the message, and a failed send can be retried without picking the file again.
 - **Replies and reactions:** reply to any message (its quote is shown, and tapping it jumps to the original), and react with 👍 ❤️ 😂 😮 😢 🙏. On a computer, hover a message for the buttons; on a phone, press and hold it.
+- **Deleting messages** (in rooms too), as on WhatsApp. Hover a message and choose the bin (on a phone, press and hold it and choose Delete):
+  - **Delete for me** removes any message from your own view, on all your devices. It also leaves the chat list preview and the unread count. Everyone else still sees it.
+  - **Delete for everyone** is for your own messages, within two days of sending. Everyone sees "This message was deleted" in its place (you see "You deleted this message").
+  - **What's removed:** the text, photo or file (from the server's disk too) and the reactions are removed for good. Replies quoting it show it as deleted.
+  - **Phones:** a phone still showing it in a notification takes it out.
+  - **Rooms:** room admins can delete any member's message for everyone, at any time, which shows as "deleted by an admin". Room notices and call records can only be deleted for yourself.
 
 ### Voice and video calls
 
@@ -215,6 +221,10 @@ The person running the site logs in as **`admin` / `admin`** and gets an **Admin
   - switch an account off (they're logged out with a reason and can't log back in),
   - add a person by hand, or remove an account with its messages and rooms.
 - **Rooms:** every room with its owner, members, messages, who's in voice and what's playing. Stop a video or live stream, or delete a room (its members are told).
+- **A room's people** (a room's menu › Add or remove people, or click its member count): the host can add anyone on the site to any room, whether or not the host is in it. Find people by name, email or user ID. The host can also remove anyone, admins included.
+  - Each change is posted in the room ("The host added Mitali"), and the person is told live.
+  - Removing whoever started the room hands it to its longest-serving admin (or its longest-standing member), who becomes an admin. The last person can't be removed; delete the room instead.
+  - The room's member limit still applies; its admins can raise it.
 - **Site settings:** close sign-ups (the sign-up page then says so, and only a host admin can add people), and post an announcement banner that everyone sees live and can dismiss.
 - The site always keeps at least one host admin, and you can't demote or switch off yourself.
 
@@ -387,8 +397,9 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 | `npm run test:receipts` | One tick to someone offline, two ticks the moment they come back (for every waiting message), two at once when they're online, coloured when they open the chat; message info times; "Last seen just now" and back to "Online"; read receipts off (the sender only sees delivered, both ways, even after a reload); last seen hidden (no status either way, and the API doesn't reveal it); room ticks and "Seen by", room message info and member status; a faked read-ahead and someone else's message info refused. |
 | `npm run test:push` | Push notifications against a fake Firebase (starts its own server, no dev servers needed): the Google sign-in; who gets a push and when (offline, app in the background, not while looking); what it carries; clearing after reading elsewhere; room messages; calls ringing a closed app, answered or declined from the phone, and missed; replying and marking read from a notification; uninstalled apps forgotten; signing out and password changes; outsiders and other websites refused. |
 | `npm run test:people` | No list of people: exact user ID and email lookups only, rate-limited; strangers can't read each other or see each other online, contacts can; changing your user ID; rooms joined with an invite code, open and with a password; wrong passwords, full rooms, unknown codes; only admins see, reset or lock the code; guessing limits; in the app: starting a chat by user ID, your ID in the account menu, a join link opened while logged out, and starting a password room. |
+| `npm run test:delete` | Deleting messages: for everyone (marker for both, live; text, photo file, reactions and quotes removed; no reacting to it after); only the sender can, within two days, and not call records; for me (gone for me on all my devices only, out of the chat preview and unread count); rooms: own messages, admins deleting anyone's ("deleted by an admin"), notices only for yourself, outsiders refused; bad input; in the app: hover → Delete → "Delete for everyone" seen live on a phone, and press-and-hold on a phone offering only "Delete for me" for someone else's message. |
 | `npm run test:security` | Logged-out access; forged login cookies; requests and live connections from other websites; security headers; outsiders reaching other people's rooms, chats and files; members running a room; admin pages; relay links; signing out other sessions after a password change; bad input to every endpoint (no 500s); all 30 live events × 9 kinds of garbage (the server stays up); message limits and flooding; HTML and scripts in messages, names and rooms showing as plain text. |
-| `npm run test:admin` | The `admin` / `admin` login; the Admin tab and API only for host admins; the overview; roles, switching accounts off and on, new passwords, adding and removing people; deleting rooms; closing sign-ups; announcements; changing your own password; the admin pages on a phone. The admin must still have its default password (`npm run admin:reset`). |
+| `npm run test:admin` | The `admin` / `admin` login; the Admin tab and API only for host admins; the overview; roles, switching accounts off and on, new passwords, adding and removing people; deleting rooms; adding anyone to a room and removing anyone, including its owner (the room passes on); closing sign-ups; announcements; changing your own password; the admin pages on a phone. The admin must still have its default password (`npm run admin:reset`). |
 
 ## Project layout
 

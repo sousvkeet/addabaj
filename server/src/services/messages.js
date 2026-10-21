@@ -34,7 +34,7 @@ export async function enrich(scope, messages) {
     query(`SELECT * FROM attachments WHERE ${s.fk} = ANY($1::bigint[])`, [ids]),
     replyIds.length
       ? query(
-          `SELECT m.id, m.body, m.sender_id, u.name AS sender_name, a.kind AS a_kind, a.name AS a_name, a.duration AS a_duration
+          `SELECT m.id, m.body, m.sender_id, m.deleted_at, u.name AS sender_name, a.kind AS a_kind, a.name AS a_name, a.duration AS a_duration
            FROM ${s.table} m
            LEFT JOIN users u ON u.id = m.sender_id
            LEFT JOIN attachments a ON a.${s.fk} = m.id
@@ -48,7 +48,7 @@ export async function enrich(scope, messages) {
   const replyBy = new Map(
     replies.rows.map((r) => [
       Number(r.id),
-      {
+      r.deleted_at ? { id: Number(r.id), deleted: true } : {
         id: Number(r.id),
         senderId: r.sender_id,
         senderName: r.sender_name ?? 'Someone',

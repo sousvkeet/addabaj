@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AudioLines, LoaderCircle, MonitorPlay, Radio, Search, Square, Trash2 } from 'lucide-react';
+import { AudioLines, LoaderCircle, MonitorPlay, Radio, Search, Square, Trash2, Users } from 'lucide-react';
 import { api, errorMessage } from '../../lib/api';
 import { listStamp } from '../../lib/format';
 import { toast } from '../../store/ui';
@@ -8,6 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { ConfirmDialog } from '../../components/ui/Dialog';
 import { Menu, type MenuItem } from '../../components/ui/Menu';
 import { AdminPage, Chip, shortDate, type AdminRoom, type Page } from './shared';
+import { RoomMembers } from './RoomMembers';
 
 const PAGE = 40;
 
@@ -17,6 +18,7 @@ export function RoomsAdmin() {
   const [error, setError] = useState('');
   const [loadingMore, setLoadingMore] = useState(false);
   const [deleting, setDeleting] = useState<AdminRoom | null>(null);
+  const [people, setPeople] = useState<AdminRoom | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(
@@ -59,6 +61,7 @@ export function RoomsAdmin() {
   }
 
   const actions = (r: AdminRoom): MenuItem[] => [
+    { label: 'Add or remove people', icon: <Users size={16} />, onSelect: () => setPeople(r) },
     ...(r.watching ? [{ label: r.live ? 'Stop the live stream' : 'Stop the video', icon: <Square size={15} />, onSelect: () => void stopVideo(r) }] : []),
     { label: 'Delete room', icon: <Trash2 size={16} />, danger: true, onSelect: () => setDeleting(r) },
   ];
@@ -128,7 +131,9 @@ export function RoomsAdmin() {
                 <div>
                   <dt className="text-ink-soft">Members</dt>
                   <dd className="font-semibold tabular-nums">
-                    {r.memberCount} of {r.maxMembers}
+                    <button type="button" onClick={() => setPeople(r)} className="hover:underline" aria-label={`People in ${r.name}: ${r.memberCount} of ${r.maxMembers}`}>
+                      {r.memberCount} of {r.maxMembers}
+                    </button>
                   </dd>
                 </div>
                 <div>
@@ -167,6 +172,14 @@ export function RoomsAdmin() {
           </Button>
         </div>
       )}
+
+      <RoomMembers
+        room={people}
+        onClose={() => setPeople(null)}
+        onChanged={(memberCount, owner) =>
+          setData((d) => d && { ...d, items: d.items.map((r) => (r.id === people?.id ? { ...r, memberCount, owner: owner ?? r.owner } : r)) })
+        }
+      />
 
       <ConfirmDialog
         open={!!deleting}

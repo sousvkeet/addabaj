@@ -248,6 +248,39 @@ final class Notifications {
         postSummary(c);
     }
 
+    /** A message was deleted for everyone: take it out of its chat's notification (gone when it was the only one). */
+    static synchronized void removeMessage(Context c, String scope, String chatId, String messageId) {
+        if (scope == null || chatId == null || messageId == null) return;
+        String key = key(scope, chatId);
+        JSONObject chat = load(c, key);
+        if (chat == null) return;
+        try {
+            long id = Long.parseLong(messageId);
+            JSONArray old = chat.getJSONArray("messages");
+            JSONArray kept = new JSONArray();
+            int removed = 0;
+            for (int i = 0; i < old.length(); i++) {
+                JSONObject m = old.getJSONObject(i);
+                if (m.optLong("id") == id && !m.optBoolean("self")) removed++;
+                else kept.put(m);
+            }
+            if (removed == 0) return;
+            boolean othersLeft = false;
+            for (int i = 0; i < kept.length(); i++) if (!kept.getJSONObject(i).optBoolean("self")) othersLeft = true;
+            if (!othersLeft) {
+                clearChat(c, scope, chatId);
+                return;
+            }
+            chat.put("messages", kept);
+            chat.put("unread", Math.max(1, chat.optInt("unread", 1) - removed));
+            store(c).edit().putString(key, chat.toString()).apply();
+            post(c, key, chat, false);
+            postSummary(c);
+        } catch (Exception ignored) {
+            // A malformed push; leave the notification as it is.
+        }
+    }
+
     /** The notification was swiped away: forget its messages, keep everything else. */
     static synchronized void forget(Context c, String scope, String chatId) {
         store(c).edit().remove(key(scope, chatId)).apply();

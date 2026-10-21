@@ -15,13 +15,15 @@ dmsRouter.get('/', async (req, res) => {
        SELECT DISTINCT ON (partner) partner, ${DM_COLUMNS}
        FROM (
          SELECT CASE WHEN sender_id = $1 THEN recipient_id ELSE sender_id END AS partner, *
-         FROM dm_messages WHERE sender_id = $1 OR recipient_id = $1
+         FROM dm_messages d WHERE (sender_id = $1 OR recipient_id = $1)
+           AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id)
        ) m
        ORDER BY partner, id DESC
      )
      SELECT l.*, u.email, u.handle, u.name, u.avatar_hue, u.last_seen_at,
        (SELECT count(*)::int FROM dm_messages d
-         WHERE d.recipient_id = $1 AND d.sender_id = l.partner AND d.read_at IS NULL) AS unread
+         WHERE d.recipient_id = $1 AND d.sender_id = l.partner AND d.read_at IS NULL AND d.deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id)) AS unread
      FROM latest l JOIN users u ON u.id = l.partner
      ORDER BY l.id DESC`,
     [req.userId],
@@ -43,6 +45,7 @@ dmsRouter.get('/:userId/messages', async (req, res) => {
     `SELECT ${DM_COLUMNS} FROM dm_messages
      WHERE ((sender_id = $1 AND recipient_id = $2) OR (sender_id = $2 AND recipient_id = $1))
        AND ($3::bigint IS NULL OR id < $3)
+       AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = dm_messages.id)
      ORDER BY id DESC LIMIT $4`,
     [req.userId, partner, before, limit + 1],
   );

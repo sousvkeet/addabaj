@@ -76,5 +76,12 @@ export function attachmentLabel(a: { kind: string; name: string; duration?: numb
 }
 
 /** One line for a chat or room list: the text, or what was sent if there's no text. */
-export const messagePreview = (m: { body: string; attachment?: { kind: string; name: string; duration?: number | null } | null }) =>
-  m.body || (m.attachment ? attachmentLabel(m.attachment) : '');
+/** What a message says in a list ("Photo", "You deleted this message"…). */
+export const messagePreview = (
+  m: { body: string; deletedAt?: string | null; attachment?: { kind: string; name: string; duration?: number | null } | null },
+  mine = false,
+) => (m.deletedAt ? deletedText(mine) : m.body || (m.attachment ? attachmentLabel(m.attachment) : ''));
+
+/** The marker left where a message was deleted for everyone. */
+export const deletedText = (mine: boolean, byAdmin = false) =>
+  mine && !byAdmin ? 'You deleted this message' : byAdmin ? 'This message was deleted by an admin' : 'This message was deleted';

@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  ArrowDown, Check, CheckCheck, Clock, Download, FileText, Info, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Video, X,
+  ArrowDown, Ban, Check, CheckCheck, Clock, Download, FileText, Info, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Trash2, Video, X,
 } from 'lucide-react';
-import { attachmentLabel, clock, dayLabel, duration, formatBytes, sameDay } from '../lib/format';
+import { attachmentLabel, clock, dayLabel, deletedText, duration, formatBytes, sameDay } from '../lib/format';
 import type { Attachment, Draft, Reaction, Receipt, ReplyRef } from '../lib/types';
 import { Avatar } from './ui/Avatar';
+import { Button } from './ui/Button';
+import { Dialog } from './ui/Dialog';
 import { VoicePlayer } from './VoicePlayer';
 
 export type ThreadItem = {
@@ -29,6 +31,11 @@ export type ThreadItem = {
   reactions?: Reaction[];
   upload?: number;
   draft?: Draft;
+  /** Deleted for everyone: shown as "This message was deleted". */
+  deleted?: boolean;
+  deletedByAdmin?: boolean;
+  /** I may delete it for everyone (my own, recent; or anyone's, as a room admin). */
+  canDeleteForEveryone?: boolean;
 };
 
 type Props = {
@@ -45,10 +52,15 @@ type Props = {
   /** "Message info" for my messages: when it was delivered and read, and by whom. */
   onInfo?: (item: ThreadItem) => void;
   onCallBack?: (video: boolean) => void;
+  /** Delete for me, or for everyone; resolves true once done. */
+  onDelete?: (item: ThreadItem, forEveryone: boolean) => Promise<boolean>;
   empty?: ReactNode;
 };
 
 export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+/** Your own messages can be deleted for everyone this long after sending (the server checks too). */
+export const DELETE_FOR_EVERYONE_MS = 48 * 60 * 60 * 1000;
+export const recentEnoughToDelete = (createdAt: string) => Date.now() - new Date(createdAt).getTime() < DELETE_FOR_EVERYONE_MS;
 const GROUP_GAP_MS = 5 * 60 * 1000;
 
 /** The quote a reply carries, from the message being replied to. */
@@ -64,7 +76,7 @@ export function replyRefFor(item: ThreadItem): ReplyRef {
 }
 
 export function MessageList({
-  items, loaded, hasMore, loadingMore, onLoadOlder, showSenders, meId, onRetry, onReply, onReact, onInfo, onCallBack, empty,
+  items, loaded, hasMore, loadingMore, onLoadOlder, showSenders, meId, onRetry, onReply, onReact, onInfo, onCallBack, onDelete, empty,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -72,6 +84,7 @@ export function MessageList({
   const [unseen, setUnseen] = useState(0);
   const [viewing, setViewing] = useState<Attachment | null>(null);
   const [sheetFor, setSheetFor] = useState<ThreadItem | null>(null);
+  const [deleting, setDeleting] = useState<ThreadItem | null>(null);
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -161,6 +174,7 @@ export function MessageList({
                   onView={setViewing}
                   onJump={jumpTo}
                   onCallBack={onCallBack}
+                  onDelete={onDelete ? setDeleting : undefined}
                 />
               </div>
             );
@@ -198,8 +212,17 @@ export function MessageList({
             onReact(sheetFor, emoji);
             setSheetFor(null);
           }}
+          onDelete={
+            onDelete
+              ? () => {
+                  setDeleting(sheetFor);
+                  setSheetFor(null);
+                }
+              : undefined
+          }
         />
       )}
+      {onDelete && <DeleteDialog item={deleting} onClose={() => setDeleting(null)} onDelete={onDelete} />}
     </div>
   );
 }
@@ -219,10 +242,11 @@ type MessageProps = {
   onView: (a: Attachment) => void;
   onJump: (id: number) => void;
   onCallBack?: (video: boolean) => void;
+  onDelete?: (item: ThreadItem) => void;
 };
 
 function Message(props: MessageProps) {
-  const { item, groupStart, showSender, meId, onRetry, onReply, onInfo, onReact, onOpenSheet, onView, onJump, onCallBack } = props;
+  const { item, groupStart, showSender, meId, onRetry, onReply, onInfo, onReact, onOpenSheet, onView, onJump, onCallBack, onDelete } = props;
   const [picking, setPicking] = useState(false);
   const pressTimer = useRef(0);
 
@@ -262,6 +286,8 @@ function Message(props: MessageProps) {
     );
   }
 
+  if (item.deleted) return <DeletedMessage {...props} />;
+
   const sender = item.sender;
   const showName = showSender && !item.mine && groupStart && sender;
   const nameStyle = sender ? ({ '--h': sender.hue } as CSSProperties) : undefined;
@@ -291,7 +317,14 @@ function Message(props: MessageProps) {
         <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} size={32} />}</span>
       )}
       {item.mine && canAct && (
-        <Actions picking={picking} setPicking={setPicking} onReply={() => onReply(item)} onReact={(e) => onReact(item, e)} onInfo={onInfo ? () => onInfo(item) : undefined} />
+        <Actions
+          picking={picking}
+          setPicking={setPicking}
+          onReply={() => onReply(item)}
+          onReact={(e) => onReact(item, e)}
+          onInfo={onInfo ? () => onInfo(item) : undefined}
+          onDelete={onDelete ? () => onDelete(item) : undefined}
+        />
       )}
       <div className={`flex max-w-[min(78%,560px)] flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
         {showName && (
@@ -317,7 +350,7 @@ function Message(props: MessageProps) {
             >
               <span className="block text-[12.5px] font-semibold">{item.replyTo.senderId === meId ? 'You' : item.replyTo.senderName}</span>
               <span className="block truncate text-[13px] opacity-80">
-                {item.replyTo.deleted ? 'Message unavailable' : item.replyTo.body || (item.replyTo.attachment ? attachmentLabel(item.replyTo.attachment) : '')}
+                {item.replyTo.deleted ? 'This message was deleted' : item.replyTo.body || (item.replyTo.attachment ? attachmentLabel(item.replyTo.attachment) : '')}
               </span>
             </button>
           )}
@@ -378,7 +411,15 @@ function Message(props: MessageProps) {
           </button>
         )}
       </div>
-      {!item.mine && canAct && <Actions picking={picking} setPicking={setPicking} onReply={() => onReply(item)} onReact={(e) => onReact(item, e)} />}
+      {!item.mine && canAct && (
+        <Actions
+          picking={picking}
+          setPicking={setPicking}
+          onReply={() => onReply(item)}
+          onReact={(e) => onReact(item, e)}
+          onDelete={onDelete ? () => onDelete(item) : undefined}
+        />
+      )}
     </div>
   );
 }
@@ -414,12 +455,14 @@ function Actions({
   onReply,
   onReact,
   onInfo,
+  onDelete,
 }: {
   picking: boolean;
   setPicking: (v: boolean) => void;
   onReply: () => void;
   onReact: (emoji: string) => void;
   onInfo?: () => void;
+  onDelete?: () => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -450,6 +493,11 @@ function Actions({
       {onInfo && (
         <button type="button" aria-label="Message info" onClick={onInfo} className="rounded-full p-1.5 text-ink-soft hover:bg-subtle hover:text-ink">
           <Info size={16} />
+        </button>
+      )}
+      {onDelete && (
+        <button type="button" aria-label="Delete message" onClick={onDelete} className="rounded-full p-1.5 text-ink-soft hover:bg-danger/10 hover:text-danger">
+          <Trash2 size={16} />
         </button>
       )}
       {picking && (
@@ -579,12 +627,14 @@ function ActionSheet({
   onReply,
   onReact,
   onInfo,
+  onDelete,
 }: {
   item: ThreadItem;
   onClose: () => void;
   onReply: () => void;
   onReact: (emoji: string) => void;
   onInfo?: () => void;
+  onDelete?: () => void;
 }) {
   return (
     <div className="fixed inset-0 z-[65] flex items-end bg-[rgb(6_8_22/0.55)] backdrop-blur-[3px]" onClick={onClose}>
@@ -594,6 +644,7 @@ function ActionSheet({
         className="pop-in w-full rounded-t-[28px] border-t border-line bg-surface p-4 pb-[max(16px,env(safe-area-inset-bottom))]"
         onClick={(e) => e.stopPropagation()}
       >
+        {!item.deleted && (
         <div className="flex justify-between gap-1">
           {QUICK_REACTIONS.map((e) => (
             <button key={e} type="button" aria-label={`React ${e}`} onClick={() => onReact(e)} className="flex size-12 items-center justify-center rounded-full bg-subtle text-[24px]">
@@ -601,11 +652,14 @@ function ActionSheet({
             </button>
           ))}
         </div>
-        <div className="mt-3 space-y-1">
-          <button type="button" onClick={onReply} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
-            <Reply size={19} />
-            Reply
-          </button>
+        )}
+        <div className={`space-y-1 ${item.deleted ? '' : 'mt-3'}`}>
+          {!item.deleted && (
+            <button type="button" onClick={onReply} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
+              <Reply size={19} />
+              Reply
+            </button>
+          )}
           {onInfo && (
             <button type="button" onClick={onInfo} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
               <Info size={19} />
@@ -623,9 +677,116 @@ function ActionSheet({
               Download
             </a>
           )}
+          {onDelete && (
+            <button type="button" onClick={onDelete} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium text-danger hover:bg-danger/10">
+              <Trash2 size={19} />
+              Delete
+            </button>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+/** Where a message was deleted for everyone: a quiet marker that keeps its place. */
+function DeletedMessage({ item, groupStart, showSender, onOpenSheet, onDelete }: MessageProps) {
+  const pressTimer = useRef(0);
+  const sender = item.sender;
+  const canAct = item.id > 0 && !!onDelete;
+  const touchHandlers = canAct
+    ? {
+        onPointerDown: (e: React.PointerEvent) => {
+          if (e.pointerType !== 'touch') return;
+          pressTimer.current = window.setTimeout(() => onOpenSheet(item), 450);
+        },
+        onPointerUp: () => window.clearTimeout(pressTimer.current),
+        onPointerMove: () => window.clearTimeout(pressTimer.current),
+        onPointerCancel: () => window.clearTimeout(pressTimer.current),
+      }
+    : {};
+  const remove = canAct ? (
+    <button
+      type="button"
+      aria-label="Delete message"
+      onClick={() => onDelete!(item)}
+      className="mb-1 hidden shrink-0 self-center rounded-full p-1.5 text-ink-soft opacity-0 group-hover:opacity-100 hover:bg-danger/10 hover:text-danger focus:opacity-100 [@media(hover:hover)]:block"
+    >
+      <Trash2 size={16} />
+    </button>
+  ) : null;
+  return (
+    <div id={item.id ? `msg-${item.id}` : undefined} className={`group flex items-end gap-2 ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}>
+      {showSender && !item.mine && (
+        <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} size={32} />}</span>
+      )}
+      {item.mine && remove}
+      <div className={`flex max-w-[min(78%,560px)] flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
+        {showSender && !item.mine && groupStart && sender && (
+          <span className="mb-1 ml-1 text-[12.5px] font-bold text-ink-soft">{sender.name}</span>
+        )}
+        <div
+          {...touchHandlers}
+          role="note"
+          className="flex items-center gap-2 rounded-[22px] border border-dashed border-line bg-subtle/40 px-4 py-2 text-[14px] text-ink-soft italic"
+        >
+          <Ban size={14} className="shrink-0" aria-hidden />
+          <span>{deletedText(item.mine, item.deletedByAdmin)}</span>
+          <span className="ml-1 text-[11.5px] not-italic opacity-80">{clock(item.createdAt)}</span>
+        </div>
+      </div>
+      {!item.mine && remove}
+    </div>
+  );
+}
+
+/** "Delete message?": for everyone (when allowed) or just for me. */
+function DeleteDialog({
+  item,
+  onClose,
+  onDelete,
+}: {
+  item: ThreadItem | null;
+  onClose: () => void;
+  onDelete: (item: ThreadItem, forEveryone: boolean) => Promise<boolean>;
+}) {
+  const [busy, setBusy] = useState<'everyone' | 'me' | null>(null);
+  const run = async (forEveryone: boolean) => {
+    if (!item) return;
+    setBusy(forEveryone ? 'everyone' : 'me');
+    const ok = await onDelete(item, forEveryone);
+    setBusy(null);
+    if (ok) onClose();
+  };
+  const everyone = !!item && !item.deleted && !!item.canDeleteForEveryone;
+  return (
+    <Dialog
+      open={!!item}
+      onClose={onClose}
+      width={400}
+      title="Delete message?"
+      description={
+        everyone
+          ? 'Delete it for everyone in this chat, or only from your own view.'
+          : item?.deleted
+            ? 'This removes the marker from your view.'
+            : 'This removes it from your view. Others in the chat still see it.'
+      }
+    >
+      <div className="flex flex-col gap-2">
+        {everyone && (
+          <Button variant="danger" busy={busy === 'everyone'} disabled={!!busy} onClick={() => void run(true)}>
+            Delete for everyone
+          </Button>
+        )}
+        <Button variant={everyone ? 'soft' : 'danger'} busy={busy === 'me'} disabled={!!busy} onClick={() => void run(false)}>
+          Delete for me
+        </Button>
+        <Button variant="ghost" disabled={!!busy} onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </Dialog>
   );
 }
 

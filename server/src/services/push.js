@@ -232,6 +232,18 @@ export function pushChatRead(userId, scope, chatId) {
   pushToUser(userId, { type: 'read', scope, chatId }).catch(failed);
 }
 
+/**
+ * A message was deleted for everyone: phones still showing it in a
+ * notification take it out (only those with a notification for that chat).
+ */
+export function pushDeleted(userIds, { scope, chatId, messageId }) {
+  if (!account) return;
+  for (const userId of userIds) {
+    if (!pushedChats.get(userId)?.has(`${scope}:${chatId}`)) continue;
+    pushToUser(userId, { type: 'deleted', scope, chatId, messageId }).catch(failed);
+  }
+}
+
 /** Rings the callee's phones. Short-lived: a call nobody answered in time is no use later. */
 export function pushCall(call, caller) {
   return pushToUser(

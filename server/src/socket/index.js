@@ -5,7 +5,7 @@ import { presence, roomChannel, userChannel } from '../realtime.js';
 import { findUser } from '../services/users.js';
 import { hidesPresence } from '../services/privacy.js';
 import { onlineContacts, tellContacts } from '../services/presence.js';
-import { asId, readDm, readRoom, sendDm, sendRoomMessage } from '../services/chat.js';
+import { asId, deleteMessage, readDm, readRoom, sendDm, sendRoomMessage } from '../services/chat.js';
 import { markAllRoomsDelivered, markDmDelivered } from './receipts.js';
 import { toggleReaction } from '../services/messages.js';
 import { calls } from './calls.js';
@@ -14,8 +14,9 @@ import { guardSocket, handle, rateLimiter } from './util.js';
 import { voice } from './voice.js';
 import { registerWatch } from './watch.js';
 
-// Stops reaction floods: 30 per 10 s per person.
+// Stops reaction and delete floods: 30 per 10 s per person.
 const canReact = rateLimiter(30, 10_000);
+const canDelete = rateLimiter(30, 10_000);
 
 // One emoji (with skin tone / joiner / variation parts), nothing else.
 const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\u200d|\ufe0f)+$/u;
@@ -117,8 +118,9 @@ function registerRoomChat(io, socket) {
     if (!e || e.length > 16 || !EMOJI.test(e)) throw new AppError(400, 'Pick an emoji.');
     if (!canReact(userId)) throw new AppError(429, 'Slow down a little.');
     if (scope === 'dm') {
-      const m = await one('SELECT sender_id, recipient_id FROM dm_messages WHERE id = $1', [id]);
+      const m = await one('SELECT sender_id, recipient_id, deleted_at FROM dm_messages WHERE id = $1', [id]);
       if (!m || (m.sender_id !== userId && m.recipient_id !== userId)) throw new AppError(404, 'That message doesn’t exist.');
+      if (m.deleted_at) throw new AppError(409, 'That message was deleted.');
       const reactions = await toggleReaction('dm', id, userId, e);
       io.to(userChannel(m.sender_id)).to(userChannel(m.recipient_id)).emit('msg:reactions', {
         scope, messageId: id, between: [m.sender_id, m.recipient_id], reactions,
@@ -126,14 +128,21 @@ function registerRoomChat(io, socket) {
       return { reactions };
     }
     const m = await one(
-      `SELECT m.room_id FROM room_messages m
+      `SELECT m.room_id, m.deleted_at FROM room_messages m
        WHERE m.id = $1 AND EXISTS (SELECT 1 FROM room_members r WHERE r.room_id = m.room_id AND r.user_id = $2)`,
       [id, userId],
     );
     if (!m) throw new AppError(404, 'That message doesn’t exist.');
+    if (m.deleted_at) throw new AppError(409, 'That message was deleted.');
     const reactions = await toggleReaction('room', id, userId, e);
     io.to(roomChannel(m.room_id)).emit('msg:reactions', { scope, roomId: m.room_id, messageId: id, reactions });
     return { reactions };
+  }));
+
+  // Delete a chat or room message for yourself, or for everyone (see services/chat.js).
+  socket.on('msg:delete', handle(async ({ scope, messageId, forEveryone }) => {
+    if (!canDelete(userId)) throw new AppError(429, 'Slow down a little.');
+    return deleteMessage(socket.data.user, { scope, messageId, forEveryone: forEveryone === true });
   }));
 
   socket.on('room:typing', ({ roomId, typing } = {}) => {
