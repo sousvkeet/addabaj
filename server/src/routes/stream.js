@@ -144,7 +144,7 @@ async function relayUpstream(req, res, stream, target, asPlaylist) {
       break;
     } catch (err) {
       if (err.code === 'EBLOCKED' || attempt >= 2) {
-        if (devLog) console.warn(`[relay] ${host} failed after ${Date.now() - started}ms: ${err.message}`);
+        console.warn(`[relay] ${host} failed after ${Date.now() - started}ms: ${err.message}`);
         throw err;
       }
       await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));

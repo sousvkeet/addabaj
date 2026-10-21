@@ -137,5 +137,6 @@ export async function scanPage(url) {
       options: finishOptions([p]),
     });
   });
-  return { videos, title, skipped: { drm } };
+  const reason = !videos.length && /verify your age|french law|arcom|age.?verification/i.test(html) ? 'age' : undefined;
+  return { videos, title, skipped: { drm }, ...(reason ? { reason } : {}) };
 }

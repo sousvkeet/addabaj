@@ -182,6 +182,7 @@ const FAILURES = {
   login: 'This site only shows the video to logged-in users, so it can’t be fetched from here.',
   unavailable: 'The video on this page isn’t available. It may be private or removed.',
   geo: 'This video isn’t available in the server’s country.',
+  age: 'This site requires digital age verification in the server’s country (France). Stream it live from your device instead, or paste a direct video link.',
   split: 'This site keeps picture and sound in separate files, which can’t be played together here.',
   blocked: 'That link points to a private or local address, which this server won’t fetch.',
   refused:
@@ -293,10 +294,14 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
       }
     }
     videos = rank(videos, skipped, { byLength });
+    if (videos.length && videos.every(isShort)) {
+      extraNotes.push('This site only provided a short preview clip (not the full movie) to the server. You can stream the full movie from your phone or device instead.');
+    }
   }
 
   if (!videos.length) {
-    const why = ['drm', 'login', 'unavailable', 'geo', 'blocked', 'split', 'refused', 'unreachable'].find((r) => reasons.has(r) || skipped[r]);
+    console.warn(`[find] no videos found for "${url.href}". reasons: [${[...reasons].join(', ')}], skipped: ${JSON.stringify(skipped)}`);
+    const why = ['drm', 'login', 'age', 'unavailable', 'geo', 'blocked', 'split', 'refused', 'unreachable'].find((r) => reasons.has(r) || skipped[r]);
     if (FAILURES[why]) throw badRequest(FAILURES[why]);
     // Say so when the server is missing a tool, rather than blaming the page.
     const missing = [!ytdlpPath() && 'yt-dlp', reasons.has('missing') && 'the background browser'].filter(Boolean);

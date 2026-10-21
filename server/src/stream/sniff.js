@@ -300,7 +300,13 @@ export async function deepScan(url, { onProgress } = {}) {
       site,
       options: finishOptions([{ kind: c.kind, url: c.url, headers: c.headers, ext: c.ext, size: c.size }]),
     }));
-    return { videos, title, skipped: { drm }, adsBlocked: blocked, ...(refused && !videos.length ? { reason: 'refused' } : {}) };
+    let ageBlocked = false;
+    if (!videos.length) {
+      const text = await page.innerText('body').catch(() => '');
+      ageBlocked = /verify your age|french law|arcom|age.?verification/i.test(text);
+    }
+    const reason = ageBlocked ? 'age' : refused && !videos.length ? 'refused' : undefined;
+    return { videos, title, skipped: { drm }, adsBlocked: blocked, ...(reason ? { reason } : {}) };
   } finally {
     await context.close().catch(() => {});
     active--;

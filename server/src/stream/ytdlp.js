@@ -65,6 +65,7 @@ function reasonFrom(stderr) {
   if (/unsupported url/i.test(line)) return { reason: 'unsupported' };
   if (/drm/i.test(line)) return { reason: 'drm' };
   if (/log(ged)?[ -]?in|sign in|cookies|account/i.test(line)) return { reason: 'login' };
+  if (/age.?verification|verify your age|confirm your age|french law/i.test(line)) return { reason: 'age' };
   if (/private|unavailable|removed|not exist|404/i.test(line)) return { reason: 'unavailable' };
   if (/country|geo/i.test(line)) return { reason: 'geo' };
   if (/private or local address/i.test(line)) return { reason: 'blocked' };

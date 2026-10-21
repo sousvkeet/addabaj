@@ -47,23 +47,41 @@ export function registerWatch(socket) {
   socket.on('watch:scan', handle(async ({ roomId, url, requestId }) => {
     await requireAdmin(roomId, user.id);
     if (!allowScan(user.id)) throw new AppError(429, 'That’s a lot of searches. Wait a minute and try again.');
-    return findVideos(url, {
-      userId: user.id,
-      onProgress: (message) => socket.emit('watch:scan-progress', { requestId, message }),
-    });
+    console.log(`[watch:scan] Room ${roomId}: scanning "${url}" by ${user.name}`);
+    try {
+      const res = await findVideos(url, {
+        userId: user.id,
+        onProgress: (message) => {
+          console.log(`[watch:scan] Room ${roomId}: ${message}`);
+          socket.emit('watch:scan-progress', { requestId, message });
+        },
+      });
+      console.log(`[watch:scan] Room ${roomId}: found ${res.videos.length} videos for "${url}"`);
+      return res;
+    } catch (err) {
+      console.error(`[watch:scan] Room ${roomId}: failed for "${url}" - ${err.message}`);
+      throw err;
+    }
   }));
 
   // Either { scanId, optionId } from "Find videos", or { url } to play the best match directly.
   socket.on('watch:set', handle(async ({ roomId, scanId, optionId, url }) => {
     await requireAdmin(roomId, user.id);
-    const choice = scanId ? takeOption(String(scanId), String(optionId ?? ''), user.id) : await bestFor(url, { userId: user.id });
-    const { source, start, stream } = playbackFor(roomId, choice);
-    // A joined video plays once it's ready; until then the room sees progress.
-    const watch = { source, playing: !source.preparing, position: start, at: Date.now(), by: user.id, byName: user.name, stream };
-    await replaceWatch(roomId, watch);
-    if (stream?.merge) startMerge(roomId, stream);
-    await postSystemMessage(roomId, `${user.name} is playing “${source.title}” for everyone`);
-    return { watch: publicWatch(watch) };
+    console.log(`[watch:set] Room ${roomId}: setting video by ${user.name}`);
+    try {
+      const choice = scanId ? takeOption(String(scanId), String(optionId ?? ''), user.id) : await bestFor(url, { userId: user.id });
+      const { source, start, stream } = playbackFor(roomId, choice);
+      // A joined video plays once it's ready; until then the room sees progress.
+      const watch = { source, playing: !source.preparing, position: start, at: Date.now(), by: user.id, byName: user.name, stream };
+      await replaceWatch(roomId, watch);
+      if (stream?.merge) startMerge(roomId, stream);
+      await postSystemMessage(roomId, `${user.name} is playing “${source.title}” for everyone`);
+      console.log(`[watch:set] Room ${roomId}: now playing "${source.title}" (${source.kind})`);
+      return { watch: publicWatch(watch) };
+    } catch (err) {
+      console.error(`[watch:set] Room ${roomId}: failed - ${err.message}`);
+      throw err;
+    }
   }));
 
   socket.on('watch:control', handle(async ({ roomId, playing, position }) => {
