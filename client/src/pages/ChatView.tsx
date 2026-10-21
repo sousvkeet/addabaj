@@ -15,6 +15,8 @@ import { Composer, type ComposerHandle } from '../components/Composer';
 import { FileDrop } from '../components/FileDrop';
 import { MessageList, recentEnoughToDelete, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
+import { StatusLine } from '../components/ConnectionNotice';
+import { goBack } from '../lib/screens';
 
 export function ChatView() {
   const { userId = '' } = useParams();
@@ -87,23 +89,34 @@ export function ChatView() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <header className="glass relative z-10 flex h-[72px] shrink-0 items-center gap-3 border-b border-line/70 px-2 pt-[env(safe-area-inset-top)] md:px-5">
-        <IconButton label="Back to chats" className="md:hidden" onClick={() => navigate('/chats')}>
+      <header className="glass relative z-10 flex h-[64px] shrink-0 items-center gap-2.5 border-b border-line/70 px-1.5 pt-[env(safe-area-inset-top)] md:h-[72px] md:gap-3 md:px-5">
+        <IconButton label="Back to chats" className="ripple md:hidden" onClick={() => goBack(navigate, '/chats')}>
           <ArrowLeft size={20} />
         </IconButton>
-        {partner && <Avatar name={partner.name} hue={partner.hue} size={44} online={online} />}
+        {partner && (
+          <>
+            <span className="md:hidden">
+              <Avatar name={partner.name} hue={partner.hue} size={40} online={online} />
+            </span>
+            <span className="hidden md:block">
+              <Avatar name={partner.name} hue={partner.hue} size={44} online={online} />
+            </span>
+          </>
+        )}
         <div className="min-w-0 flex-1">
           <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{name}</h1>
           <p className="truncate text-[13px] text-ink-soft">
-            {typing ? (
-              <span className="font-medium text-brand dark:text-live">typing…</span>
-            ) : presenceHidden ? (
-              ''
-            ) : online ? (
-              <span className="font-medium text-live-ink">Online</span>
-            ) : (
-              lastSeen(seen ?? partner?.lastSeenAt ?? null)
-            )}
+            <StatusLine>
+              {typing ? (
+                <span className="font-medium text-brand dark:text-live">typing…</span>
+              ) : presenceHidden ? (
+                ''
+              ) : online ? (
+                <span className="font-medium text-live-ink">Online</span>
+              ) : (
+                lastSeen(seen ?? partner?.lastSeenAt ?? null)
+              )}
+            </StatusLine>
           </p>
         </div>
         {onCallWithThem ? (
@@ -118,7 +131,17 @@ export function ChatView() {
             </Button>
           </div>
         ) : (
-          <div className="flex gap-2">
+          <>
+            {/* Phones: plain icons, as in other messengers. */}
+            <div className="flex md:hidden">
+              <IconButton label={`Video call ${name}`} size={44} className="ripple" onClick={() => call(true)} disabled={!partner || callPhase !== 'idle'}>
+                <Video size={23} />
+              </IconButton>
+              <IconButton label={`Voice call ${name}`} size={44} className="ripple" onClick={() => call(false)} disabled={!partner || callPhase !== 'idle'}>
+                <Phone size={20} />
+              </IconButton>
+            </div>
+            <div className="hidden gap-2 md:flex">
             <Button variant="soft" size="sm" onClick={() => call(false)} disabled={!partner || callPhase !== 'idle'} aria-label={`Voice call ${name}`}>
               <Phone size={16} className="text-brand dark:text-live" />
               <span className="hidden sm:inline">Voice</span>
@@ -127,7 +150,8 @@ export function ChatView() {
               <Video size={17} />
               <span className="hidden sm:inline">Video</span>
             </Button>
-          </div>
+            </div>
+          </>
         )}
       </header>
 

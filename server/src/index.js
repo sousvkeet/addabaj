@@ -138,6 +138,11 @@ if (existsSync(dist)) {
   // Built files have a content hash in their name, so they can be cached for good
   // (this matters for the 32 MB sound converter).
   app.use('/assets', express.static(resolve(dist, 'assets'), { index: false, immutable: true, maxAge: '1y' }));
+  // The service worker (keeps the app's page on the device) is always checked for a newer copy.
+  app.get('/sw.js', (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(resolve(dist, 'sw.js'));
+  });
   app.use(express.static(dist, { index: false, maxAge: '1h' }));
   // The page's content security policy: only our own scripts (plus the tiny theme
   // script inline in index.html, allowed by its hash), YouTube's player, and media

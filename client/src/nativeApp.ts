@@ -87,6 +87,9 @@ export function bindNative() {
     const changed = s.status !== prev.status || s.user?.id !== prev.user?.id || s.user?.name !== prev.user?.name;
     if (changed) nativeUser(s.status === 'authed' && s.user ? { id: s.user.id, name: s.user.name } : null);
   });
+  // Already signed in when the page opened (the account kept on the phone).
+  const now = useAuth.getState();
+  if (now.status === 'authed' && now.user) nativeUser({ id: now.user.id, name: now.user.name });
 
   // ── Calls answered or declined on the phone's call screen ──
   let answer: { callId: string; video: boolean; at: number } | null = null;

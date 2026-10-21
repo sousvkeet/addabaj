@@ -240,4 +240,5 @@ export type Invite = {
 
 export type PickerUser = User & { roomStatus?: 'member' | 'invited' | null };
 
-export type Paged<T> = { items: T[]; loaded: boolean; hasMore: boolean; loadingMore?: boolean };
+/** `stale`: kept on the phone from last time (lib/localCache.ts), until the server's copy arrives. */
+export type Paged<T> = { items: T[]; loaded: boolean; hasMore: boolean; loadingMore?: boolean; stale?: boolean };

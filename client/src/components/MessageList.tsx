@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  ArrowDown, Ban, Check, CheckCheck, Clock, Download, FileText, Info, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Trash2, Video, X,
+  ArrowDown, Ban, Check, CheckCheck, Clock, Copy, Download, FileText, Info, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Trash2, Video, X,
 } from 'lucide-react';
 import { attachmentLabel, clock, dayLabel, deletedText, duration, formatBytes, sameDay } from '../lib/format';
+import { haptic, inApp } from '../lib/native';
+import { toast } from '../store/ui';
 import type { Attachment, Draft, Reaction, Receipt, ReplyRef } from '../lib/types';
 import { Avatar } from './ui/Avatar';
 import { Button } from './ui/Button';
@@ -131,7 +133,7 @@ export function MessageList({
 
   return (
     <div className="relative min-h-0 flex-1">
-      <div ref={scroller} onScroll={onScroll} className="h-full overflow-y-auto px-3 pt-5 pb-3 md:px-7" role="log" aria-live="polite">
+      <div ref={scroller} onScroll={onScroll} className="h-full overflow-x-hidden overflow-y-auto px-3 pt-5 pb-3 md:px-7" role="log" aria-live="polite">
         <div className="mx-auto flex min-h-full max-w-[860px] flex-col justify-end">
           {loadingMore && (
             <p className="flex justify-center py-2 text-ink-soft">
@@ -227,6 +229,118 @@ export function MessageList({
   );
 }
 
+// ── Touch: press and hold, swipe to reply ───────────────────────────
+
+/** How far a message is swiped (px) before letting go replies to it. */
+const SWIPE_TO_REPLY = 64;
+
+/**
+ * Touch screens, as in other messengers: press and hold a message for its menu
+ * (with a little buzz), or swipe it to the right to reply. A finger that
+ * wobbles a little still counts as holding; moving up or down scrolls.
+ */
+function useTouchGestures(onHold: (() => void) | null, onSwipe: (() => void) | null) {
+  const moving = useRef<HTMLDivElement>(null);
+  const hint = useRef<HTMLSpanElement>(null);
+  const g = useRef<{ x: number; y: number; dx: number; swiping: boolean; armed: boolean; timer: number } | null>(null);
+
+  const paint = (dx: number, animate: boolean) => {
+    const el = moving.current;
+    const h = hint.current;
+    const pull = dx <= SWIPE_TO_REPLY ? dx : SWIPE_TO_REPLY + (dx - SWIPE_TO_REPLY) * 0.25;
+    const t = animate ? 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms' : 'none';
+    if (el) {
+      el.style.transition = t;
+      el.style.transform = pull ? `translateX(${pull}px)` : '';
+    }
+    if (h) {
+      const p = Math.min(1, dx / SWIPE_TO_REPLY);
+      h.style.transition = t;
+      h.style.opacity = String(p);
+      h.style.transform = `translateY(-50%) scale(${0.5 + p * 0.5})`;
+    }
+  };
+  const stop = () => {
+    const s = g.current;
+    g.current = null;
+    if (s) window.clearTimeout(s.timer);
+    return s;
+  };
+
+  if (!onHold && !onSwipe) return { moving, hint, handlers: {} };
+  return {
+    moving,
+    hint,
+    handlers: {
+      onPointerDown: (e: React.PointerEvent) => {
+        if (e.pointerType !== 'touch') return;
+        stop();
+        g.current = {
+          x: e.clientX,
+          y: e.clientY,
+          dx: 0,
+          swiping: false,
+          armed: false,
+          timer: onHold
+            ? window.setTimeout(() => {
+                if (g.current?.swiping) return;
+                g.current = null;
+                haptic('press');
+                onHold();
+              }, 420)
+            : 0,
+        };
+      },
+      onPointerMove: (e: React.PointerEvent) => {
+        const s = g.current;
+        if (!s) return;
+        const dx = e.clientX - s.x;
+        const dy = e.clientY - s.y;
+        if (!s.swiping) {
+          if (Math.hypot(dx, dy) > 10) window.clearTimeout(s.timer);
+          if (onSwipe && dx > 12 && dx > Math.abs(dy) * 1.5) s.swiping = true;
+          else if (Math.abs(dy) > 12 || dx < -12) return void stop();
+          else return;
+        }
+        s.dx = Math.max(0, dx);
+        paint(s.dx, false);
+        if (!s.armed && s.dx >= SWIPE_TO_REPLY) {
+          s.armed = true;
+          haptic('tick');
+        } else if (s.armed && s.dx < SWIPE_TO_REPLY) {
+          s.armed = false;
+        }
+      },
+      onPointerUp: () => {
+        const s = stop();
+        if (!s?.swiping) return;
+        paint(0, true);
+        if (s.armed) onSwipe?.();
+      },
+      onPointerCancel: () => {
+        if (stop()?.swiping) paint(0, true);
+      },
+      onContextMenu: (e: React.MouseEvent) => {
+        if ((e.nativeEvent as PointerEvent).pointerType === 'touch') e.preventDefault();
+      },
+    },
+  };
+}
+
+/** The reply arrow that fades in beside a message as it's swiped. */
+function SwipeHint({ hint }: { hint: React.RefObject<HTMLSpanElement | null> }) {
+  return (
+    <span
+      ref={hint}
+      aria-hidden
+      className="pointer-events-none absolute top-1/2 left-1 flex size-8 items-center justify-center rounded-full bg-subtle text-ink-soft opacity-0"
+      style={{ transform: 'translateY(-50%) scale(0.5)' }}
+    >
+      <Reply size={16} />
+    </span>
+  );
+}
+
 // ── One message ──────────────────────────────────────────────────────
 
 type MessageProps = {
@@ -248,7 +362,8 @@ type MessageProps = {
 function Message(props: MessageProps) {
   const { item, groupStart, showSender, meId, onRetry, onReply, onInfo, onReact, onOpenSheet, onView, onJump, onCallBack, onDelete } = props;
   const [picking, setPicking] = useState(false);
-  const pressTimer = useRef(0);
+  const canAct = item.id > 0 && !item.pending && !item.deleted && item.kind === 'text';
+  const touch = useTouchGestures(canAct ? () => onOpenSheet(item) : null, canAct ? () => onReply(item) : null);
 
   if (item.kind === 'system') {
     return (
@@ -293,26 +408,10 @@ function Message(props: MessageProps) {
   const nameStyle = sender ? ({ '--h': sender.hue } as CSSProperties) : undefined;
   const a = item.attachment;
   const media = a && (a.kind === 'image' || a.kind === 'video');
-  const canAct = item.id > 0 && !item.pending;
-
-  // Press and hold on a touch screen opens the action sheet.
-  const touchHandlers = canAct
-    ? {
-        onPointerDown: (e: React.PointerEvent) => {
-          if (e.pointerType !== 'touch') return;
-          pressTimer.current = window.setTimeout(() => onOpenSheet(item), 450);
-        },
-        onPointerUp: () => window.clearTimeout(pressTimer.current),
-        onPointerMove: () => window.clearTimeout(pressTimer.current),
-        onPointerCancel: () => window.clearTimeout(pressTimer.current),
-        onContextMenu: (e: React.MouseEvent) => {
-          if ((e.nativeEvent as PointerEvent).pointerType === 'touch') e.preventDefault();
-        },
-      }
-    : {};
 
   return (
-    <div id={item.id ? `msg-${item.id}` : undefined} className={`group flex items-end gap-2 rounded-xl ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}>
+    <div id={item.id ? `msg-${item.id}` : undefined} className={`group relative flex items-end gap-2 rounded-xl ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}>
+      {canAct && <SwipeHint hint={touch.hint} />}
       {showSender && !item.mine && (
         <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} size={32} />}</span>
       )}
@@ -326,14 +425,13 @@ function Message(props: MessageProps) {
           onDelete={onDelete ? () => onDelete(item) : undefined}
         />
       )}
-      <div className={`flex max-w-[min(78%,560px)] flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
+      <div ref={touch.moving} {...touch.handlers} className={`flex max-w-[min(78%,560px)] touch-pan-y flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
         {showName && (
           <span style={nameStyle} className="mb-1 ml-1 text-[12.5px] font-bold text-[hsl(var(--h)_75%_32%)] dark:text-[hsl(var(--h)_90%_74%)]">
             {sender.name}
           </span>
         )}
         <div
-          {...touchHandlers}
           className={`text-[15px] leading-[1.5] select-text ${media ? 'p-1' : 'px-4 py-2.5'} ${
             item.mine
               ? `rounded-[22px] bg-aurora text-white shadow-[0_8px_24px_-14px_var(--brand)] ${groupStart ? 'rounded-tr-[8px]' : ''}`
@@ -595,16 +693,130 @@ function AttachmentView({ attachment: a, mine, upload, onView }: { attachment: A
   );
 }
 
+/**
+ * Touch, as in phone photo viewers: pinch to zoom, drag to look around a
+ * zoomed photo, double-tap to zoom in or out, and swipe down to close.
+ */
+function usePhotoGestures(onClose: () => void) {
+  const img = useRef<HTMLImageElement>(null);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const view = useRef({ scale: 1, x: 0, y: 0 });
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const gesture = useRef<{ dist: number; scale: number; mid: { x: number; y: number }; x: number; y: number } | null>(null);
+  const lastTap = useRef(0);
+
+  const apply = (animate = false, dismissY = 0) => {
+    const el = img.current;
+    if (!el) return;
+    const { scale, x, y } = view.current;
+    el.style.transition = animate ? 'transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1)' : 'none';
+    el.style.transform = `translate(${x}px, ${y + dismissY}px) scale(${scale})`;
+    if (backdrop.current) backdrop.current.style.opacity = String(1 - Math.min(0.7, Math.abs(dismissY) / 400));
+  };
+  const zoomTo = (scale: number, at?: { x: number; y: number }) => {
+    const v = view.current;
+    if (scale <= 1) Object.assign(v, { scale: 1, x: 0, y: 0 });
+    else if (at) {
+      // Keep the tapped point under the finger.
+      const cx = at.x - window.innerWidth / 2;
+      const cy = at.y - window.innerHeight / 2;
+      Object.assign(v, { x: cx - ((cx - v.x) * scale) / v.scale, y: cy - ((cy - v.y) * scale) / v.scale, scale });
+    }
+    apply(true);
+  };
+  const two = () => [...pointers.current.values()];
+  const span = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
+
+  return {
+    img,
+    backdrop,
+    zoomed: () => view.current.scale > 1,
+    handlers: {
+      onPointerDown: (e: React.PointerEvent) => {
+        // Touch pointers stay with what they first touched, so a tap on the photo is still its own click.
+        if (e.pointerType === 'mouse') return;
+        pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const v = view.current;
+        const pts = two();
+        if (pts.length === 2) {
+          gesture.current = { dist: span(pts[0], pts[1]), scale: v.scale, mid: { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 }, x: v.x, y: v.y };
+        } else {
+          gesture.current = { dist: 0, scale: v.scale, mid: { x: e.clientX, y: e.clientY }, x: v.x, y: v.y };
+        }
+      },
+      onPointerMove: (e: React.PointerEvent) => {
+        if (!pointers.current.has(e.pointerId) || !gesture.current) return;
+        pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        const g = gesture.current;
+        const v = view.current;
+        const pts = two();
+        if (pts.length === 2 && g.dist) {
+          const mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+          v.scale = Math.min(5, Math.max(0.8, (g.scale * span(pts[0], pts[1])) / g.dist));
+          v.x = g.x + (mid.x - g.mid.x);
+          v.y = g.y + (mid.y - g.mid.y);
+          apply();
+        } else if (pts.length === 1) {
+          const dx = e.clientX - g.mid.x;
+          const dy = e.clientY - g.mid.y;
+          if (v.scale > 1) {
+            v.x = g.x + dx;
+            v.y = g.y + dy;
+            apply();
+          } else {
+            apply(false, dy);
+          }
+        }
+      },
+      onPointerUp: (e: React.PointerEvent) => {
+        const g = gesture.current;
+        const start = g?.mid;
+        pointers.current.delete(e.pointerId);
+        if (pointers.current.size) {
+          // One finger left after a pinch: carry on panning from here.
+          const [p] = two();
+          const v = view.current;
+          gesture.current = { dist: 0, scale: v.scale, mid: p, x: v.x, y: v.y };
+          return;
+        }
+        gesture.current = null;
+        const v = view.current;
+        const moved = start ? Math.hypot(e.clientX - start.x, e.clientY - start.y) : 0;
+        if (v.scale === 1 && start && e.clientY - start.y > 110) return onClose();
+        if (v.scale < 1) zoomTo(1);
+        else apply(true);
+        // Double tap: zoom in where tapped, or back out.
+        if (moved < 10 && g?.dist === 0) {
+          const now = Date.now();
+          if (now - lastTap.current < 300) {
+            lastTap.current = 0;
+            zoomTo(v.scale > 1 ? 1 : 2.5, { x: e.clientX, y: e.clientY });
+          } else {
+            lastTap.current = now;
+          }
+        }
+      },
+      onPointerCancel: (e: React.PointerEvent) => {
+        pointers.current.delete(e.pointerId);
+        gesture.current = null;
+        apply(true);
+      },
+    },
+  };
+}
+
 /** A photo shown full screen, with a download button. */
 function Lightbox({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
+  const photo = usePhotoGestures(onClose);
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     document.addEventListener('keydown', esc);
     return () => document.removeEventListener('keydown', esc);
   }, [onClose]);
   return (
-    <div role="dialog" aria-label={attachment.name} className="fixed inset-0 z-[70] flex flex-col bg-[rgb(4_6_18/0.94)] backdrop-blur-md" onClick={onClose}>
-      <div className="flex shrink-0 items-center justify-end gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]" onClick={(e) => e.stopPropagation()}>
+    <div role="dialog" aria-label={attachment.name} className="fixed inset-0 z-[70] flex flex-col" onClick={onClose}>
+      <div ref={photo.backdrop} aria-hidden className="absolute inset-0 bg-[rgb(4_6_18/0.94)] backdrop-blur-md" />
+      <div className="relative flex shrink-0 items-center justify-end gap-2 p-3 pt-[max(12px,env(safe-area-inset-top))]" onClick={(e) => e.stopPropagation()}>
         <a href={`${attachment.url}?download=1`} download={attachment.name} className="flex items-center gap-2 rounded-full bg-white/15 px-3.5 py-2 text-[14px] font-semibold text-white hover:bg-white/25">
           <Download size={16} />
           Download
@@ -613,14 +825,40 @@ function Lightbox({ attachment, onClose }: { attachment: Attachment; onClose: ()
           <X size={20} />
         </button>
       </div>
-      <div className="flex min-h-0 flex-1 items-center justify-center p-4">
-        <img src={attachment.url} alt={attachment.name} className="max-h-full max-w-full object-contain" onClick={(e) => e.stopPropagation()} />
+      {/* Tapping beside the photo closes it (unless zoomed in). */}
+      <div
+        className="relative flex min-h-0 flex-1 touch-none items-center justify-center p-4"
+        {...photo.handlers}
+        onClick={(e) => {
+          e.stopPropagation();
+          if (e.target === e.currentTarget && !photo.zoomed()) onClose();
+        }}
+      >
+        <img ref={photo.img} src={attachment.url} alt={attachment.name} draggable={false} className="max-h-full max-w-full object-contain will-change-transform" onClick={(e) => e.stopPropagation()} />
       </div>
     </div>
   );
 }
 
-/** Press-and-hold menu on phones: react, reply, download. */
+/** Copies text, with the old way for WebViews without the clipboard API. */
+async function copyText(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const box = document.createElement('textarea');
+    box.value = text;
+    box.setAttribute('readonly', '');
+    box.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+    document.body.appendChild(box);
+    box.select();
+    const ok = document.execCommand('copy');
+    box.remove();
+    return ok;
+  }
+}
+
+/** Press-and-hold menu on phones: react, reply, copy, download. */
 function ActionSheet({
   item,
   onClose,
@@ -636,8 +874,14 @@ function ActionSheet({
   onInfo?: () => void;
   onDelete?: () => void;
 }) {
+  // Only a tap that starts on the backdrop closes it: lifting the finger that just opened it doesn't.
+  const fromBackdrop = useRef(false);
   return (
-    <div className="fixed inset-0 z-[65] flex items-end bg-[rgb(6_8_22/0.55)] backdrop-blur-[3px]" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[65] flex items-end bg-[rgb(6_8_22/0.55)] backdrop-blur-[3px]"
+      onPointerDown={(e) => (fromBackdrop.current = e.target === e.currentTarget)}
+      onClick={(e) => e.target === e.currentTarget && fromBackdrop.current && onClose()}
+    >
       <div
         role="dialog"
         aria-label="Message actions"
@@ -655,9 +899,26 @@ function ActionSheet({
         )}
         <div className={`space-y-1 ${item.deleted ? '' : 'mt-3'}`}>
           {!item.deleted && (
-            <button type="button" onClick={onReply} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
+            <button type="button" onClick={onReply} className="ripple flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
               <Reply size={19} />
               Reply
+            </button>
+          )}
+          {!item.deleted && item.body && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                void copyText(item.body).then((ok) => {
+                  // Android 13 and newer confirm copying themselves.
+                  if (!ok) toast("Couldn't copy that message.", 'error');
+                  else if (!(inApp && Number(/Android (\d+)/.exec(navigator.userAgent)?.[1]) >= 13)) toast('Message copied');
+                });
+              }}
+              className="ripple flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle"
+            >
+              <Copy size={19} />
+              Copy
             </button>
           )}
           {onInfo && (
@@ -691,20 +952,9 @@ function ActionSheet({
 
 /** Where a message was deleted for everyone: a quiet marker that keeps its place. */
 function DeletedMessage({ item, groupStart, showSender, onOpenSheet, onDelete }: MessageProps) {
-  const pressTimer = useRef(0);
   const sender = item.sender;
   const canAct = item.id > 0 && !!onDelete;
-  const touchHandlers = canAct
-    ? {
-        onPointerDown: (e: React.PointerEvent) => {
-          if (e.pointerType !== 'touch') return;
-          pressTimer.current = window.setTimeout(() => onOpenSheet(item), 450);
-        },
-        onPointerUp: () => window.clearTimeout(pressTimer.current),
-        onPointerMove: () => window.clearTimeout(pressTimer.current),
-        onPointerCancel: () => window.clearTimeout(pressTimer.current),
-      }
-    : {};
+  const touch = useTouchGestures(canAct ? () => onOpenSheet(item) : null, null);
   const remove = canAct ? (
     <button
       type="button"
@@ -726,7 +976,7 @@ function DeletedMessage({ item, groupStart, showSender, onOpenSheet, onDelete }:
           <span className="mb-1 ml-1 text-[12.5px] font-bold text-ink-soft">{sender.name}</span>
         )}
         <div
-          {...touchHandlers}
+          {...touch.handlers}
           role="note"
           className="flex items-center gap-2 rounded-[22px] border border-dashed border-line bg-subtle/40 px-4 py-2 text-[14px] text-ink-soft italic"
         >

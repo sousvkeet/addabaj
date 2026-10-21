@@ -6,6 +6,7 @@ import type {
 } from '../lib/types';
 import { uploadFile } from '../lib/upload';
 import { nativeClearChat } from '../lib/native';
+import { cachedChats, saveChats } from '../lib/localCache';
 import { myId, onLogout, useAuth } from './auth';
 import { toast } from './ui';
 
@@ -96,6 +97,9 @@ function merge<T extends { id: number; tempId?: string; pending?: string }>(item
 }
 
 const typingTimers = new Map<string, number>();
+
+/** A message written offline waits (with its clock) this long for the connection to come back. */
+const OUTBOX_WAIT_MS = 2 * 60_000;
 
 /** How a file being sent looks in the chat before the server has it: its local preview. */
 const localAttachment = (file: PreparedFile): Attachment => ({
@@ -199,7 +203,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         .then(({ user }) => get().rememberUser(user))
         .catch(() => {});
     }
-    if (!dms[partnerId]?.loaded) void get().loadDm(partnerId).then(() => get().markDmRead(partnerId));
+    if (!dms[partnerId]?.loaded || dms[partnerId].stale) void get().loadDm(partnerId).then(() => get().markDmRead(partnerId));
     else get().markDmRead(partnerId);
   },
 
@@ -213,21 +217,25 @@ export const useChat = create<ChatState>()((set, get) => ({
       const { messages, hasMore } = await api<{ messages: DmMessage[]; hasMore: boolean }>(`/dms/${partnerId}/messages${q}`);
       set((s) => {
         const cur = s.dms[partnerId] ?? emptyPage<DmMessage>();
+        // A copy kept from last time gives way to the server's (only messages still sending stay).
+        const fresh = cur.stale && !older;
         return {
           dms: {
             ...s.dms,
             [partnerId]: {
-              items: merge(cur.items, messages),
+              items: merge(fresh ? cur.items.filter((m) => m.pending) : cur.items, messages),
               loaded: true,
-              hasMore: older ? hasMore : cur.loaded ? cur.hasMore || hasMore : hasMore,
+              hasMore: older || fresh ? hasMore : cur.loaded ? cur.hasMore || hasMore : hasMore,
               loadingMore: false,
+              stale: fresh ? false : cur.stale,
             },
           },
         };
       });
     } catch (err) {
       set((s) => ({ dms: { ...s.dms, [partnerId]: { ...(s.dms[partnerId] ?? emptyPage()), loadingMore: false } } }));
-      toast(errorMessage(err), 'error');
+      // Offline with last time's copy on screen: no need to say so (the header says "Connecting…").
+      if (socket.connected || !page.items.length) toast(errorMessage(err), 'error');
     }
   },
 
@@ -254,9 +262,12 @@ export const useChat = create<ChatState>()((set, get) => ({
       });
     try {
       const attachment = await uploadOnce(draft, (upload) => patch((m) => ({ ...m, upload })));
-      const { message } = await emitAck<{ message: DmMessage }>('dm:send', {
-        to: partnerId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id,
-      });
+      const { message } = await emitAck<{ message: DmMessage }>(
+        'dm:send',
+        { to: partnerId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id },
+        10_000,
+        { waitOnline: OUTBOX_WAIT_MS },
+      );
       releasePreview(draft);
       const partner = get().users[partnerId] ?? get().conversations[partnerId]?.partner;
       set((s) => {
@@ -398,7 +409,8 @@ export const useChat = create<ChatState>()((set, get) => ({
     set({ activeRoom: roomId });
     if (!roomId) return;
     void get().loadRoom(roomId);
-    if (!get().roomMessages[roomId]?.loaded) void get().loadRoomMessages(roomId).then(() => get().markRoomRead(roomId));
+    const page = get().roomMessages[roomId];
+    if (!page?.loaded || page.stale) void get().loadRoomMessages(roomId).then(() => get().markRoomRead(roomId));
     else get().markRoomRead(roomId);
   },
 
@@ -408,7 +420,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       get().upsertRoom(room);
     } catch (err) {
       if ((err as { status?: number }).status === 404 || (err as { status?: number }).status === 403) get().dropRoom(roomId);
-      else toast(errorMessage(err), 'error');
+      else if (socket.connected || !get().roomDetails[roomId]) toast(errorMessage(err), 'error');
     }
   },
 
@@ -422,21 +434,23 @@ export const useChat = create<ChatState>()((set, get) => ({
       const { messages, hasMore } = await api<{ messages: RoomMessage[]; hasMore: boolean }>(`/rooms/${roomId}/messages${q}`);
       set((s) => {
         const cur = s.roomMessages[roomId] ?? emptyPage<RoomMessage>();
+        const fresh = cur.stale && !older;
         return {
           roomMessages: {
             ...s.roomMessages,
             [roomId]: {
-              items: merge(cur.items, messages),
+              items: merge(fresh ? cur.items.filter((m) => m.pending) : cur.items, messages),
               loaded: true,
-              hasMore: older ? hasMore : cur.loaded ? cur.hasMore || hasMore : hasMore,
+              hasMore: older || fresh ? hasMore : cur.loaded ? cur.hasMore || hasMore : hasMore,
               loadingMore: false,
+              stale: fresh ? false : cur.stale,
             },
           },
         };
       });
     } catch (err) {
       set((s) => ({ roomMessages: { ...s.roomMessages, [roomId]: { ...(s.roomMessages[roomId] ?? emptyPage()), loadingMore: false } } }));
-      if ((err as { status?: number }).status !== 404) toast(errorMessage(err), 'error');
+      if ((err as { status?: number }).status !== 404 && (socket.connected || !page.items.length)) toast(errorMessage(err), 'error');
     }
   },
 
@@ -465,9 +479,12 @@ export const useChat = create<ChatState>()((set, get) => ({
       });
     try {
       const attachment = await uploadOnce(draft, (upload) => patch((m) => ({ ...m, upload })));
-      const { message } = await emitAck<{ message: RoomMessage }>('room:send', {
-        roomId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id,
-      });
+      const { message } = await emitAck<{ message: RoomMessage }>(
+        'room:send',
+        { roomId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id },
+        10_000,
+        { waitOnline: OUTBOX_WAIT_MS },
+      );
       releasePreview(draft);
       set((s) => {
         const page = s.roomMessages[roomId] ?? emptyPage<RoomMessage>();
@@ -753,3 +770,31 @@ function meAsSender() {
 }
 
 onLogout(() => useChat.setState({ ...initial }));
+
+// ── Kept on the phone (the app only; see lib/localCache.ts) ──────────
+
+// Signed in: show last time's chats at once, until the server's arrive.
+const showKept = (id: string | undefined) => {
+  const kept = id ? cachedChats(id) : null;
+  if (kept) useChat.setState((c) => (c.bootstrapped ? c : { ...kept, bootstrapped: true }));
+};
+showKept(useAuth.getState().user?.id);
+useAuth.subscribe((s, prev) => {
+  if (s.user?.id !== prev.user?.id) showKept(s.user?.id);
+});
+
+let saveTimer = 0;
+const saveNow = () => {
+  window.clearTimeout(saveTimer);
+  saveTimer = 0;
+  const id = myId();
+  const s = useChat.getState();
+  if (id && s.bootstrapped) saveChats(id, s);
+};
+useChat.subscribe((s, prev) => {
+  const changed =
+    s.conversations !== prev.conversations || s.rooms !== prev.rooms || s.invites !== prev.invites || s.dms !== prev.dms || s.roomMessages !== prev.roomMessages || s.roomDetails !== prev.roomDetails;
+  if (changed && !saveTimer) saveTimer = window.setTimeout(saveNow, 1500);
+});
+// Leaving the app: save what's pending now.
+document.addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && saveTimer && saveNow());

@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router';
 import { ArrowLeft } from 'lucide-react';
 import type { Announcement, User } from '../../lib/types';
 import { IconButton } from '../../components/ui/Button';
+import { goBack } from '../../lib/screens';
+import { StatusLine } from '../../components/ConnectionNotice';
 
 export type Overview = {
   users: { total: number; newThisWeek: number; disabled: number; admins: number; online: number };
@@ -66,12 +68,14 @@ export function AdminPage({ title, subtitle, actions, children }: { title: strin
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <header className="glass relative z-10 flex h-[72px] shrink-0 items-center gap-3 border-b border-line/70 px-2 pt-[env(safe-area-inset-top)] md:px-6">
-        <IconButton label="Back to admin" className="md:hidden" onClick={() => navigate('/admin')}>
+        <IconButton label="Back to admin" className="md:hidden" onClick={() => goBack(navigate, '/admin')}>
           <ArrowLeft size={20} />
         </IconButton>
         <div className="min-w-0 flex-1">
           <h1 className="truncate font-display text-[19px] leading-tight font-semibold tracking-[-0.01em]">{title}</h1>
-          {subtitle && <p className="truncate text-[13px] text-ink-soft">{subtitle}</p>}
+          <p className="truncate text-[13px] text-ink-soft empty:hidden">
+            <StatusLine>{subtitle}</StatusLine>
+          </p>
         </div>
         {actions}
       </header>

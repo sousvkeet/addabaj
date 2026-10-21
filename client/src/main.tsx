@@ -1,15 +1,24 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router';
-import { App } from './App';
+import { createBrowserRouter } from 'react-router';
+import { RouterProvider } from 'react-router/dom';
+import { appRoutes } from './App';
 import { bindRealtime } from './realtime';
 import { bindNative } from './nativeApp';
 import { watchActivity } from './lib/activity';
+import { watchRipples } from './lib/ripple';
+import { watchScreens } from './lib/screens';
 import './index.css';
 
 bindRealtime();
 watchActivity();
 bindNative();
+watchRipples();
+
+// The router animates moving between screens, and plays it back on back
+// (including Android's back gesture).
+const router = createBrowserRouter(appRoutes);
+watchScreens(router);
 
 if (import.meta.env.DEV) {
   // Handy for debugging in the console and for end-to-end tests.
@@ -20,10 +29,13 @@ if (import.meta.env.DEV) {
   );
 }
 
+// Built app: keep the page on the device so it opens at once, and offline (public/sw.js).
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => void navigator.serviceWorker.register('/sw.js').catch(() => {}));
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
+    <RouterProvider router={router} />
   </StrictMode>,
 );

@@ -23,12 +23,12 @@ export function AdminNav() {
   return (
     <>
       <ListHeader title="Admin" subtitle="Run Adda Khana" />
-      <nav aria-label="Admin" className="space-y-1 px-2.5">
+      <nav aria-label="Admin" className="md:space-y-1 md:px-2.5">
         {ITEMS.map(({ to, label, hint, Icon }) => {
           // On a computer /admin shows the overview, so mark it too.
           const active = pathname === to || (to === '/admin/overview' && pathname === '/admin');
           return (
-            <NavLink key={to} to={to} className={() => listRowClass(active)}>
+            <NavLink key={to} to={to} viewTransition className={() => listRowClass(active)}>
               <span
                 className={`flex size-11 shrink-0 items-center justify-center rounded-2xl ${
                   active ? 'bg-aurora text-white shadow-glow' : 'bg-subtle text-brand dark:text-live'

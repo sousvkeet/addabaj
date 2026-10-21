@@ -6,7 +6,7 @@ import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { Avatar } from './ui/Avatar';
 import { Button, IconButton } from './ui/Button';
-import { ListEmpty, ListHeader, ListSearch, UnreadBadge, listRowClass } from './ListHeader';
+import { Fab, ListEmpty, ListHeader, ListSearch, UnreadBadge, listClass, listRowClass } from './ListHeader';
 import { UserPicker } from './UserPicker';
 
 export function ChatList() {
@@ -31,13 +31,15 @@ export function ChatList() {
         title="Chats"
         subtitle={list.length ? `${list.length} ${list.length === 1 ? 'conversation' : 'conversations'}` : 'Talk one to one'}
         action={
-          <IconButton label="Start a new chat" variant="primary" size={42} onClick={() => setPicking(true)}>
-            <SquarePen size={18} />
-          </IconButton>
+          <span className="hidden md:flex">
+            <IconButton label="Start a new chat" variant="primary" size={42} onClick={() => setPicking(true)}>
+              <SquarePen size={18} />
+            </IconButton>
+          </span>
         }
       />
       {Object.keys(conversations).length > 0 && <ListSearch value={filter} onChange={setFilter} placeholder="Search chats" />}
-      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pb-3">
+      <ul className={listClass}>
         {list.map(({ partner, lastMessage, unread }) => {
           const m = lastMessage!;
           const mine = m.senderId === me?.id;
@@ -46,6 +48,7 @@ export function ChatList() {
             <li key={partner.id}>
               <NavLink
                 to={`/chats/${partner.id}`}
+                viewTransition
                 className={({ isActive }) => listRowClass(isActive)}
               >
                 <Avatar name={partner.name} hue={partner.hue} size={48} online={online[partner.id]} />
@@ -108,6 +111,9 @@ export function ChatList() {
           </ListEmpty>
         )}
       </ul>
+      <Fab label="Start a new chat" onClick={() => setPicking(true)}>
+        <SquarePen size={22} />
+      </Fab>
       <UserPicker open={picking} onClose={() => setPicking(false)} mode="chat" />
     </>
   );

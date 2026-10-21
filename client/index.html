@@ -5,14 +5,21 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#090C1A" />
     <title>Adda Khana</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237C5CFF'/><stop offset='1' stop-color='%23FF5CA8'/></linearGradient></defs><rect width='64' height='64' rx='18' fill='url(%23g)'/><path d='M20 46 32 16l12 30M24.5 36h15' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/><circle cx='49' cy='15' r='6' fill='%2322D3EE'/></svg>" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap"
-    />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='%237C5CFF'/><stop offset='1' stop-color='%23FF5CA8'/></linearGradient></defs><rect width='64' height='64' rx='18' fill='url(%23g)'/><path d='M20 46 32 16l12 30M24.5 36h15' fill='none' stroke='white' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/><circle cx='49' cy='15' r='6' fill='%2322D3EE'/></svg>" />
     <script>
+      // The Android app: phone font, no zooming, app-like touch (see .app in
+      // index.css), all before the first paint. Browsers get the web fonts.
+      var app = /AddaKhanaApp\//.test(navigator.userAgent);
+      if (app) {
+        document.documentElement.classList.add('app');
+        document.querySelector('meta[name="viewport"]').setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+      } else {
+        var font = document.createElement('link');
+        font.rel = 'stylesheet';
+        font.href = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap';
+        document.head.appendChild(font);
+      }
       try {
         // Dark first: light only when someone picks it. The tab icon and
         // address bar follow (src/lib/chrome.ts does the same after a switch).

@@ -22,6 +22,15 @@ What the app adds:
 - **Updates from your own server.** When the host uploads a new version (Admin › App updates), the app offers it the next time it opens. **Update app** downloads it with a progress bar, checks its SHA-256, and opens Android's installer. Mandatory versions can't be put off. See [Publishing a release](#publishing-a-release).
   - The first time, Android asks to allow installing apps from Adda Khana (Settings › Install unknown apps); the update carries on once you come back.
   - The app only downloads from its own server's `/api/app/download/<version>` address, and only opens a file whose SHA-256 matches the release.
+- **Feels like an app, not a website.**
+  - Tabs along the bottom, Settings under You, and a round button for a new chat or room.
+  - Screens slide in and out, also with Android's back gesture; forms slide up from the bottom and swipe down to close.
+  - Press and hold a message for its menu (with a buzz), swipe it right to reply, and pinch or double-tap photos.
+  - The phone's font, press ripples, and no accidental zooming or text selection. Dialogs from the app itself use the phone's own style.
+- **Opens at once, even offline.**
+  - Recent chats are kept on the phone, so the app opens straight onto them and catches up in the background. With no connection it still opens, with "Waiting for network…".
+  - Messages written offline wait with a clock and send themselves when the connection is back (for up to two minutes; after that they're marked "Not sent" with a retry).
+  - Coming back after Android closed the app in the background opens the latest version of the site, never a stale copy.
 - **Everything a browser does.**
   - Microphone and camera for calls.
   - The photo and file picker; downloads go to Downloads.

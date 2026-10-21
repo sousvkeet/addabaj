@@ -16,6 +16,8 @@ import { MessageList, TypingLine, recentEnoughToDelete, replyRefFor, type Thread
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
 import { RoomPanel } from '../components/RoomPanel';
 import { WatchDialog, WatchStage } from '../components/watch/WatchStage';
+import { goBack } from '../lib/screens';
+import { StatusLine } from '../components/ConnectionNotice';
 
 const EMPTY: VoiceParticipant[] = [];
 
@@ -34,6 +36,9 @@ function typingText(names: string[]) {
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing`;
   return `${names.length} people are typing`;
 }
+
+/** Phones: header buttons as plain icons, as in other messengers (wider screens keep the labelled buttons). */
+const phoneIcon = 'ripple max-md:size-11 max-md:rounded-full max-md:bg-transparent max-md:px-0 max-md:shadow-none';
 
 export function RoomView() {
   const { roomId = '' } = useParams();
@@ -148,23 +153,30 @@ export function RoomView() {
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="glass relative z-10 flex h-[72px] shrink-0 items-center gap-3 border-b border-line/70 px-2 pt-[env(safe-area-inset-top)] md:px-5">
-          <IconButton label="Back to rooms" className="md:hidden" onClick={() => navigate('/rooms')}>
+        <header className="glass relative z-10 flex h-[64px] shrink-0 items-center gap-2.5 border-b border-line/70 px-1.5 pt-[env(safe-area-inset-top)] md:h-[72px] md:gap-3 md:px-5">
+          <IconButton label="Back to rooms" className="ripple md:hidden" onClick={() => goBack(navigate, '/rooms')}>
             <ArrowLeft size={20} />
           </IconButton>
-          <Avatar name={room.name} hue={hueFromId(room.id)} size={44} square />
+          <span className="md:hidden">
+            <Avatar name={room.name} hue={hueFromId(room.id)} size={40} square />
+          </span>
+          <span className="hidden md:block">
+            <Avatar name={room.name} hue={hueFromId(room.id)} size={44} square />
+          </span>
           <div className="min-w-0 flex-1">
             <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{room.name}</h1>
             <p className="flex items-center gap-2 truncate text-[13px] text-ink-soft">
-              <span className="truncate">
-                {room.memberCount} of {room.maxMembers} members
-              </span>
-              {voiceList.length > 0 && (
-                <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-live-ink">
-                  <AudioLines size={12} />
-                  {voiceList.length} in voice
+              <StatusLine>
+                <span className="truncate">
+                  {room.memberCount} of {room.maxMembers} members
                 </span>
-              )}
+                {voiceList.length > 0 && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-live-ink">
+                    <AudioLines size={12} />
+                    {voiceList.length} in voice
+                  </span>
+                )}
+              </StatusLine>
             </p>
           </div>
           {!liveHere && (
@@ -175,19 +187,20 @@ export function RoomView() {
               disabled={inCall}
               aria-label="Join voice"
               title={inCall ? 'End your call to join voice' : undefined}
+              className={`${phoneIcon} max-md:text-live-ink`}
             >
-              <Headphones size={16} />
+              <Headphones size={16} className="max-md:size-[21px]" />
               <span className="hidden sm:inline">Join voice</span>
             </Button>
           )}
           {room.myRole === 'admin' && (
-            <Button variant="soft" size="sm" onClick={() => setWatchOpen(true)} aria-label="Watch together">
-              <MonitorPlay size={16} />
+            <Button variant="soft" size="sm" onClick={() => setWatchOpen(true)} aria-label="Watch together" className={`${phoneIcon} max-md:text-ink`}>
+              <MonitorPlay size={16} className="max-md:size-[21px]" />
               <span className="hidden lg:inline">Watch</span>
             </Button>
           )}
           {!wide && (
-            <IconButton label="Members and voice" variant="soft" onClick={() => setPanelOpen(true)}>
+            <IconButton label="Members and voice" variant="soft" size={44} className="ripple max-md:bg-transparent" onClick={() => setPanelOpen(true)}>
               <Users size={20} />
             </IconButton>
           )}

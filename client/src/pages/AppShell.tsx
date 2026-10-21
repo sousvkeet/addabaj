@@ -6,6 +6,7 @@ import { ChatList } from '../components/ChatList';
 import { RoomList } from '../components/RoomList';
 import { InviteList } from '../components/InviteList';
 import { AdminNav } from './admin/AdminNav';
+import { SettingsList } from '../components/SettingsList';
 import { Announcement } from '../components/Announcement';
 import { ChangePasswordDialog } from '../components/ChangePasswordDialog';
 import { useAuth } from '../store/auth';
@@ -21,7 +22,9 @@ export function AppShell() {
       ? 'invites'
       : pathname.startsWith('/admin')
         ? 'admin'
-        : 'chats';
+        : pathname.startsWith('/settings')
+          ? 'settings'
+          : 'chats';
   const inThread = /^\/(chats|rooms|admin)\/[^/]+/.test(pathname);
   const passwordRequired = useAuth((s) => !!s.user?.passwordChangeRequired);
   const live = useLive();
@@ -37,10 +40,11 @@ export function AppShell() {
   }, [unread]);
 
   return (
-    <div className={`flex h-full overflow-hidden md:gap-3 md:p-3 ${live ? 'pt-[76px] md:pt-3' : ''}`}>
+    // Phones: the screen above the tab bar (flex-col-reverse puts the bar, first here, at the bottom).
+    <div className={`flex h-full flex-col-reverse overflow-hidden md:flex-row md:gap-3 md:p-3 ${live ? 'pt-[76px] md:pt-3' : ''}`}>
       <Rail hiddenOnMobile={inThread} />
       <aside
-        className={`${inThread ? 'hidden md:flex' : 'flex'} w-full shrink-0 flex-col overflow-hidden pb-[calc(92px+env(safe-area-inset-bottom))] md:w-[340px] md:rounded-[28px] md:border md:border-line/70 md:pb-0 md:shadow-float md:glass ${
+        className={`${inThread ? 'hidden md:flex' : 'flex'} relative min-h-0 w-full flex-1 flex-col overflow-hidden md:w-[340px] md:flex-none md:shrink-0 md:rounded-[28px] md:border md:border-line/70 md:shadow-float md:glass ${
           live ? 'md:pb-[96px]' : ''
         }`}
       >
@@ -52,9 +56,10 @@ export function AppShell() {
         {section === 'rooms' && <RoomList />}
         {section === 'invites' && <InviteList />}
         {section === 'admin' && <AdminNav />}
+        {section === 'settings' && <SettingsList />}
       </aside>
       <main
-        className={`${inThread ? 'flex' : 'hidden md:flex'} min-w-0 flex-1 flex-col overflow-hidden md:rounded-[28px] md:border md:border-line/70 md:shadow-float md:glass`}
+        className={`${inThread ? 'flex' : 'hidden md:flex'} min-h-0 min-w-0 flex-1 flex-col overflow-hidden md:rounded-[28px] md:border md:border-line/70 md:shadow-float md:glass`}
       >
         <Announcement />
         <Outlet />

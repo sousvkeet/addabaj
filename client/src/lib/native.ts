@@ -19,6 +19,7 @@ type Bridge = {
   screenCapture?(action: 'start' | 'stop'): void;
   appVersion?(): string;
   installUpdate?(url: string, sha256: string): void;
+  haptic?(kind: string): void;
 };
 
 /** What the app tells the page (window event "addanative"). */
@@ -105,6 +106,13 @@ export function nativeSession(session: Session) {
   lastSession = json;
   bridge?.callState?.(json);
 }
+
+/**
+ * A tap felt through the phone, as in other apps: 'press' (press and hold),
+ * 'tick' (a swipe reaching its point), 'confirm'. Follows the phone's
+ * vibration settings; nothing in a browser.
+ */
+export const haptic = (kind: 'press' | 'tick' | 'confirm') => bridge?.haptic?.(kind);
 
 /** A chat was read here: drop its notifications. */
 export const nativeClearChat = (scope: 'dm' | 'room', id: string) => bridge?.clearChat?.(scope, id);

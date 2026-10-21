@@ -21,6 +21,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
@@ -117,6 +118,9 @@ public class MainActivity extends Activity {
 
     private FrameLayout root;
     private FrameLayout fullscreenHolder;
+    /** Where the page was, kept when Android closes the app in the background. */
+    private static final String STATE_URL = "page-url";
+
     private WebView web;
     private String failedUrl;
 
@@ -177,7 +181,10 @@ public class MainActivity extends Activity {
 
         if (fresh) {
             String path = pathFrom(getIntent());
-            if (savedInstanceState != null && path == null) web.restoreState(savedInstanceState);
+            // Android closed the app in the background: open where it was. A fresh load,
+            // not WebView's restoreState, which would show a stale copy of the page.
+            String was = savedInstanceState != null ? savedInstanceState.getString(STATE_URL) : null;
+            if (path == null && was != null && isAppUrl(Uri.parse(was))) web.loadUrl(was);
             else web.loadUrl(BuildConfig.APP_URL + (path != null ? path : ""));
         }
         handleIntent(getIntent(), fresh);
@@ -201,6 +208,12 @@ public class MainActivity extends Activity {
         s.setSupportMultipleWindows(false);
         s.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         s.setUserAgentString(s.getUserAgentString() + " AddaKhanaApp/" + BuildConfig.VERSION_NAME);
+        // An app, not a web page: no pinch zoom, no glow when pulling past the
+        // top or bottom (the page's own lists stretch instead).
+        s.setSupportZoom(false);
+        s.setBuiltInZoomControls(false);
+        s.setDisplayZoomControls(false);
+        page.setOverScrollMode(View.OVER_SCROLL_NEVER);
         // Calls and live streams keep running with the screen off or another app in front.
         if (Build.VERSION.SDK_INT >= 26) page.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false);
 
@@ -397,6 +410,18 @@ public class MainActivity extends Activity {
             main.post(() -> pending.removeIf(e -> String.valueOf(e.id).equals(id)));
         }
 
+        /** A tap felt through the phone (press and hold, a swipe reaching its point), following its vibration settings. */
+        @JavascriptInterface
+        public void haptic(String kind) {
+            main.post(() -> {
+                if (page == null) return;
+                int type = "tick".equals(kind) ? HapticFeedbackConstants.CLOCK_TICK
+                        : "confirm".equals(kind) && Build.VERSION.SDK_INT >= 30 ? HapticFeedbackConstants.CONFIRM
+                        : HapticFeedbackConstants.LONG_PRESS;
+                page.performHapticFeedback(type);
+            });
+        }
+
         /** {code, name} of the installed app, for the update check. */
         @JavascriptInterface
         public String appVersion() {
@@ -518,7 +543,7 @@ public class MainActivity extends Activity {
         if (Build.VERSION.SDK_INT < 34 || IncomingCall.canRingFullScreen(this)) return;
         if (AddaApp.prefs(this).getBoolean("asked_full_screen", false) || isFinishing()) return;
         AddaApp.prefs(this).edit().putBoolean("asked_full_screen", true).apply();
-        new AlertDialog.Builder(this, android.R.style.Theme_Material_Dialog_Alert)
+        new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
                 .setTitle(R.string.fsi_title)
                 .setMessage(R.string.fsi_text)
                 .setPositiveButton(R.string.fsi_allow, (d, w) -> {
@@ -964,7 +989,8 @@ public class MainActivity extends Activity {
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        if (web != null) web.saveState(outState);
+        String url = web != null ? web.getUrl() : null;
+        if (url != null && isAppUrl(Uri.parse(url))) outState.putString(STATE_URL, url);
     }
 
     @Override

@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router';
+import { Navigate, Outlet, Route, createRoutesFromElements, useLocation, useNavigate, useParams } from 'react-router';
 import { useAuth } from './store/auth';
 import { AuthPage } from './pages/AuthPage';
 import { AppShell } from './pages/AppShell';
@@ -65,7 +65,26 @@ function NativeNavigator() {
   return null;
 }
 
-export function App() {
+/** The app's own pages, for people signed in; everyone else goes to the login page. */
+function SignedIn({ children }: { children: ReactNode }) {
+  const authed = useAuth((s) => s.status === 'authed');
+  return authed ? children : <Navigate to="/login" replace />;
+}
+
+/** The login and sign-up pages, for people not signed in yet. */
+function SignedOut({ children }: { children: ReactNode }) {
+  const authed = useAuth((s) => s.status === 'authed');
+  return authed ? <Navigate to="/" replace /> : children;
+}
+
+/** /join/:code, whether signed in or not. */
+function Join() {
+  const authed = useAuth((s) => s.status === 'authed');
+  return <JoinLink authed={authed} />;
+}
+
+/** Everything around the pages: the splash while checking who's signed in, notices, the update check. */
+function Root() {
   const status = useAuth((s) => s.status);
   const init = useAuth((s) => s.init);
 
@@ -82,33 +101,41 @@ export function App() {
     );
   }
 
-  const authed = status === 'authed';
   return (
     <>
-      <Routes>
-        <Route path="/login" element={authed ? <Navigate to="/" replace /> : <AuthPage mode="login" />} />
-        <Route path="/signup" element={authed ? <Navigate to="/" replace /> : <AuthPage mode="signup" />} />
-        <Route path="/join/:code" element={<JoinLink authed={authed} />} />
-        <Route path="/" element={authed ? <AppShell /> : <Navigate to="/login" replace />}>
-          <Route index element={<Navigate to="/chats" replace />} />
-          <Route path="chats" element={<EmptyPane section="chats" />} />
-          <Route path="chats/:userId" element={<ChatView />} />
-          <Route path="rooms" element={<EmptyPane section="rooms" />} />
-          <Route path="rooms/:roomId" element={<RoomView />} />
-          <Route path="invites" element={<EmptyPane section="invites" />} />
-          <Route path="admin" element={<HostOnly><Overview /></HostOnly>} />
-          <Route path="admin/overview" element={<HostOnly><Overview /></HostOnly>} />
-          <Route path="admin/people" element={<HostOnly><People /></HostOnly>} />
-          <Route path="admin/rooms" element={<HostOnly><RoomsAdmin /></HostOnly>} />
-          <Route path="admin/settings" element={<HostOnly><SiteSettings /></HostOnly>} />
-          <Route path="admin/app" element={<HostOnly><AppReleases /></HostOnly>} />
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <Outlet />
       <Toasts />
       <AppUpdate />
       <NativeNavigator />
-      {authed && <PendingJoin />}
+      {status === 'authed' && <PendingJoin />}
     </>
   );
 }
+
+/**
+ * The pages, as the router's own routes (so moving between them can animate,
+ * and the animation plays back on back; see lib/screens.ts).
+ */
+export const appRoutes = createRoutesFromElements(
+  <Route element={<Root />}>
+    <Route path="/login" element={<SignedOut><AuthPage mode="login" /></SignedOut>} />
+    <Route path="/signup" element={<SignedOut><AuthPage mode="signup" /></SignedOut>} />
+    <Route path="/join/:code" element={<Join />} />
+    <Route path="/" element={<SignedIn><AppShell /></SignedIn>}>
+      <Route index element={<Navigate to="/chats" replace />} />
+      <Route path="chats" element={<EmptyPane section="chats" />} />
+      <Route path="chats/:userId" element={<ChatView />} />
+      <Route path="rooms" element={<EmptyPane section="rooms" />} />
+      <Route path="rooms/:roomId" element={<RoomView />} />
+      <Route path="invites" element={<EmptyPane section="invites" />} />
+      <Route path="settings" element={<EmptyPane section="settings" />} />
+      <Route path="admin" element={<HostOnly><Overview /></HostOnly>} />
+      <Route path="admin/overview" element={<HostOnly><Overview /></HostOnly>} />
+      <Route path="admin/people" element={<HostOnly><People /></HostOnly>} />
+      <Route path="admin/rooms" element={<HostOnly><RoomsAdmin /></HostOnly>} />
+      <Route path="admin/settings" element={<HostOnly><SiteSettings /></HostOnly>} />
+      <Route path="admin/app" element={<HostOnly><AppReleases /></HostOnly>} />
+    </Route>
+    <Route path="*" element={<Navigate to="/" replace />} />
+  </Route>,
+);

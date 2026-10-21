@@ -257,12 +257,12 @@ await check('Start a chat: no list, find by user ID, your own ID to share', asyn
   await p.context().close();
 });
 
-await check('Your user ID from the account menu; changing it', async () => {
+await check('Your user ID in Settings (the You tab on a phone); changing it', async () => {
   const gus = await register('Gus Handle');
   const p = await page(gus, { width: 390, height: 844 });
   await p.goto(`${BASE}/chats`);
-  await p.getByRole('button', { name: 'Your account' }).click();
-  await p.getByRole('menuitem', { name: 'Your user ID' }).click();
+  await p.getByRole('link', { name: 'You: settings' }).click();
+  await p.getByRole('button', { name: /^Your user ID/ }).click();
   const dlg = p.getByRole('dialog', { name: 'Your user ID' });
   await dlg.getByText(`@${gus.handle}`).waitFor();
   const next = `gus.${stamp}`;

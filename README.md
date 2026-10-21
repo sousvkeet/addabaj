@@ -41,7 +41,7 @@
 - **Call** with HD voice and video, routed through Cloudflare's TURN relay when networks block direct connections.
 - **Hang out** in rooms with a live voice table for up to 12 people, where whoever speaks lights up.
 - **Watch together:** paste a link from almost any site, and the server finds the video and keeps everyone in sync. You can also stream a file or your screen live from your device.
-- **On Android:** a native app with notifications while it's closed, calls that ring like phone calls (even on the lock screen), calls that keep going in the background, screen sharing, and updates the host publishes (optional or mandatory) that install from inside the app.
+- **On Android:** a native app that feels like other messengers. It opens straight onto your chats (even offline), screens slide in and out, you press and hold or swipe messages, and messages written offline send themselves later. It also has notifications while it's closed, calls that ring like phone calls (even on the lock screen), calls that keep going in the background, screen sharing, and updates the host publishes (optional or mandatory) that install from inside the app.
 - **Run the site** from a host admin panel with live numbers, people, rooms, sign-ups, announcements and app updates.
 - **Look good** in two themes: "Midnight Aurora" (dark, the default) and "Ocean Mint" (light), with layouts made for phones too.
 
@@ -368,6 +368,14 @@ server {
   - Voice calls play from the earpiece and turn the screen off at your ear; a speaker button switches to the loudspeaker.
 - **Screen sharing** for live streams: everyone watching sees the phone's screen (picture only).
 - **Updates from your server:** new versions the host uploads are offered when the app opens, and download and install from inside the app. Mandatory ones must be installed to keep using it.
+- **Feels like an app, not a website:**
+  - Tabs along the bottom (Chats, Rooms, Invites, You), with Settings under You, and a round button for a new chat or room.
+  - Chats slide in from the side and slide away on back, including Android's back gesture. Forms slide up from the bottom and swipe down to close.
+  - Press and hold a message for its menu (react, reply, copy, delete) with a little buzz; swipe it to the right to reply. Pinch, drag and double-tap photos.
+  - The phone's own font, Android's press ripples, no zooming or selecting words by accident.
+- **Opens at once, even offline:**
+  - The app keeps your recent chats on the phone, so it opens straight onto them while it catches up. With no connection it still opens, showing them with "Waiting for network…".
+  - A message written offline waits with a clock and sends itself when the connection is back.
 
 Notifications and ringing need a free Firebase project:
 - **The app:** put its `google-services.json` in `android/app/` before building.
@@ -425,6 +433,7 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 | `npm run test:people` | No list of people: exact user ID and email lookups only, rate-limited; strangers can't read each other or see each other online, contacts can; changing your user ID; rooms joined with an invite code, open and with a password; wrong passwords, full rooms, unknown codes; only admins see, reset or lock the code; guessing limits; in the app: starting a chat by user ID, your ID in the account menu, a join link opened while logged out, and starting a password room. |
 | `npm run test:delete` | Deleting messages: for everyone (marker for both, live; text, photo file, reactions and quotes removed; no reacting to it after); only the sender can, within two days, and not call records; for me (gone for me on all my devices only, out of the chat preview and unread count); rooms: own messages, admins deleting anyone's ("deleted by an admin"), notices only for yourself, outsiders refused; bad input; in the app: hover → Delete → "Delete for everyone" seen live on a phone, and press-and-hold on a phone offering only "Delete for me" for someone else's message. |
 | `npm run test:security` | Logged-out access; forged login cookies; requests and live connections from other websites; security headers; outsiders reaching other people's rooms, chats and files; members running a room; admin pages; relay links; signing out other sessions after a password change; bad input to every endpoint (no 500s); all 30 live events × 9 kinds of garbage (the server stays up); message limits and flooding; HTML and scripts in messages, names and rooms showing as plain text. |
+| `npm run test:app` | The Android app's feel, in a page posing as the app: the phone's font, no zooming, no web fonts or selecting words (a phone's browser unchanged); the tab bar at the bottom and Settings under You; the round button and a sheet that swipes down to close; chats sliding in and away again, with the back arrow going back through history; press and hold (with a wobbly finger) for the menu with a buzz, and Copy; swiping to reply with a tick; a message written offline sending itself once back online; opening with no connection onto the chats kept from last time (needs `npm run build`); logging out wiping what the phone kept. |
 | `npm run test:updates` | Android app updates: the server reading a release's version and key from the file; refusing files that aren't an APK, aren't newer, or are signed with another key (even the first one), and anyone but the host; live announcements and intact downloads; mandatory on and off. In a page posing as the app: the offer when it opens and Later; Update app asking the app to download, with progress, the install permission, the installer, cancelling and installing again, and failures; a mandatory update that can't be closed, shown straight away on the next start even before the server answers; older apps downloading with the browser; no offer when up to date or in a browser; uploading, making mandatory and removing in Admin › App updates. Needs real APKs: `android/dist/AddaKhana-1.3.0.apk`, a newer `assembleRelease` build and an `assembleDebug` build (or set `OLD_APK`, `NEW_APK`, `OTHER_KEY_APK`). It removes every uploaded release from the dev database. |
 | `npm run test:admin` | The `admin` / `admin` login; the Admin tab and API only for host admins; the overview; roles, switching accounts off and on, new passwords, adding and removing people; deleting rooms; adding anyone to a room and removing anyone, including its owner (the room passes on); closing sign-ups; announcements; changing your own password; the admin pages on a phone. The admin must still have its default password (`npm run admin:reset`). |
 
@@ -449,6 +458,9 @@ client/src/
   components/           Message list, composer, calls, voice table, watch together, UI kit
   store/                Zustand stores: auth, chat, call (1:1 WebRTC), voice (room mesh), live streams
   realtime.ts           Socket events into the stores
+  lib/screens.ts        Phone screen transitions and back behaviour
+  lib/localCache.ts     The chats the Android app keeps on the phone
+client/public/sw.js     Keeps the page on the device, so the app opens at once and offline
 tests/                  Playwright browser tests and their video clips
 android/                The Android app: the site in a WebView, plus notifications, ringing, background calls, screen sharing and updates
 docs/                   The logo and README screenshots
@@ -466,6 +478,7 @@ docs/                   The logo and README screenshots
 - **Input:** every endpoint validates its input and answers bad input with a clear error. Every live event is guarded, so no payload can crash the server, and messages and reactions are rate-limited against flooding. Queries are parameterised throughout.
 - **Fetching links:** the server fetches pasted links itself, so it blocks private and local addresses (localhost, your LAN, cloud metadata) on every request, redirect, yt-dlp request and hidden-browser request. Relay links are signed and only work for the room's members.
 - **App updates:** only host admins can upload them. The server reads each file's package, version and signing certificate itself, and only accepts the app's own package, a newer version, and the same signing key as the version before (the first one must match `ANDROID_CERT_SHA256`, by default the release key). The app only downloads updates from its own server's download address, checks the file's SHA-256 against the release before opening it, and Android's installer checks the signature again.
+- **On the phone:** the Android app keeps recent chats (the last 40 messages of the 25 latest) in its own private storage so it can open offline; logging out, or the session ending, wipes them. Browsers keep nothing, since a computer may be shared. The page itself (not messages) is kept by a service worker (`client/public/sw.js`), which never stores the API, files or videos.
 - **Secrets:** the Cloudflare TURN key stays on the server; browsers only get short-lived credentials. The Firebase service account key (`FCM_SERVICE_ACCOUNT`) stays on the server too. The default `admin` password must be changed before the admin API works in production.
 - **Checking it:** `npm run test:security` tries all of the above against a running server, and `npm audit` reports no known vulnerabilities in the dependencies.
 

@@ -21,6 +21,11 @@ const copy = {
     body: 'Invites from room admins appear on the left. Join the ones you like; the admin sees when you decline.',
     action: null,
   },
+  settings: {
+    title: 'Settings',
+    body: 'Your user ID, privacy, devices, theme and password are on the left.',
+    action: null,
+  },
 } as const;
 
 const TILES = [

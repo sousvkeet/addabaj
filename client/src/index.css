@@ -1,6 +1,8 @@
 @import "tailwindcss";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+/* Inside the Android app (index.html marks <html class="app">). */
+@custom-variant app (&:where(.app *));
 
 /* Two themes, two moods.
    Light, "Ocean Mint": crisp white and pale blue, a teal-to-blue ocean
@@ -185,6 +187,135 @@ select:focus-visible {
   scrollbar-color: color-mix(in srgb, var(--ink-soft) 30%, transparent) transparent;
 }
 
+/* The Android app (index.html adds .app): touch like an app, not a web page.
+   No grey flash on tap, no selecting words or "copy link" pop-ups on press and
+   hold (a message's own menu has Copy), no bouncing or zooming the whole page,
+   and the phone's own font. Text boxes still select and paste. */
+html.app {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+html.app,
+html.app body {
+  overscroll-behavior: none;
+}
+html.app body,
+html.app .font-display {
+  font-family: Roboto, "Google Sans", system-ui, sans-serif;
+}
+html.app .select-text {
+  -webkit-user-select: none;
+  user-select: none;
+}
+html.app input,
+html.app textarea,
+html.app [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+html.app img,
+html.app a {
+  -webkit-user-drag: none;
+}
+/* Lists scroll on their own, so pulling past the end never moves the screen. */
+html.app .overflow-y-auto {
+  overscroll-behavior-y: contain;
+}
+
+/* A press ripple, like Android's (lib/ripple.ts adds the wave). In the
+   components layer, so an element's own classes (absolute, say) still win. */
+@layer components {
+  html.app .ripple {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+}
+.ripple-wave {
+  position: absolute;
+  z-index: -1;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.14;
+  pointer-events: none;
+  transform: scale(0);
+  animation: ripple 520ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+.ripple-wave.out {
+  transition: opacity 260ms ease-out;
+  opacity: 0;
+}
+@keyframes ripple {
+  to { transform: scale(1); }
+}
+
+/* Moving between screens (lib/screens.ts sets data-nav): on a phone a chat
+   slides in over its list, which drifts back and dims, and slides away again on
+   back; tabs fade through. Wider screens show both at once, so they just switch. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0s;
+}
+@media (max-width: 767px) and (prefers-reduced-motion: no-preference) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    mix-blend-mode: normal;
+    animation-fill-mode: both;
+    animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  html[data-nav="forward"]::view-transition-old(root) {
+    animation-name: screen-behind;
+    animation-duration: 320ms;
+  }
+  html[data-nav="forward"]::view-transition-new(root) {
+    animation-name: screen-in;
+    animation-duration: 320ms;
+    box-shadow: -10px 0 28px rgb(0 0 0 / 0.28);
+  }
+  html[data-nav="back"]::view-transition-old(root) {
+    z-index: 1;
+    animation-name: screen-out;
+    animation-duration: 260ms;
+    box-shadow: -10px 0 28px rgb(0 0 0 / 0.28);
+  }
+  html[data-nav="back"]::view-transition-new(root) {
+    animation-name: screen-return;
+    animation-duration: 260ms;
+  }
+  html[data-nav="tab"]::view-transition-old(root) {
+    animation: 90ms ease-out both screen-fade-out;
+  }
+  html[data-nav="tab"]::view-transition-new(root) {
+    animation: 210ms 60ms ease-out both screen-fade-in;
+  }
+  /* The tab bar stays put while the tabs fade. */
+  html[data-nav="tab"] .bottom-nav {
+    view-transition-name: bottom-nav;
+  }
+}
+@keyframes screen-in {
+  from { transform: translateX(100%); }
+}
+@keyframes screen-behind {
+  to { transform: translateX(-28%); filter: brightness(0.7); }
+}
+@keyframes screen-out {
+  to { transform: translateX(100%); }
+}
+@keyframes screen-return {
+  from { transform: translateX(-28%); filter: brightness(0.7); }
+}
+@keyframes screen-fade-out {
+  to { opacity: 0; }
+}
+@keyframes screen-fade-in {
+  from { opacity: 0; transform: scale(0.985); }
+}
+
 /* Floating blobs behind the sign-in screen; they drift slowly. */
 .aurora-blob {
   position: absolute;
@@ -246,6 +377,19 @@ select:focus-visible {
   to { opacity: 1; transform: none; }
 }
 
+/* Dialogs: pop in as a box; on phones slide up as a sheet. */
+.dialog-in {
+  animation: pop-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (max-width: 767px) {
+  .dialog-in {
+    animation: sheet-up 280ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+}
+@keyframes sheet-up {
+  from { transform: translateY(100%); }
+}
+
 /* New messages rise in gently. */
 .rise-in {
   animation: rise-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
@@ -278,6 +422,7 @@ select:focus-visible {
   .ring-pulse::after,
   .typing-dots span,
   .pop-in,
+  .dialog-in,
   .rise-in {
     animation: none;
   }

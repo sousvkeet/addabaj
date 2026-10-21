@@ -48,6 +48,9 @@ export function watchConnection(isAuthed: () => boolean) {
   const returning = () => void checkConnection(isAuthed, true);
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && returning());
   window.addEventListener('online', returning);
+  // The phone says the network is gone: drop the line now rather than wait for
+  // the heartbeat to notice, so nothing seems sent that wasn't.
+  window.addEventListener('offline', () => socket.connected && socket.io.engine?.close());
   window.addEventListener('focus', returning);
   window.addEventListener('pageshow', returning);
   window.addEventListener('pointerdown', check, { passive: true });

@@ -6,7 +6,7 @@ import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { Avatar, hueFromId } from './ui/Avatar';
 import { Button, IconButton } from './ui/Button';
-import { ListEmpty, ListHeader, ListSearch, UnreadBadge, listRowClass } from './ListHeader';
+import { Fab, ListEmpty, ListHeader, ListSearch, UnreadBadge, listClass, listRowClass } from './ListHeader';
 import { CreateRoomDialog } from './CreateRoomDialog';
 import { JoinRoomDialog } from './JoinRoomDialog';
 
@@ -47,14 +47,16 @@ export function RoomList() {
             <IconButton label="Join a room with a code" variant="soft" size={42} onClick={() => setJoining(true)}>
               <KeyRound size={19} />
             </IconButton>
-            <IconButton label="Start a room" variant="primary" size={42} onClick={() => setCreating(true)}>
-              <Plus size={20} />
-            </IconButton>
+            <span className="hidden md:flex">
+              <IconButton label="Start a room" variant="primary" size={42} onClick={() => setCreating(true)}>
+                <Plus size={20} />
+              </IconButton>
+            </span>
           </span>
         }
       />
       {Object.keys(rooms).length > 0 && <ListSearch value={filter} onChange={setFilter} placeholder="Search rooms" />}
-      <ul className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2.5 pb-3">
+      <ul className={listClass}>
         {list.map((room) => {
           const m = room.lastMessage;
           const talking = voice[room.id]?.length ?? 0;
@@ -63,6 +65,7 @@ export function RoomList() {
             <li key={room.id}>
               <NavLink
                 to={`/rooms/${room.id}`}
+                viewTransition
                 className={({ isActive }) => listRowClass(isActive)}
               >
                 <Avatar name={room.name} hue={hueFromId(room.id)} size={48} square />
@@ -125,6 +128,9 @@ export function RoomList() {
           </ListEmpty>
         )}
       </ul>
+      <Fab label="Start a room" onClick={() => setCreating(true)}>
+        <Plus size={24} />
+      </Fab>
       <CreateRoomDialog open={creating} onClose={() => setCreating(false)} />
       <JoinRoomDialog open={joining} onClose={closeJoin} code={linkCode} />
     </>
