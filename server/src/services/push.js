@@ -14,6 +14,8 @@ import '../config.js'; // loads server/.env
 import { query } from '../db.js';
 import { getIO, userChannel } from '../realtime.js';
 import { isDisabled } from './site.js';
+import { dmMuted } from './chatSettings.js';
+import { hasBlocked } from './blocks.js';
 import { roomPhotoUrl } from './users.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
@@ -198,33 +200,45 @@ const failed = (err) => console.error('Push notification failed:', err.message);
 export function pushDm(message, sender) {
   const to = message.recipientId;
   if (!account || isLooking(to)) return;
-  remember(to, `dm:${sender.id}`);
-  pushToUser(to, {
-    type: 'message',
-    scope: 'dm',
-    chatId: sender.id,
-    chatName: sender.name,
-    chatHue: sender.hue,
-    senderId: sender.id,
-    senderName: sender.name,
-    senderHue: sender.hue,
-    ...(sender.photo ? { chatPhoto: sender.photo, senderPhoto: sender.photo } : {}),
-    messageId: message.id,
-    text: preview(message),
-    sentAt: new Date(message.createdAt).getTime(),
-  }).catch(failed);
+  void (async () => {
+    // A chat they muted stays quiet (calls still ring).
+    if (await dmMuted(to, sender.id)) return;
+    remember(to, `dm:${sender.id}`);
+    await pushToUser(to, {
+      type: 'message',
+      scope: 'dm',
+      chatId: sender.id,
+      chatName: sender.name,
+      chatHue: sender.hue,
+      senderId: sender.id,
+      senderName: sender.name,
+      senderHue: sender.hue,
+      ...(sender.photo ? { chatPhoto: sender.photo, senderPhoto: sender.photo } : {}),
+      messageId: message.id,
+      text: preview(message),
+      sentAt: new Date(message.createdAt).getTime(),
+    });
+  })().catch(failed);
 }
 
-/** A new room message: every other member who isn't looking. */
+/**
+ * A new room message: every other member who isn't looking. Someone who muted
+ * the room only hears about messages that mention them or reply to them, and
+ * nobody hears from someone they blocked (the message still shows in the room).
+ */
 export async function pushRoomMessage(message) {
   if (!account || !message.sender) return;
   const { rows } = await query(
-    `SELECT rm.user_id, r.name, r.photo FROM room_members rm JOIN rooms r ON r.id = rm.room_id
+    `SELECT rm.user_id, r.name, r.photo, coalesce(rm.muted_until > now(), false) AS muted
+     FROM room_members rm JOIN rooms r ON r.id = rm.room_id
      WHERE rm.room_id = $1 AND rm.user_id <> $2`,
     [message.roomId, message.sender.id],
   );
-  for (const { user_id: userId, name, photo } of rows) {
-    if (isLooking(userId)) continue;
+  const forThem = new Set((message.mentions ?? []).map((m) => m.id));
+  if (message.replyTo?.senderId) forThem.add(message.replyTo.senderId);
+  for (const { user_id: userId, name, photo, muted } of rows) {
+    if (muted && !forThem.has(userId)) continue;
+    if (isLooking(userId) || hasBlocked(userId, message.sender.id)) continue;
     remember(userId, `room:${message.roomId}`);
     pushToUser(userId, {
       type: 'message',

@@ -4,12 +4,24 @@ import { cachedUser, forgetCache, saveUser } from '../lib/localCache';
 import { socket } from '../lib/socket';
 import type { User } from '../lib/types';
 
+/** A sign-up waiting for the code emailed to it (the token proves it's this browser's). */
+export type PendingSignup = { token: string; email: string; resendIn: number };
+
 type AuthState = {
   user: User | null;
   status: 'loading' | 'authed' | 'guest';
   init: () => Promise<void>;
   login: (email: string, password: string) => Promise<void>;
-  register: (name: string, email: string, password: string) => Promise<void>;
+  /** Signs up: in at once, or (when the site confirms emails) a sign-up waiting for its code. */
+  register: (name: string, email: string, password: string) => Promise<PendingSignup | null>;
+  /** The emailed code finishes the sign-up and logs in. */
+  confirmSignup: (token: string, code: string) => Promise<void>;
+  /** Another code; seconds until the next one can be sent. */
+  resendSignup: (token: string) => Promise<number>;
+  /** Emails a code to reset a forgotten password (if there's an account); seconds until another can be sent. */
+  forgotPassword: (email: string) => Promise<number>;
+  /** The emailed code sets a new password and logs in (everywhere else is logged out). */
+  resetPassword: (email: string, code: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   expire: () => void;
   /** Reloads my account (after a password change, or when the host changes my role). */
@@ -70,7 +82,18 @@ export const useAuth = create<AuthState>()((set) => {
       signedIn(user);
     },
     register: async (name, email, password) => {
-      const { user } = await api<{ user: User }>('/auth/register', { method: 'POST', body: { name, email, password } });
+      const res = await api<{ user?: User; confirm?: PendingSignup }>('/auth/register', { method: 'POST', body: { name, email, password } });
+      if (res.user) signedIn(res.user);
+      return res.confirm ?? null;
+    },
+    confirmSignup: async (token, code) => {
+      const { user } = await api<{ user: User }>('/auth/register/confirm', { method: 'POST', body: { token, code } });
+      signedIn(user);
+    },
+    resendSignup: async (token) => (await api<{ resendIn: number }>('/auth/register/resend', { method: 'POST', body: { token } })).resendIn,
+    forgotPassword: async (email) => (await api<{ resendIn: number }>('/auth/forgot', { method: 'POST', body: { email } })).resendIn,
+    resetPassword: async (email, code, password) => {
+      const { user } = await api<{ user: User }>('/auth/reset', { method: 'POST', body: { email, code, password } });
       signedIn(user);
     },
     logout: async () => {

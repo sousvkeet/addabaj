@@ -10,6 +10,7 @@ What the app adds:
   - Reply and Mark as read work right from the notification.
   - Several waiting chats are bundled together.
   - Reading a chat anywhere (phone, computer) clears its notification.
+  - A room you muted (Room info › Notifications) stays quiet, except for messages that mention you or reply to you. A chat you muted stays quiet too (calls still ring), and someone you blocked can't reach you at all. This is decided on the server, so it works in every version of the app.
   - The phone stays quiet while you're using Adda Khana on it or on a computer.
 - **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with the caller's photo (once it's on the phone; ringing never waits for it), Answer and Decline. Calls you didn't answer leave a missed-call notification.
 - **Calls keep going in the background.**
@@ -28,7 +29,8 @@ What the app adds:
   - Tabs along the bottom, Settings under You, and a round button for a new chat or room.
   - Screens slide in and out, also with Android's back gesture; forms slide up from the bottom and swipe down to close.
   - Back works like WhatsApp's: it closes what's open first (a form, a photo, a message's menu), then goes back to the list, then to Chats, and only leaves the app from Chats, keeping it running in the background. A chat opened from a notification goes back to Chats as well (1.6.1 on: the page steps through its own screens, because the WebView's Back skips screens the page added by itself).
-  - Press and hold a message for its menu (with a buzz), swipe it right to reply, and pinch or double-tap photos.
+  - Press and hold a message for its menu (with a buzz), swipe it right to reply (from anywhere along its row, not the screen's very edge, which is Android's back gesture), and pinch or double-tap photos. Press and hold a chat or room in the list to mute, pin or archive it.
+  - Links in messages open in the phone's browser, so you're never taken away from the app inside it.
   - The phone's font, press ripples, and no accidental zooming or text selection. Dialogs from the app itself use the phone's own style.
 - **Opens at once, even offline.**
   - Recent chats are kept on the phone, so the app opens straight onto them and catches up in the background. With no connection it still opens, with "Waiting for network…".

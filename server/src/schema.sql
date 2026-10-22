@@ -268,3 +268,119 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS watch_queue jsonb NOT NULL DEFAULT '[
 -- Watch together: an admin turned the video's sound off for everyone in the
 -- room ({ by, byName }), until an admin turns it back on or the video stops.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS watch_muted jsonb;
+
+-- Email codes (see services/codes.js). A sign-up waiting for the code sent to
+-- its address: the account is only made once the code comes back, from the
+-- same browser or app (it holds the token). Gone after a day.
+CREATE TABLE IF NOT EXISTS pending_signups (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  token_hash    text NOT NULL UNIQUE,
+  email         text NOT NULL,
+  name          text NOT NULL,
+  password_hash text NOT NULL,
+  code_hash     text NOT NULL,
+  expires_at    timestamptz NOT NULL,
+  attempts      int NOT NULL DEFAULT 0,
+  sends         int NOT NULL DEFAULT 1,
+  sent_at       timestamptz NOT NULL DEFAULT now(),
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS pending_signups_email_idx ON pending_signups (lower(email), created_at);
+
+-- A forgotten password: the code sent to the account's email ('' once used,
+-- or after too many wrong tries), and how many were sent today.
+CREATE TABLE IF NOT EXISTS password_resets (
+  user_id      uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  code_hash    text NOT NULL,
+  expires_at   timestamptz NOT NULL,
+  attempts     int NOT NULL DEFAULT 0,
+  sends        int NOT NULL DEFAULT 1,
+  sent_at      timestamptz NOT NULL DEFAULT now(),
+  window_start timestamptz NOT NULL DEFAULT now()
+);
+
+-- Mentions in room messages: [{ id, offset, length }] for the members named in
+-- the text ("@Rahul Das"). They're notified even in a room they've muted.
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS mentions jsonb;
+-- A member muted the room's notifications until then (year 9999: until they
+-- turn them back on). Mentions and replies to them still come through.
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS muted_until timestamptz;
+
+-- ── Safety: blocking, and reports to the host admin ─────────────────────
+-- Blocked: the two can't message or call each other, the blocked person can't
+-- add the blocker to rooms, and neither sees the other's online status.
+CREATE TABLE IF NOT EXISTS blocks (
+  blocker_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blocked_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (blocker_id, blocked_id),
+  CHECK (blocker_id <> blocked_id)
+);
+CREATE INDEX IF NOT EXISTS blocks_blocked_idx ON blocks (blocked_id);
+
+-- A report about a person, or one of their messages: with a copy of the
+-- message and what came just before, as the reporter saw it.
+CREATE TABLE IF NOT EXISTS reports (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  reporter_id uuid REFERENCES users(id) ON DELETE SET NULL,
+  target_id   uuid REFERENCES users(id) ON DELETE SET NULL,
+  scope       text NOT NULL CHECK (scope IN ('user', 'dm', 'room')),
+  room_id     uuid REFERENCES rooms(id) ON DELETE SET NULL,
+  message_id  bigint,
+  reason      text NOT NULL,
+  details     text,
+  snapshot    jsonb,
+  status      text NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+  action      text,
+  handled_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  handled_at  timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS reports_status_idx ON reports (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS reports_target_idx ON reports (target_id);
+
+-- ── My chats: muted, pinned, archived ──────────────────────────────────
+-- For a chat with someone (rooms keep theirs on room_members).
+CREATE TABLE IF NOT EXISTS dm_settings (
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  peer_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  muted_until timestamptz,
+  pinned_at   timestamptz,
+  archived_at timestamptz,
+  PRIMARY KEY (user_id, peer_id)
+);
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS pinned_at timestamptz;
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS archived_at timestamptz;
+
+-- ── Messages: edited, forwarded, link previews ─────────────────────────
+ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS edited_at timestamptz;
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS edited_at timestamptz;
+ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS forwarded boolean NOT NULL DEFAULT false;
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS forwarded boolean NOT NULL DEFAULT false;
+-- The first link's preview: { url, title, description, site, image }.
+ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS preview jsonb;
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS preview jsonb;
+
+-- What an edited message said before (the host admin sees it with reports).
+CREATE TABLE IF NOT EXISTS message_edits (
+  id         bigserial PRIMARY KEY,
+  scope      text NOT NULL CHECK (scope IN ('dm', 'room')),
+  message_id bigint NOT NULL,
+  body       text NOT NULL,
+  edited_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS message_edits_idx ON message_edits (scope, message_id);
+
+-- Link previews, fetched once per address (kept a day), and their pictures,
+-- served from here so nobody's browser loads the other site.
+CREATE TABLE IF NOT EXISTS link_previews (
+  url        text PRIMARY KEY,
+  data       jsonb,
+  fetched_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS preview_images (
+  id           text PRIMARY KEY,
+  content_type text NOT NULL,
+  bytes        bytea NOT NULL,
+  created_at   timestamptz NOT NULL DEFAULT now()
+);

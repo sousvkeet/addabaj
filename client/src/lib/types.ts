@@ -18,11 +18,27 @@ export type User = {
   passwordChangeRequired?: boolean;
   /** Online status and last seen aren't shared (by them, or by you, which works both ways). */
   presenceHidden?: boolean;
+  /** I blocked them: they can't message or call me (whether they blocked me isn't said). */
+  blocked?: boolean;
   /** Only on your own account: your privacy choices. */
   privacy?: { sharePresence: boolean; readReceipts: boolean };
 };
 
 export type Announcement = { id: string; text: string; at: string };
+
+/** How messages work on this site, as the host admin set it (host admins aren't limited). */
+export type Messaging = {
+  linkPreviews: boolean;
+  editing: boolean;
+  /** Messages can be edited this long after sending. */
+  editMinutes: number;
+  forwarding: boolean;
+  /** Most chats one message can be forwarded to at once. */
+  forwardTo: number;
+};
+
+/** The card a message's first link gets: the page's title, picture (kept on this server) and so on. */
+export type LinkPreview = { url: string; title: string; description: string; site: string; image: string | null };
 
 /** A photo, video, voice message or file sent with a message. */
 export type Attachment = {
@@ -60,10 +76,15 @@ export type PreparedFile = {
 };
 
 /** What the composer sends: text, optionally a file and/or the message replied to. */
+/** A person named in a room message ("@Rahul Das"): where in its text. */
+export type Mention = { id: string; offset: number; length: number };
+
 export type Draft = {
   body: string;
   file?: PreparedFile;
   replyTo?: ReplyRef | null;
+  /** In rooms: the people it names. */
+  mentions?: Mention[];
   /** Names this send, kept across retries, so the server saves it once even if its answer was lost. */
   clientId?: string;
 };
@@ -80,6 +101,12 @@ type MessageExtras = {
   draft?: Draft;
   /** The sender's name for this send (see Draft); only on the sender's own messages. */
   clientId?: string | null;
+  /** Changed after sending (shown "edited"). */
+  editedAt?: string | null;
+  /** A copy of a message from another chat. */
+  forwarded?: boolean;
+  /** Its first link's card, once the server has fetched it. */
+  preview?: LinkPreview | null;
 };
 
 export type DmMessage = MessageExtras & {
@@ -100,7 +127,17 @@ export type DmMessage = MessageExtras & {
   tempId?: string;
 };
 
-export type Conversation = {
+/** My own settings for a chat or room (only I see them). */
+export type ChatSettings = {
+  /** Notifications off until then (year 9999: until I turn them back on). */
+  mutedUntil?: string | null;
+  /** Pinned to the top of my list. */
+  pinnedAt?: string | null;
+  /** Out of my list, under Archived. */
+  archivedAt?: string | null;
+};
+
+export type Conversation = ChatSettings & {
   partner: User;
   lastMessage: DmMessage | null;
   unread: number;
@@ -113,6 +150,8 @@ export type RoomMessage = MessageExtras & {
   body: string;
   createdAt: string;
   sender: { id: string; name: string; hue: number; photo?: string | null } | null;
+  /** The people it names ("@Rahul Das"), who are notified even in a room they muted. */
+  mentions?: Mention[] | null;
   /** Deleted for everyone (by its sender, or by a room admin). */
   deletedAt?: string | null;
   deletedByAdmin?: boolean;
@@ -211,7 +250,7 @@ export type WatchState = {
   muted?: { by: string; byName: string } | null;
 };
 
-export type RoomSummary = {
+export type RoomSummary = ChatSettings & {
   id: string;
   name: string;
   description: string;
@@ -222,6 +261,8 @@ export type RoomSummary = {
   memberCount: number;
   myRole: Role;
   unread: number;
+  /** Unread messages that mention me or reply to me. */
+  unreadMentions?: number;
   createdAt: string;
   lastMessage: RoomMessage | null;
   /** Title of the video the room is watching together, if any. */

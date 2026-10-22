@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { api, errorMessage } from '../lib/api';
 import { emitAck, socket, whenOnline } from '../lib/socket';
 import type {
-  Attachment, Conversation, DmMessage, Draft, Invite, Paged, PreparedFile, Reaction, ReplyRef, Role, RoomDetail, RoomMessage, RoomSummary, User, VoiceParticipant,
+  Attachment, ChatSettings, Conversation, DmMessage, Draft, Invite, LinkPreview, Mention, Paged, PreparedFile, Reaction, ReplyRef, Role, RoomDetail, RoomMessage,
+  RoomSummary, User, VoiceParticipant,
 } from '../lib/types';
 import { uploadFile } from '../lib/upload';
 import { nativeClearChat } from '../lib/native';
@@ -11,6 +12,13 @@ import { myId, onLogout, useAuth } from './auth';
 import { toast } from './ui';
 
 type Typing = Record<string, string>; // userId -> display name
+
+export type Scope = 'dm' | 'room';
+/** How long to mute a chat or room for ('off': unmute). */
+export type MuteSpan = '8h' | '1w' | 'always' | 'off';
+/** Where a forwarded message went: each chat or room, and whether it got there. */
+export type Forwarded = { scope: Scope; id: string; ok: boolean; error?: string };
+type Change = { messageId: number; between?: string[]; roomId?: string };
 
 type ChatState = {
   bootstrapped: boolean;
@@ -58,6 +66,10 @@ type ChatState = {
   applyHidden: (e: { scope: 'dm' | 'room'; messageId: number; chatId: string }) => void;
   receiveRoomMessage: (message: RoomMessage) => void;
   markRoomRead: (roomId: string) => void;
+  /** My notifications for a room: off for 8 hours, a week, for good, or back on. */
+  muteRoom: (roomId: string, span: '8h' | '1w' | 'always' | 'off') => Promise<void>;
+  /** My notifications for a room changed (here or on another device). */
+  setRoomMuted: (roomId: string, mutedUntil: string | null) => void;
   setRoomTyping: (e: { roomId: string; userId: string; name: string; typing: boolean }) => void;
   upsertRoom: (room: RoomSummary | RoomDetail) => void;
   dropRoom: (roomId: string) => void;
@@ -79,9 +91,53 @@ type ChatState = {
   declineInvite: (inviteId: string) => Promise<void>;
 
   setVoice: (roomId: string, participants: VoiceParticipant[]) => void;
+
+  /** Change what one of my messages says (rooms: with the people it names). */
+  editMessage: (scope: Scope, messageId: number, body: string, mentions?: Mention[]) => Promise<boolean>;
+  applyEdited: (e: Change & { scope: Scope; body: string; editedAt: string; preview: LinkPreview | null; mentions?: Mention[] | null }) => void;
+  /** A message's link card arrived. */
+  applyPreview: (e: Change & { scope: Scope; preview: LinkPreview }) => void;
+  /** Sends copies of a message to chats and rooms of mine (null: it couldn't go at all). */
+  forwardMessage: (scope: Scope, messageId: number, to: { scope: Scope; id: string }[]) => Promise<Forwarded[] | null>;
+  /** My settings for a chat or room: muted, pinned, archived. */
+  setChatSettings: (scope: Scope, id: string, change: { mute?: MuteSpan; pinned?: boolean; archived?: boolean }) => Promise<void>;
+  applyChatSettings: (e: ChatSettings & { scope: Scope; id: string }) => void;
+  block: (userId: string) => Promise<void>;
+  unblock: (userId: string) => Promise<void>;
+  /** Everyone I've blocked now (blocked or unblocked here, or on another device). */
+  applyBlocked: (ids: string[]) => void;
+  /** Someone was just blocked (or unblocked) by another way, such as a report. */
+  noteBlocked: (userId: string, blocked: boolean) => void;
 };
 
 const emptyPage = <T,>(): Paged<T> => ({ items: [], loaded: false, hasMore: false });
+
+/** A room message that mentions me, or replies to one of mine: it gets through even when the room is muted. */
+export const isForMe = (m: RoomMessage, me: string) => !!me && (!!m.mentions?.some((x) => x.id === me) || m.replyTo?.senderId === me);
+
+/** My notifications for this room are off right now. */
+export const isMuted = (room: Pick<RoomSummary, 'mutedUntil'>) => !!room.mutedUntil && new Date(room.mutedUntil).getTime() > Date.now();
+
+/** "Until I turn it back on" (as opposed to for a while). */
+export const mutedForGood = (room: Pick<RoomSummary, 'mutedUntil'>) => !!room.mutedUntil && new Date(room.mutedUntil).getFullYear() >= 9999;
+
+/** What a room adds to the app's unread counts: its unread messages, or (muted) just the ones for me. */
+export const countedUnread = (room: RoomSummary) => (isMuted(room) ? (room.unreadMentions ?? 0) : room.unread);
+
+/** What a chat adds to the app's unread counts: nothing while it's muted. */
+export const countedDmUnread = (c: Conversation) => (isMuted(c) ? 0 : c.unread);
+
+/** The most chats, and separately rooms, that can be pinned (the server's limit too). */
+export const MAX_PINNED = 5;
+
+/** A chat list in order: pinned ones first (the last pinned on top), then by their newest message. */
+export function ordered<T extends ChatSettings>(items: T[], newest: (item: T) => string) {
+  return [...items].sort((a, b) => {
+    if (!!a.pinnedAt !== !!b.pinnedAt) return a.pinnedAt ? -1 : 1;
+    if (a.pinnedAt && b.pinnedAt) return b.pinnedAt.localeCompare(a.pinnedAt);
+    return newest(b).localeCompare(newest(a));
+  });
+}
 
 let tempCounter = 0;
 const tempId = () => `tmp-${Date.now()}-${++tempCounter}`;
@@ -371,7 +427,10 @@ export const useChat = create<ChatState>()((set, get) => ({
         return {
           dms: { ...s.dms, [partnerId]: { ...page, items: merge(page.items, [message], tid) } },
           conversations: partner
-            ? { ...s.conversations, [partnerId]: { partner, lastMessage: later(s.conversations[partnerId]?.lastMessage, message), unread: s.conversations[partnerId]?.unread ?? 0 } }
+            ? {
+                ...s.conversations,
+                [partnerId]: { ...s.conversations[partnerId], partner, lastMessage: later(s.conversations[partnerId]?.lastMessage, message), unread: s.conversations[partnerId]?.unread ?? 0 },
+              }
             : s.conversations,
         };
       });
@@ -404,6 +463,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         conversations: {
           ...s.conversations,
           [partner.id]: {
+            ...prev,
             partner: { ...prev?.partner, ...partner },
             lastMessage: later(prev?.lastMessage, message),
             unread: (prev?.unread ?? 0) + (incoming && !isOpen && message.kind === 'text' ? 1 : 0),
@@ -546,7 +606,7 @@ export const useChat = create<ChatState>()((set, get) => ({
     const draft = first.clientId ? first : { ...first, clientId: newClientId() };
     const temp: RoomMessage = {
       id: 0, tempId: tid, roomId, kind: 'text', body: draft.body, createdAt: new Date().toISOString(),
-      sender: me, pending: 'sending', draft, clientId: draft.clientId,
+      sender: me, pending: 'sending', draft, clientId: draft.clientId, mentions: draft.mentions ?? null,
       attachment: draft.file ? localAttachment(draft.file) : null,
       replyTo: draft.replyTo ?? null,
       reactions: [],
@@ -570,7 +630,7 @@ export const useChat = create<ChatState>()((set, get) => ({
       await turn.ready;
       const { message } = await emitAck<{ message: RoomMessage }>(
         'room:send',
-        { roomId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id, clientId: draft.clientId },
+        { roomId, body: draft.body, attachmentId: attachment?.id, replyTo: draft.replyTo?.id, mentions: draft.mentions, clientId: draft.clientId },
         10_000,
         { waitOnline: OUTBOX_WAIT_MS },
       ).finally(turn.done);
@@ -580,7 +640,7 @@ export const useChat = create<ChatState>()((set, get) => ({
         const room = s.rooms[roomId];
         return {
           roomMessages: { ...s.roomMessages, [roomId]: { ...page, items: merge(page.items, [message], tid) } },
-          rooms: room ? { ...s.rooms, [roomId]: { ...room, lastMessage: later(room.lastMessage, message), unread: 0 } } : s.rooms,
+          rooms: room ? { ...s.rooms, [roomId]: { ...room, lastMessage: later(room.lastMessage, message), unread: 0, unreadMentions: 0 } } : s.rooms,
         };
       });
     } catch (err) {
@@ -608,13 +668,22 @@ export const useChat = create<ChatState>()((set, get) => ({
       const page = s.roomMessages[roomId];
       const isOpen = s.activeRoom === roomId && visible();
       const fromOther = message.kind === 'text' && message.sender?.id !== me;
+      const counts = fromOther && !isOpen ? 1 : 0;
       const typing = { ...(s.roomTyping[roomId] ?? {}) };
       if (message.sender) delete typing[message.sender.id];
       return {
         roomMessages: { ...s.roomMessages, [roomId]: { ...(page ?? emptyPage<RoomMessage>()), items: merge(page?.items ?? [], [message]) } },
         roomTyping: { ...s.roomTyping, [roomId]: typing },
         rooms: room
-          ? { ...s.rooms, [roomId]: { ...room, lastMessage: later(room.lastMessage, message), unread: room.unread + (fromOther && !isOpen ? 1 : 0) } }
+          ? {
+              ...s.rooms,
+              [roomId]: {
+                ...room,
+                lastMessage: later(room.lastMessage, message),
+                unread: room.unread + counts,
+                unreadMentions: (room.unreadMentions ?? 0) + (counts && isForMe(message, me) ? 1 : 0),
+              },
+            }
           : s.rooms,
       };
     });
@@ -625,9 +694,21 @@ export const useChat = create<ChatState>()((set, get) => ({
     nativeClearChat('room', roomId);
     const page = get().roomMessages[roomId];
     const last = page?.items.filter((m) => !m.pending).at(-1);
-    set((s) => (s.rooms[roomId]?.unread ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0 } } } : s));
+    set((s) => (s.rooms[roomId]?.unread || s.rooms[roomId]?.unreadMentions ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0, unreadMentions: 0 } } } : s));
     if (last) socket.emit('room:read', { roomId, messageId: last.id });
   },
+
+  muteRoom: async (roomId, span) => {
+    const { mutedUntil } = await api<{ mutedUntil: string | null }>(`/rooms/${roomId}/mute`, { method: 'PUT', body: { for: span } });
+    get().setRoomMuted(roomId, mutedUntil);
+  },
+
+  // Both the room list's copy and the open room's.
+  setRoomMuted: (roomId, mutedUntil) =>
+    set((s) => ({
+      rooms: s.rooms[roomId] ? { ...s.rooms, [roomId]: { ...s.rooms[roomId], mutedUntil } } : s.rooms,
+      roomDetails: s.roomDetails[roomId] ? { ...s.roomDetails, [roomId]: { ...s.roomDetails[roomId], mutedUntil } } : s.roomDetails,
+    })),
 
   setRoomTyping: ({ roomId, userId, name, typing }) => {
     const key = `room:${roomId}:${userId}`;
@@ -647,7 +728,14 @@ export const useChat = create<ChatState>()((set, get) => ({
     set((s) => {
       const { members, invites, voice, ...summary } = room as RoomDetail;
       const next: Partial<ChatState> = {
-        rooms: { ...s.rooms, [room.id]: { ...s.rooms[room.id], ...summary, unread: s.activeRoom === room.id ? 0 : summary.unread } },
+        rooms: {
+          ...s.rooms,
+          [room.id]: {
+            ...s.rooms[room.id],
+            ...summary,
+            ...(s.activeRoom === room.id ? { unread: 0, unreadMentions: 0 } : {}),
+          },
+        },
       };
       if (members) {
         next.roomDetails = { ...s.roomDetails, [room.id]: room as RoomDetail };
@@ -753,6 +841,104 @@ export const useChat = create<ChatState>()((set, get) => ({
     } catch (err) {
       toast(errorMessage(err), 'error');
     }
+  },
+
+  editMessage: async (scope, messageId, body, mentions) => {
+    try {
+      const change = await emitAck<Parameters<ChatState['applyEdited']>[0]>('msg:edit', { scope, messageId, body, mentions });
+      // The server tells my other tabs and the others; this one shows it now.
+      get().applyEdited(change);
+      return true;
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+      return false;
+    }
+  },
+
+  applyEdited: ({ scope, messageId, body, editedAt, preview, mentions, between, roomId }) =>
+    set((s) => {
+      const fields = { body, editedAt, preview, ...(mentions !== undefined ? { mentions } : {}) };
+      const update = <T extends { id: number; replyTo?: ReplyRef | null }>(items: T[]) =>
+        items.map((m) => (m.id === messageId ? { ...m, ...fields } : m.replyTo?.id === messageId ? { ...m, replyTo: { ...m.replyTo, body } } : m));
+      if (scope === 'dm') {
+        const partner = partnerOf(between);
+        const conv = s.conversations[partner];
+        return {
+          dms: s.dms[partner] ? { ...s.dms, [partner]: { ...s.dms[partner], items: update(s.dms[partner].items) } } : s.dms,
+          conversations: conv?.lastMessage?.id === messageId ? { ...s.conversations, [partner]: { ...conv, lastMessage: { ...conv.lastMessage, ...fields } } } : s.conversations,
+        };
+      }
+      if (!roomId) return s;
+      const room = s.rooms[roomId];
+      return {
+        roomMessages: s.roomMessages[roomId] ? { ...s.roomMessages, [roomId]: { ...s.roomMessages[roomId], items: update(s.roomMessages[roomId].items) } } : s.roomMessages,
+        rooms: room?.lastMessage?.id === messageId ? { ...s.rooms, [roomId]: { ...room, lastMessage: { ...room.lastMessage, ...fields } } } : s.rooms,
+      };
+    }),
+
+  applyPreview: ({ scope, messageId, preview, between, roomId }) =>
+    set((s) => {
+      const update = <T extends { id: number }>(items: T[]) => items.map((m) => (m.id === messageId ? { ...m, preview } : m));
+      if (scope === 'dm') {
+        const partner = partnerOf(between);
+        return s.dms[partner] ? { dms: { ...s.dms, [partner]: { ...s.dms[partner], items: update(s.dms[partner].items) } } } : s;
+      }
+      return roomId && s.roomMessages[roomId]
+        ? { roomMessages: { ...s.roomMessages, [roomId]: { ...s.roomMessages[roomId], items: update(s.roomMessages[roomId].items) } } }
+        : s;
+    }),
+
+  forwardMessage: async (scope, messageId, to) => {
+    try {
+      // The copies arrive in each chat like any message of mine.
+      const { results } = await emitAck<{ results: Forwarded[] }>('msg:forward', { scope, messageId, to }, 20_000);
+      return results;
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+      return null;
+    }
+  },
+
+  setChatSettings: async (scope, id, change) => {
+    if (scope === 'room') {
+      if (change.mute) await get().muteRoom(id, change.mute);
+      if (change.pinned === undefined && change.archived === undefined) return;
+      const settings = await api<ChatSettings>(`/rooms/${id}/settings`, { method: 'PUT', body: { pinned: change.pinned, archived: change.archived } });
+      get().applyChatSettings({ scope, id, ...settings });
+      return;
+    }
+    const settings = await api<ChatSettings>(`/dms/${id}/settings`, { method: 'PUT', body: change });
+    get().applyChatSettings({ scope, id, ...settings });
+  },
+
+  applyChatSettings: ({ scope, id, mutedUntil, pinnedAt, archivedAt }) =>
+    set((s) => {
+      const settings = { mutedUntil: mutedUntil ?? null, pinnedAt: pinnedAt ?? null, archivedAt: archivedAt ?? null };
+      if (scope === 'dm') {
+        return s.conversations[id] ? { conversations: { ...s.conversations, [id]: { ...s.conversations[id], ...settings } } } : s;
+      }
+      return {
+        rooms: s.rooms[id] ? { ...s.rooms, [id]: { ...s.rooms[id], ...settings } } : s.rooms,
+        roomDetails: s.roomDetails[id] ? { ...s.roomDetails, [id]: { ...s.roomDetails[id], ...settings } } : s.roomDetails,
+      };
+    }),
+
+  block: async (userId) => {
+    await api(`/users/${userId}/block`, { method: 'POST' });
+    markBlocked(userId, true);
+  },
+
+  unblock: async (userId) => {
+    await api(`/users/${userId}/block`, { method: 'DELETE' });
+    markBlocked(userId, false);
+  },
+
+  noteBlocked: (userId, blocked) => markBlocked(userId, blocked),
+
+  applyBlocked: (ids) => {
+    const blocked = new Set(ids);
+    const ids2 = new Set([...Object.keys(get().users), ...Object.keys(get().conversations)]);
+    for (const id of ids2) markBlocked(id, blocked.has(id));
   },
 
   deleteMessage: async (scope, chatId, messageId, forEveryone) => {
@@ -862,6 +1048,25 @@ function erased<T extends { id: number; replyTo?: ReplyRef | null }>(items: T[],
         ? { ...m, replyTo: { ...m.replyTo, body: '', attachment: null, deleted: true } }
         : m,
   );
+}
+
+/** The other person in a chat event ({ between: [a, b] }). */
+function partnerOf(between?: string[]) {
+  const me = myId();
+  return between?.find((id) => id !== me) ?? me;
+}
+
+/** Shows someone as blocked by me (or not) wherever the app has them. */
+function markBlocked(userId: string, blocked: boolean) {
+  useChat.setState((s) => {
+    const user = s.users[userId];
+    const conv = s.conversations[userId];
+    if (!!user?.blocked === blocked && !!conv?.partner.blocked === blocked) return s;
+    return {
+      users: user ? { ...s.users, [userId]: { ...user, blocked } } : s.users,
+      conversations: conv ? { ...s.conversations, [userId]: { ...conv, partner: { ...conv.partner, blocked } } } : s.conversations,
+    };
+  });
 }
 
 function meAsSender() {

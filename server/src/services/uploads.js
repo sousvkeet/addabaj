@@ -3,7 +3,7 @@
 // them and in which chat or room, which decides who may open them.
 import { randomUUID } from 'node:crypto';
 import { createWriteStream, mkdirSync } from 'node:fs';
-import { open, readdir, rm, stat } from 'node:fs/promises';
+import { copyFile, open, readdir, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { rootDir } from '../config.js';
@@ -138,6 +138,33 @@ export async function linkAttachment(client, attachmentId, userId, column, messa
   return publicAttachment(rows[0]);
 }
 
+/**
+ * A forwarded message's own copy of a sent file (its own file on disk and
+ * row): deleting one message never takes the other's file with it. The new
+ * row's id, ready to link like a fresh upload by `userId`.
+ */
+export async function copyAttachment(row, userId) {
+  const stored = randomUUID();
+  await copyFile(join(uploadDir, row.stored), join(uploadDir, stored));
+  const copy = await one(
+    `INSERT INTO attachments (uploader_id, kind, name, mime, size, width, height, duration, waveform, stored)
+     SELECT $2, kind, name, mime, size, width, height, duration, waveform, $3 FROM attachments WHERE id = $1
+     RETURNING id`,
+    [row.id, userId, stored],
+  );
+  if (!copy) {
+    await rm(join(uploadDir, stored), { force: true });
+    throw new AppError(404, 'That file is gone.');
+  }
+  return copy.id;
+}
+
+/** A copy made for a forward that couldn't go after all. */
+export async function discardAttachment(id) {
+  const row = await one('DELETE FROM attachments WHERE id = $1 AND dm_message_id IS NULL AND room_message_id IS NULL RETURNING stored', [id]);
+  if (row) await rm(join(uploadDir, row.stored), { force: true });
+}
+
 /** The file on disk and how to serve it, if this person may open it. */
 export async function fileFor(id, userId) {
   assertUuid(id, 'file');
@@ -157,6 +184,24 @@ export async function fileFor(id, userId) {
 
 /** Types that are safe to show inside the page; everything else is only downloaded. */
 export const showsInline = (row) => row.kind === 'image' || row.kind === 'video' || row.kind === 'voice';
+
+/** Sends a sent file (from fileFor, or a report's for the host admin); ?download saves it. */
+export function sendFile(req, res, { path, row }) {
+  const inline = showsInline(row) && req.query.download === undefined;
+  res.setHeader('Content-Type', inline ? row.mime : 'application/octet-stream');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.name)}`);
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Opened on its own, a file can never run code in the app's name.
+  res.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
+  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.sendFile(path, { acceptRanges: true, dotfiles: 'allow' });
+}
+
+/** A file that's in a report, for the host admin (null when it's been deleted since). */
+export async function reportedFile(id) {
+  const row = await one('SELECT * FROM attachments WHERE id = $1', [id]);
+  return row ? { path: join(uploadDir, row.stored), row } : null;
+}
 
 /**
  * Removes files that were uploaded but never sent (after a day), and files

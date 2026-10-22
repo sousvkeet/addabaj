@@ -234,7 +234,8 @@ await check('In the app: hover, Delete, "Delete for everyone": both see the mark
   await bubble.waitFor();
   await pb.getByRole('log').getByText('Oops, wrong chat').waitFor({ timeout: 8000 });
   await bubble.hover();
-  await bubble.getByRole('button', { name: 'Delete message' }).click();
+  await bubble.getByRole('button', { name: 'More actions' }).click();
+  await pa.getByRole('menuitem', { name: 'Delete' }).click();
   const dlg = pa.getByRole('dialog', { name: 'Delete message?' });
   await dlg.getByRole('button', { name: 'Delete for everyone' }).waitFor();
   await pa.screenshot({ path: `${SHOTS}delete-1-dialog.png` });
@@ -290,7 +291,8 @@ await check('A phone that was away when a message was deleted for everyone doesn
   await sleep(1500);
   const bubble = pa.getByRole('log').locator('[id^="msg-"]').filter({ hasText: 'Delete me while you are away' });
   await bubble.hover();
-  await bubble.getByRole('button', { name: 'Delete message' }).click();
+  await bubble.getByRole('button', { name: 'More actions' }).click();
+  await pa.getByRole('menuitem', { name: 'Delete' }).click();
   await pa.getByRole('dialog', { name: 'Delete message?' }).getByRole('button', { name: 'Delete for everyone' }).click();
   await pa.getByRole('log').getByText('You deleted this message').last().waitFor({ timeout: 5000 });
   // Back online, he opens the chat: the text is gone.
@@ -298,8 +300,11 @@ await check('A phone that was away when a message was deleted for everyone doesn
   await pb.evaluate(() => window.dispatchEvent(new Event('online')));
   await sleep(3000);
   await pb.getByRole('link', { name: /Ana Rahman/ }).click();
+  // (The chat has an older marker too: wait for this message's text to go.)
+  await pb.getByRole('log').getByText('Delete me while you are away').waitFor({ state: 'detached', timeout: 8000 }).catch(() => {
+    throw new Error('Bo still sees the deleted text');
+  });
   await pb.getByRole('log').getByText('This message was deleted').last().waitFor({ timeout: 8000 });
-  expect(!(await pb.getByRole('log').getByText('Delete me while you are away').count()), 'Bo still sees the deleted text');
   await pa.context().close();
   await pb.context().close();
 });

@@ -15,8 +15,11 @@ import { receiptsShared } from './privacy.js';
 import { introduce } from './presence.js';
 import { pushChatRead, pushDeleted, pushDm, pushRoomMessage } from './push.js';
 import { ROOM_MESSAGE_SELECT, roomMessage } from './rooms.js';
-import { linkAttachment, uploadDir } from './uploads.js';
+import { copyAttachment, discardAttachment, linkAttachment, uploadDir } from './uploads.js';
 import { findUser } from './users.js';
+import { blockedEitherWay, blockedMessage } from './blocks.js';
+import { firstLink, schedulePreview } from './previews.js';
+import { messaging } from './site.js';
 
 /** Message text; may be empty when a photo, file or voice message goes with it. */
 function cleanBody(body, hasAttachment = false) {
@@ -30,6 +33,9 @@ export const asId = (v) => {
   const n = Number(v);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 };
+
+/** The site's host admins aren't held to the limits they set for everyone. */
+const isHost = async (userId) => !!(await one(`SELECT 1 FROM users WHERE id = $1 AND site_role = 'admin'`, [userId]));
 
 // Plenty for a fast typist, but stops floods: 20 messages per 10 s per person.
 const canSend = rateLimiter(20, 10_000);
@@ -52,7 +58,11 @@ async function savedDm(userId, to, clientId) {
   return message;
 }
 
-export async function sendDm(userId, to, { body, attachmentId, replyTo, clientId: name } = {}, except = null) {
+/**
+ * `internal`: what only the server sets (never from the app's own send):
+ * `forwarded`, and a forwarded message's `preview`.
+ */
+export async function sendDm(userId, to, { body, attachmentId, replyTo, clientId: name } = {}, except = null, internal = {}) {
   if (!isUuid(to) || to === userId) throw new AppError(400, "You can't message that person.");
   const clientId = sendName(name);
   const again = await savedDm(userId, to, clientId);
@@ -61,6 +71,7 @@ export async function sendDm(userId, to, { body, attachmentId, replyTo, clientId
   const text = cleanBody(body, !!attachmentId);
   const partner = await findUser(to, userId);
   if (!partner) throw new AppError(404, "That person doesn't exist.");
+  if (blockedEitherWay(userId, to)) throw new AppError(403, blockedMessage(userId, to, partner.name));
   // A reply must point at a message in this same conversation.
   let replyToId = asId(replyTo);
   if (replyToId) {
@@ -72,9 +83,9 @@ export async function sendDm(userId, to, { body, attachmentId, replyTo, clientId
   }
   const message = await transaction(async (c) => {
     const { rows: [row] } = await c.query(
-      `INSERT INTO dm_messages (sender_id, recipient_id, body, reply_to_id, client_id) VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO dm_messages (sender_id, recipient_id, body, reply_to_id, client_id, forwarded, preview) VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING RETURNING ${DM_COLUMNS}`,
-      [userId, to, text, replyToId, clientId],
+      [userId, to, text, replyToId, clientId, !!internal.forwarded, internal.preview ? JSON.stringify(internal.preview) : null],
     );
     if (!row) return null; // the same send, saved a moment ago
     const m = dmMessage(row);
@@ -96,6 +107,7 @@ export async function sendDm(userId, to, { body, attachmentId, replyTo, clientId
   });
   toUser(userId, except)?.emit('dm:new', { message, partner });
   if (me) pushDm(message, me);
+  if (!internal.preview) schedulePreview('dm', message);
   return message;
 }
 
@@ -123,7 +135,44 @@ async function savedRoomMessage(userId, roomId, clientId) {
   return message;
 }
 
-export async function sendRoomMessage(user, roomId, { body, attachmentId, replyTo, clientId: name } = {}, except = null) {
+/** Most mentions one message can have. */
+const MAX_MENTIONS = 20;
+
+/**
+ * The mentions in a room message: [{ id, offset, length }], each where the
+ * text says "@" and that member's name (so nobody can be notified by a
+ * mention that names someone else, or no one). Null when there are none.
+ */
+async function cleanMentions(roomId, senderId, text, raw) {
+  if (!Array.isArray(raw) || !raw.length || !text) return null;
+  const { rows } = await query('SELECT u.id, u.name FROM room_members rm JOIN users u ON u.id = rm.user_id WHERE rm.room_id = $1', [roomId]);
+  const names = new Map(rows.map((r) => [r.id, r.name]));
+  const found = [];
+  for (const m of raw.slice(0, MAX_MENTIONS * 2)) {
+    const id = typeof m?.id === 'string' ? m.id : '';
+    const offset = Number(m?.offset);
+    const length = Number(m?.length);
+    const name = names.get(id);
+    if (!name || id === senderId || !Number.isSafeInteger(offset) || !Number.isSafeInteger(length) || offset < 0) continue;
+    if (text.slice(offset, offset + length).toLowerCase() !== `@${name}`.toLowerCase()) continue;
+    found.push({ id, offset, length });
+  }
+  // In order, without overlaps, each person once.
+  found.sort((a, b) => a.offset - b.offset);
+  const out = [];
+  const seen = new Set();
+  for (const m of found) {
+    const last = out.at(-1);
+    if ((last && m.offset < last.offset + last.length) || seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push(m);
+    if (out.length === MAX_MENTIONS) break;
+  }
+  return out.length ? out : null;
+}
+
+/** `internal`: as for sendDm. */
+export async function sendRoomMessage(user, roomId, { body, attachmentId, replyTo, mentions: named, clientId: name } = {}, except = null, internal = {}) {
   const userId = user.id;
   if (!isUuid(roomId)) throw new AppError(404, "That room doesn't exist.");
   const clientId = sendName(name);
@@ -133,13 +182,14 @@ export async function sendRoomMessage(user, roomId, { body, attachmentId, replyT
   const text = cleanBody(body, !!attachmentId);
   let replyToId = asId(replyTo);
   if (replyToId && !(await one('SELECT 1 FROM room_messages WHERE id = $1 AND room_id = $2', [replyToId, roomId]))) replyToId = null;
+  const mentions = await cleanMentions(roomId, userId, text, named);
   const message = await transaction(async (c) => {
     const { rows: [row] } = await c.query(
-      `INSERT INTO room_messages (room_id, sender_id, body, reply_to_id, client_id)
-       SELECT $1, $2, $3, $4, $5 WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2)
+      `INSERT INTO room_messages (room_id, sender_id, body, reply_to_id, client_id, mentions, forwarded, preview)
+       SELECT $1, $2, $3, $4, $5, $6, $7, $8 WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2)
        ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
-       RETURNING id, room_id, kind, body, created_at, sender_id, reply_to_id, client_id`,
-      [roomId, userId, text, replyToId, clientId],
+       RETURNING id, room_id, kind, body, created_at, sender_id, reply_to_id, client_id, mentions, edited_at, forwarded, preview`,
+      [roomId, userId, text, replyToId, clientId, mentions ? JSON.stringify(mentions) : null, !!internal.forwarded, internal.preview ? JSON.stringify(internal.preview) : null],
     );
     if (!row) {
       if (clientId) return null; // perhaps the same send, saved a moment ago
@@ -167,6 +217,7 @@ export async function sendRoomMessage(user, roomId, { body, attachmentId, replyT
     });
   }
   pushRoomMessage(message).catch((err) => console.error('Room push failed', err));
+  if (!internal.preview) schedulePreview('room', message);
   return message;
 }
 
@@ -265,8 +316,10 @@ export async function deleteMessage(user, { scope, messageId, forEveryone }) {
   if (m.deleted_at) return { deletedAt: m.deleted_at };
   if (m.kind !== 'text') throw new AppError(403, 'Room notices can only be deleted for yourself.');
   const own = m.sender_id === user.id;
-  if (!own && m.role !== 'admin') throw new AppError(403, 'Only room admins can delete other people’s messages for everyone.');
-  if (own && m.role !== 'admin' && Date.now() - new Date(m.created_at).getTime() > DELETE_FOR_EVERYONE_MS) {
+  // Room admins, and the site's host admins, can take down anyone's message.
+  const admin = m.role === 'admin' || (await isHost(user.id));
+  if (!own && !admin) throw new AppError(403, 'Only room admins can delete other people’s messages for everyone.');
+  if (own && !admin && Date.now() - new Date(m.created_at).getTime() > DELETE_FOR_EVERYONE_MS) {
     throw new AppError(403, 'Messages can be deleted for everyone only within two days of sending. You can still delete it for yourself.');
   }
   const deletedAt = await eraseMessage('room', id, user.id);
@@ -274,4 +327,155 @@ export async function deleteMessage(user, { scope, messageId, forEveryone }) {
   const { rows } = await query('SELECT user_id FROM room_members WHERE room_id = $1 AND user_id <> $2', [m.room_id, user.id]);
   pushDeleted(rows.map((r) => r.user_id), { scope, chatId: m.room_id, messageId: id });
   return { deletedAt, byAdmin: !own };
+}
+
+/** The host admin takes a message down (from a report): gone for everyone, as when its sender deletes it. */
+export async function deleteAsHost(hostId, scope, messageId) {
+  const id = asId(messageId);
+  if (!id || !TABLES[scope]) throw new AppError(404, GONE);
+  const io = getIO();
+  if (scope === 'dm') {
+    const m = await one('SELECT sender_id, recipient_id, deleted_at FROM dm_messages WHERE id = $1', [id]);
+    if (!m) throw new AppError(404, GONE);
+    if (m.deleted_at) return { deletedAt: m.deleted_at };
+    const deletedAt = await eraseMessage('dm', id);
+    io?.to(userChannel(m.sender_id)).to(userChannel(m.recipient_id)).emit('msg:deleted', {
+      scope, messageId: id, between: [m.sender_id, m.recipient_id], deletedAt,
+    });
+    pushDeleted([m.recipient_id], { scope, chatId: m.sender_id, messageId: id });
+    pushDeleted([m.sender_id], { scope, chatId: m.recipient_id, messageId: id });
+    return { deletedAt };
+  }
+  const m = await one('SELECT room_id, deleted_at FROM room_messages WHERE id = $1', [id]);
+  if (!m) throw new AppError(404, GONE);
+  if (m.deleted_at) return { deletedAt: m.deleted_at };
+  const deletedAt = await eraseMessage('room', id, hostId);
+  io?.to(roomChannel(m.room_id)).emit('msg:deleted', { scope, roomId: m.room_id, messageId: id, deletedAt, byAdmin: true });
+  const { rows } = await query('SELECT user_id FROM room_members WHERE room_id = $1', [m.room_id]);
+  pushDeleted(rows.map((r) => r.user_id), { scope, chatId: m.room_id, messageId: id });
+  return { deletedAt };
+}
+
+// ── Editing ───────────────────────────────────────────────────────────
+
+/** The same people at the same places (kept mentions' keys come back from the database in another order). */
+const sameMentions = (a, b) => JSON.stringify((a ?? []).map((x) => [x.id, x.offset, x.length])) === JSON.stringify((b ?? []).map((x) => [x.id, x.offset, x.length]));
+
+const minutesText = (n) => (n % 60 === 0 && n >= 60 ? `${n / 60} ${n === 60 ? 'hour' : 'hours'}` : `${n} ${n === 1 ? 'minute' : 'minutes'}`);
+
+/**
+ * Changes what one of my messages says, within the time the host allows
+ * (Site settings › Messages; a host admin's own, any time). Everyone with the
+ * chat sees it change, marked "edited", and the earlier text is kept for the
+ * host admin (it shows with reports).
+ */
+export async function editMessage(user, { scope, messageId, body, mentions: named }) {
+  const settings = messaging();
+  const host = await isHost(user.id);
+  if (!settings.editing && !host) throw new AppError(403, 'Editing messages is turned off on this site.');
+  const id = asId(messageId);
+  const t = TABLES[scope];
+  if (!id || !t) throw new AppError(404, GONE);
+  const m = await one(`SELECT m.*, EXISTS (SELECT 1 FROM attachments a WHERE a.${t.fk} = m.id) AS has_file FROM ${t.messages} m WHERE m.id = $1`, [id]);
+  if (!m || m.sender_id !== user.id) throw new AppError(404, GONE);
+  if (m.kind !== 'text' || m.deleted_at) throw new AppError(403, 'That message can’t be edited.');
+  if (scope === 'room' && !(await one('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [m.room_id, user.id]))) {
+    throw new AppError(403, "You're not a member of this room anymore.");
+  }
+  if (scope === 'dm' && blockedEitherWay(user.id, m.recipient_id)) throw new AppError(403, "You can't change messages in this chat any more.");
+  if (!host && Date.now() - new Date(m.created_at).getTime() > settings.editMinutes * 60_000) {
+    throw new AppError(403, `Messages can be edited for ${minutesText(settings.editMinutes)} after sending.`);
+  }
+  const text = cleanBody(body, m.has_file);
+  const mentions = scope === 'room' ? await cleanMentions(m.room_id, user.id, text, named) : null;
+  const where = scope === 'room' ? { roomId: m.room_id } : { between: [m.sender_id, m.recipient_id] };
+  // Nothing changed: nothing saved, and it isn't marked edited.
+  if (text === m.body && (scope === 'dm' || sameMentions(mentions, m.mentions))) {
+    return { scope, messageId: id, body: m.body, editedAt: m.edited_at, preview: m.preview ?? null, ...where, ...(scope === 'room' ? { mentions: m.mentions ?? null } : {}) };
+  }
+  const sameLink = firstLink(text) === firstLink(m.body);
+  const row = await transaction(async (c) => {
+    await c.query('INSERT INTO message_edits (scope, message_id, body) VALUES ($1, $2, $3)', [scope, id, m.body]);
+    const { rows: [r] } =
+      scope === 'room'
+        ? await c.query(
+            `UPDATE room_messages SET body = $2, mentions = $3, edited_at = now(), preview = CASE WHEN $4 THEN preview END
+             WHERE id = $1 RETURNING edited_at, preview, mentions`,
+            [id, text, mentions ? JSON.stringify(mentions) : null, sameLink],
+          )
+        : await c.query(
+            `UPDATE dm_messages SET body = $2, edited_at = now(), preview = CASE WHEN $3 THEN preview END
+             WHERE id = $1 RETURNING edited_at, preview`,
+            [id, text, sameLink],
+          );
+    return r;
+  });
+  const change = {
+    scope,
+    messageId: id,
+    body: text,
+    editedAt: row.edited_at,
+    preview: row.preview ?? null,
+    ...where,
+    ...(scope === 'room' ? { mentions: row.mentions ?? null } : {}),
+  };
+  const io = getIO();
+  if (scope === 'room') io?.to(roomChannel(m.room_id)).emit('msg:edited', change);
+  else io?.to(userChannel(m.sender_id)).to(userChannel(m.recipient_id)).emit('msg:edited', change);
+  if (!sameLink) schedulePreview(scope, { id, body: text, roomId: m.room_id, senderId: m.sender_id, recipientId: m.recipient_id });
+  return change;
+}
+
+// ── Forwarding ────────────────────────────────────────────────────────
+
+/**
+ * Sends a copy of a message I can see to other chats and rooms of mine (as
+ * many at once as the host allows), marked "forwarded". A photo, video, file
+ * or voice message goes too, as a copy of its own. Each one goes like a
+ * message of mine: blocks, rooms I've left and the sending rate all apply.
+ */
+export async function forwardMessage(user, { scope, messageId, to }) {
+  const settings = messaging();
+  const host = await isHost(user.id);
+  if (!settings.forwarding && !host) throw new AppError(403, 'Forwarding messages is turned off on this site.');
+  const targets = [
+    ...new Map(
+      (Array.isArray(to) ? to : [])
+        .filter((x) => (x?.scope === 'dm' || x?.scope === 'room') && isUuid(x.id) && !(x.scope === 'dm' && x.id === user.id))
+        .map((x) => [`${x.scope}:${x.id}`, { scope: x.scope, id: x.id }]),
+    ).values(),
+  ];
+  if (!targets.length) throw new AppError(400, 'Choose where to forward it.');
+  const limit = host ? 50 : settings.forwardTo;
+  if (targets.length > limit) throw new AppError(400, `You can forward a message to up to ${limit} ${limit === 1 ? 'chat' : 'chats'} at a time.`);
+  const id = asId(messageId);
+  const t = TABLES[scope];
+  if (!id || !t) throw new AppError(404, GONE);
+  const m = await one(`SELECT * FROM ${t.messages} WHERE id = $1`, [id]);
+  const sees =
+    m &&
+    (scope === 'dm'
+      ? m.sender_id === user.id || m.recipient_id === user.id
+      : !!(await one('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [m.room_id, user.id])));
+  if (!sees || m.deleted_at || m.kind !== 'text' || (await one(`SELECT 1 FROM ${t.hidden} WHERE user_id = $1 AND message_id = $2`, [user.id, id]))) {
+    throw new AppError(404, GONE);
+  }
+  const file = await one(`SELECT * FROM attachments WHERE ${t.fk} = $1`, [id]);
+  const results = [];
+  for (const target of targets) {
+    let attachmentId;
+    try {
+      attachmentId = file ? await copyAttachment(file, user.id) : undefined;
+      const extra = { forwarded: true, preview: m.preview ?? null };
+      const sent =
+        target.scope === 'dm'
+          ? await sendDm(user.id, target.id, { body: m.body, attachmentId }, null, extra)
+          : await sendRoomMessage(user, target.id, { body: m.body, attachmentId }, null, extra);
+      results.push({ ...target, ok: true, messageId: sent.id });
+    } catch (err) {
+      if (attachmentId) await discardAttachment(attachmentId).catch(() => {});
+      results.push({ ...target, ok: false, error: err.expose ? err.message : 'It couldn’t be forwarded there.' });
+    }
+  }
+  return { results };
 }

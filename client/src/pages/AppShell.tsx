@@ -1,7 +1,7 @@
 import { useEffect } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import { homeUnderneath, useBackSteps } from '../lib/back';
-import { useChat } from '../store/chat';
+import { countedDmUnread, countedUnread, useChat } from '../store/chat';
 import { Rail } from '../components/Rail';
 import { ChatList } from '../components/ChatList';
 import { RoomList } from '../components/RoomList';
@@ -41,8 +41,8 @@ export function AppShell() {
 
   const unread = useChat(
     (s) =>
-      Object.values(s.conversations).reduce((n, c) => n + c.unread, 0) +
-      Object.values(s.rooms).reduce((n, r) => n + r.unread, 0) +
+      Object.values(s.conversations).reduce((n, c) => n + countedDmUnread(c), 0) +
+      Object.values(s.rooms).reduce((n, r) => n + countedUnread(r), 0) +
       s.invites.length,
   );
   useEffect(() => {

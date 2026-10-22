@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, AudioLines, Headphones, LoaderCircle, MonitorPlay, Users, Video } from 'lucide-react';
+import { ArrowLeft, AudioLines, BellOff, Headphones, LoaderCircle, MonitorPlay, Users, Video } from 'lucide-react';
 import { socket } from '../lib/socket';
+import { useSite } from '../lib/site';
 import { useMedia } from '../lib/useMedia';
 import type { Receipt, ReplyRef, RoomMember, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
-import { useChat } from '../store/chat';
+import { isMuted, useChat } from '../store/chat';
 import { useVoice } from '../store/voice';
 import { Avatar, hueFromId } from '../components/ui/Avatar';
 import { Button, IconButton } from '../components/ui/Button';
-import { Composer, type ComposerHandle } from '../components/Composer';
+import { Composer, type ComposerHandle, type EditTarget } from '../components/Composer';
 import { FileDrop } from '../components/FileDrop';
 import { MessageList, TypingLine, recentEnoughToDelete, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
@@ -56,6 +57,8 @@ export function RoomView() {
   const sendRoomMessage = useChat((s) => s.sendRoomMessage);
   const react = useChat((s) => s.react);
   const deleteMessage = useChat((s) => s.deleteMessage);
+  const editMessage = useChat((s) => s.editMessage);
+  const messaging = useSite((s) => s.messaging);
   const voiceRoom = useVoice((s) => s.roomId);
   const voiceStatus = useVoice((s) => s.status);
   const joinVoice = useVoice((s) => s.join);
@@ -75,12 +78,14 @@ export function RoomView() {
   const [addOpen, setAddOpen] = useState(false);
   const [watchOpen, setWatchOpen] = useState(false);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const [editing, setEditing] = useState<EditTarget | null>(null);
   const [info, setInfo] = useState<InfoTarget | null>(null);
   const composer = useRef<ComposerHandle>(null);
 
   useEffect(() => {
     openRoom(roomId);
     setReplyTo(null);
+    setEditing(null);
     return () => openRoom(null);
   }, [roomId, openRoom]);
 
@@ -93,7 +98,15 @@ export function RoomView() {
   }, [location.state, location.pathname, detail, wide, navigate]);
 
   const members = detail?.members;
-  const isRoomAdmin = (detail ?? room)?.myRole === 'admin';
+  // The site's host admins can take down anyone's message too, and edit theirs any time.
+  const host = !!me?.siteAdmin;
+  const canModerate = (detail ?? room)?.myRole === 'admin' || host;
+  const editFor = host ? Infinity : messaging.editing ? messaging.editMinutes * 60_000 : 0;
+  // Who "@" offers: everyone else in the room.
+  const mentionable = useMemo(
+    () => (members ?? []).filter((m) => m.id !== me?.id).map((m) => ({ id: m.id, name: m.name, hue: m.hue, photo: m.photo, handle: m.handle })),
+    [members, me?.id],
+  );
   const items = useMemo<ThreadItem[]>(() => {
     const list = page?.items ?? [];
     const others = (members ?? []).filter((x) => x.id !== me?.id);
@@ -123,21 +136,27 @@ export function RoomView() {
         seenBy,
         attachment: m.attachment,
         replyTo: m.replyTo,
+        mentions: m.mentions,
         reactions: m.reactions,
         upload: m.upload,
         draft: m.draft,
         deleted: !!m.deletedAt,
         deletedByAdmin: !!m.deletedByAdmin,
         // My own recent messages; room admins can delete anyone's.
-        canDeleteForEveryone: m.kind === 'text' && m.id > 0 && !m.deletedAt && (isRoomAdmin || (mine && recentEnoughToDelete(m.createdAt))),
+        canDeleteForEveryone: m.kind === 'text' && m.id > 0 && !m.deletedAt && (canModerate || (mine && recentEnoughToDelete(m.createdAt))),
+        editedAt: m.editedAt,
+        forwarded: m.forwarded,
+        preview: m.preview,
+        editableUntil: mine ? new Date(m.createdAt).getTime() + editFor : 0,
       };
     });
-  }, [page?.items, me?.id, members, isRoomAdmin]);
+  }, [page?.items, me?.id, members, canModerate, editFor]);
 
-  // A message taken back while it's being replied to: the reply goes too.
+  // A message taken back while it's being replied to (or edited): the reply (or edit) goes too.
   useEffect(() => {
     if (replyTo && items.some((m) => m.id === replyTo.id && m.deleted)) setReplyTo(null);
-  }, [items, replyTo]);
+    if (editing && items.some((m) => m.id === editing.id && m.deleted)) setEditing(null);
+  }, [items, replyTo, editing]);
 
   if (!room) {
     return (
@@ -177,7 +196,10 @@ export function RoomView() {
             <Avatar name={room.name} hue={hueFromId(room.id)} photo={room.photo} size={44} square />
           </span>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{room.name}</h1>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{room.name}</h1>
+              {isMuted(room) && <BellOff size={15} className="shrink-0 text-ink-soft" role="img" aria-label="Notifications muted" />}
+            </div>
             <p className="flex items-center gap-2 truncate text-[13px] text-ink-soft">
               <StatusLine>
                 <span className="truncate">
@@ -218,7 +240,7 @@ export function RoomView() {
               disabled={inCall}
               aria-label="Join with video"
               title={inCall ? 'End your call to join' : 'Join the room’s call with your camera on'}
-              className="hidden md:inline-flex"
+              className="max-md:hidden"
             >
               <Video size={16} />
               <span className="hidden lg:inline">Video</span>
@@ -251,7 +273,16 @@ export function RoomView() {
             showSenders
             meId={me?.id ?? ''}
             onRetry={(item) => void sendRoomMessage(roomId, item.draft ?? { body: item.body }, item.key)}
-            onReply={(item) => setReplyTo(replyRefFor(item))}
+            onReply={(item) => {
+              setEditing(null);
+              setReplyTo(replyRefFor(item));
+            }}
+            onEdit={(item) => {
+              setReplyTo(null);
+              setEditing({ id: item.id, body: item.body, mentions: item.mentions, hasFile: !!item.attachment });
+            }}
+            scope="room"
+            canForward={host || messaging.forwarding}
             onInfo={(item) => setInfo({ scope: 'room', roomId, messageId: item.id, sentAt: item.createdAt })}
             onReact={(item, emoji) => void react('room', item.id, emoji)}
             onDelete={(item, forEveryone) => deleteMessage('room', roomId, item.id, forEveryone)}
@@ -265,6 +296,10 @@ export function RoomView() {
             onTyping={(t) => socket.emit('room:typing', { roomId, typing: t })}
             replyTo={replyTo}
             onCancelReply={() => setReplyTo(null)}
+            mentionable={mentionable}
+            editing={editing}
+            onSaveEdit={(target, body, mentions) => editMessage('room', target.id, body, mentions)}
+            onCancelEdit={() => setEditing(null)}
           />
         </FileDrop>
         <MessageInfo target={info} onClose={() => setInfo(null)} />

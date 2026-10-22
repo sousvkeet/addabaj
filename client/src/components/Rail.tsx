@@ -4,7 +4,7 @@ import { goTab } from '../lib/back';
 import { inApp } from '../lib/native';
 import { AtSign, Camera, EyeOff, KeyRound, LogOut, Mail, MessageCircle, MonitorSmartphone, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
-import { useChat } from '../store/chat';
+import { countedDmUnread, countedUnread, useChat } from '../store/chat';
 import { useUi } from '../store/ui';
 import { Avatar } from './ui/Avatar';
 import { Logo } from './ui/Logo';
@@ -24,8 +24,9 @@ function Badge({ count }: { count: number }) {
 }
 
 export function Rail({ hiddenOnMobile }: { hiddenOnMobile: boolean }) {
-  const chatUnread = useChat((s) => Object.values(s.conversations).reduce((n, c) => n + c.unread, 0));
-  const roomUnread = useChat((s) => Object.values(s.rooms).reduce((n, r) => n + r.unread, 0));
+  // A muted chat doesn't count; a muted room counts only messages that mention me or reply to me.
+  const chatUnread = useChat((s) => Object.values(s.conversations).reduce((n, c) => n + countedDmUnread(c), 0));
+  const roomUnread = useChat((s) => Object.values(s.rooms).reduce((n, r) => n + countedUnread(r), 0));
   const inviteCount = useChat((s) => s.invites.length);
   const theme = useUi((s) => s.theme);
   const toggleTheme = useUi((s) => s.toggleTheme);

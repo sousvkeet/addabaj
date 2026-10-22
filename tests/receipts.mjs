@@ -115,7 +115,8 @@ await check('when they open the chat both messages turn to read ticks', async ()
 await check('message info shows when it was delivered and read', async () => {
   const msg = bubble(A.page, 'Movie at 9?');
   await msg.hover();
-  await msg.getByRole('button', { name: 'Message info' }).click();
+  await msg.getByRole('button', { name: 'More actions' }).click();
+  await A.page.getByRole('menuitem', { name: 'Message info' }).click();
   const dlg = A.page.getByRole('dialog', { name: 'Message info' });
   await dlg.getByText(/^Today, /).first().waitFor();
   const text = await dlg.innerText();

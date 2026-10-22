@@ -17,6 +17,7 @@ import { PhotoEditor } from './PhotoEditor';
 import { RoomInviteCard } from './RoomInvite';
 import { UserPicker } from './UserPicker';
 import { VoiceTable } from './VoiceTable';
+import { RoomNotifications } from './RoomNotifications';
 
 type Props = {
   room: RoomDetail;
@@ -124,6 +125,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
           {room.description && <p className="mt-1.5 text-[14px] break-words text-ink-soft">{room.description}</p>}
         </div>
         <VoiceTable roomId={room.id} members={room.members} />
+        <RoomNotifications room={room} />
 
         <section aria-labelledby="members-heading" className="border-t border-line/70 px-2 pt-4 pb-3">
           <div className="flex items-center justify-between gap-2 px-2 pb-2">

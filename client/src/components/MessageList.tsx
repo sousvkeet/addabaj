@@ -1,15 +1,21 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import {
-  ArrowDown, Ban, Check, CheckCheck, Clock, Copy, Download, FileText, Info, LoaderCircle, Phone, PhoneMissed, Reply, SmilePlus, Trash2, Video, X,
+  ArrowDown, Ban, Check, CheckCheck, Clock, Copy, Download, Ellipsis, FileText, Flag, Forward, Info, LoaderCircle, Pencil, Phone, PhoneMissed, Reply, SmilePlus,
+  Trash2, Video, X,
 } from 'lucide-react';
 import { attachmentLabel, clock, dayLabel, deletedText, duration, formatBytes, sameDay } from '../lib/format';
 import { haptic, inApp } from '../lib/native';
 import { useBackClose } from '../lib/back';
+import { splitLinks } from '../lib/links';
+import type { Scope } from '../store/chat';
 import { toast } from '../store/ui';
-import type { Attachment, Draft, Reaction, Receipt, ReplyRef } from '../lib/types';
+import type { Attachment, Draft, LinkPreview, Mention, Reaction, Receipt, ReplyRef } from '../lib/types';
 import { Avatar } from './ui/Avatar';
 import { Button } from './ui/Button';
 import { Dialog } from './ui/Dialog';
+import { Menu, type MenuItem } from './ui/Menu';
+import { ForwardDialog } from './ForwardDialog';
+import { ReportDialog, type ReportTarget } from './ReportDialog';
 import { VoicePlayer } from './VoicePlayer';
 
 export type ThreadItem = {
@@ -31,6 +37,8 @@ export type ThreadItem = {
   callVideo?: boolean;
   attachment?: Attachment | null;
   replyTo?: ReplyRef | null;
+  /** In rooms: the people it names ("@Rahul Das"). */
+  mentions?: Mention[] | null;
   reactions?: Reaction[];
   upload?: number;
   draft?: Draft;
@@ -39,6 +47,14 @@ export type ThreadItem = {
   deletedByAdmin?: boolean;
   /** I may delete it for everyone (my own, recent; or anyone's, as a room admin). */
   canDeleteForEveryone?: boolean;
+  /** Changed after sending (shown "edited"). */
+  editedAt?: string | null;
+  /** A copy of a message from another chat. */
+  forwarded?: boolean;
+  /** Its first link's card. */
+  preview?: LinkPreview | null;
+  /** My message can be edited until then (ms; Infinity: any time). */
+  editableUntil?: number;
 };
 
 type Props = {
@@ -57,8 +73,17 @@ type Props = {
   onCallBack?: (video: boolean) => void;
   /** Delete for me, or for everyone; resolves true once done. */
   onDelete?: (item: ThreadItem, forEveryone: boolean) => Promise<boolean>;
+  /** Start editing one of my messages (in the composer). */
+  onEdit?: (item: ThreadItem) => void;
+  /** A chat's or a room's messages (for forwarding and reports). */
+  scope: Scope;
+  /** Messages can be forwarded here (the host allows it). */
+  canForward?: boolean;
   empty?: ReactNode;
 };
+
+/** What a message's menus offer besides replying and reacting. */
+type Extra = { onEdit?: () => void; onForward?: () => void; onReport?: () => void };
 
 export const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 /** Your own messages can be deleted for everyone this long after sending (the server checks too). */
@@ -79,7 +104,7 @@ export function replyRefFor(item: ThreadItem): ReplyRef {
 }
 
 export function MessageList({
-  items, loaded, hasMore, loadingMore, onLoadOlder, showSenders, meId, onRetry, onReply, onReact, onInfo, onCallBack, onDelete, empty,
+  items, loaded, hasMore, loadingMore, onLoadOlder, showSenders, meId, onRetry, onReply, onReact, onInfo, onCallBack, onDelete, onEdit, scope, canForward, empty,
 }: Props) {
   const scroller = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
@@ -88,6 +113,18 @@ export function MessageList({
   const [viewing, setViewing] = useState<Attachment | null>(null);
   const [sheetFor, setSheetFor] = useState<ThreadItem | null>(null);
   const [deleting, setDeleting] = useState<ThreadItem | null>(null);
+  const [forwarding, setForwarding] = useState<number | null>(null);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
+
+  /** Edit (my message, while it can be), forward, report (someone else's). */
+  const extra = (item: ThreadItem): Extra => ({
+    onEdit: onEdit && item.mine && (item.editableUntil ?? 0) > Date.now() ? () => onEdit(item) : undefined,
+    onForward: canForward ? () => setForwarding(item.id) : undefined,
+    onReport:
+      !item.mine && item.sender
+        ? () => setReporting({ scope, userId: item.sender!.id, name: item.sender!.name, messageId: item.id })
+        : undefined,
+  });
 
   // A message taken back (deleted for everyone, or for me elsewhere) takes its open menu or photo with it.
   useEffect(() => {
@@ -186,6 +223,7 @@ export function MessageList({
                   onJump={jumpTo}
                   onCallBack={onCallBack}
                   onDelete={onDelete ? setDeleting : undefined}
+                  extra={extra}
                 />
               </div>
             );
@@ -231,9 +269,12 @@ export function MessageList({
                 }
               : undefined
           }
+          extra={sheetFor.deleted ? {} : extra(sheetFor)}
         />
       )}
       {onDelete && <DeleteDialog item={deleting} onClose={() => setDeleting(null)} onDelete={onDelete} />}
+      <ForwardDialog scope={scope} messageId={forwarding} onClose={() => setForwarding(null)} />
+      <ReportDialog target={reporting} onClose={() => setReporting(null)} />
     </div>
   );
 }
@@ -245,13 +286,17 @@ const SWIPE_TO_REPLY = 64;
 
 /**
  * Touch screens, as in other messengers: press and hold a message for its menu
- * (with a little buzz), or swipe it to the right to reply. A finger that
- * wobbles a little still counts as holding; moving up or down scrolls.
+ * (with a little buzz), or swipe it to the right to reply, from anywhere along
+ * its row (on a phone, starting at the very edge is Android's back gesture).
+ * A finger that wobbles a little still counts as holding; moving up or down
+ * scrolls. A video's or a field's own controls keep their touches.
  */
 function useTouchGestures(onHold: (() => void) | null, onSwipe: (() => void) | null) {
   const moving = useRef<HTMLDivElement>(null);
   const hint = useRef<HTMLSpanElement>(null);
   const g = useRef<{ x: number; y: number; dx: number; swiping: boolean; armed: boolean; timer: number } | null>(null);
+  // A swipe that ends on a link mustn't open it.
+  const swiped = useRef(false);
 
   const paint = (dx: number, animate: boolean) => {
     const el = moving.current;
@@ -282,7 +327,7 @@ function useTouchGestures(onHold: (() => void) | null, onSwipe: (() => void) | n
     hint,
     handlers: {
       onPointerDown: (e: React.PointerEvent) => {
-        if (e.pointerType !== 'touch') return;
+        if (e.pointerType !== 'touch' || (e.target as Element).closest?.('video, audio, input, textarea, select')) return;
         stop();
         g.current = {
           x: e.clientX,
@@ -323,8 +368,16 @@ function useTouchGestures(onHold: (() => void) | null, onSwipe: (() => void) | n
       onPointerUp: () => {
         const s = stop();
         if (!s?.swiping) return;
+        swiped.current = true;
+        window.setTimeout(() => (swiped.current = false), 400);
         paint(0, true);
         if (s.armed) onSwipe?.();
+      },
+      onClickCapture: (e: React.MouseEvent) => {
+        if (!swiped.current) return;
+        swiped.current = false;
+        e.preventDefault();
+        e.stopPropagation();
       },
       onPointerCancel: () => {
         if (stop()?.swiping) paint(0, true);
@@ -366,10 +419,11 @@ type MessageProps = {
   onJump: (id: number) => void;
   onCallBack?: (video: boolean) => void;
   onDelete?: (item: ThreadItem) => void;
+  extra: (item: ThreadItem) => Extra;
 };
 
 function Message(props: MessageProps) {
-  const { item, groupStart, showSender, meId, onRetry, onReply, onInfo, onReact, onOpenSheet, onView, onJump, onCallBack, onDelete } = props;
+  const { item, groupStart, showSender, meId, onRetry, onReply, onInfo, onReact, onOpenSheet, onView, onJump, onCallBack, onDelete, extra } = props;
   const [picking, setPicking] = useState(false);
   const canAct = item.id > 0 && !item.pending && !item.deleted && item.kind === 'text';
   const touch = useTouchGestures(canAct ? () => onOpenSheet(item) : null, canAct ? () => onReply(item) : null);
@@ -419,7 +473,11 @@ function Message(props: MessageProps) {
   const media = a && (a.kind === 'image' || a.kind === 'video');
 
   return (
-    <div id={item.id ? `msg-${item.id}` : undefined} className={`group relative flex items-end gap-2 rounded-xl ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}>
+    <div
+      id={item.id ? `msg-${item.id}` : undefined}
+      {...touch.handlers}
+      className={`group relative flex items-end gap-2 rounded-xl ${canAct ? 'touch-pan-y' : ''} ${item.mine ? 'justify-end' : ''} ${groupStart ? 'mt-3' : 'mt-[3px]'}`}
+    >
       {canAct && <SwipeHint hint={touch.hint} />}
       {showSender && !item.mine && (
         <span className="w-8 shrink-0 self-start">{groupStart && sender && <Avatar name={sender.name} hue={sender.hue} photo={sender.photo} size={32} />}</span>
@@ -432,9 +490,10 @@ function Message(props: MessageProps) {
           onReact={(e) => onReact(item, e)}
           onInfo={onInfo ? () => onInfo(item) : undefined}
           onDelete={onDelete ? () => onDelete(item) : undefined}
+          extra={extra(item)}
         />
       )}
-      <div ref={touch.moving} {...touch.handlers} className={`flex max-w-[min(78%,560px)] touch-pan-y flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
+      <div ref={touch.moving} className={`flex max-w-[min(78%,560px)] flex-col ${item.mine ? 'items-end' : 'items-start'}`}>
         {showName && (
           <span style={nameStyle} className="mb-1 ml-1 text-[12.5px] font-bold text-[hsl(var(--h)_75%_32%)] dark:text-[hsl(var(--h)_90%_74%)]">
             {sender.name}
@@ -447,6 +506,12 @@ function Message(props: MessageProps) {
               : `rounded-[22px] border border-line/70 bg-surface text-ink shadow-[0_6px_18px_-14px_rgb(0_0_0/0.5)] ${groupStart ? 'rounded-tl-[8px]' : ''}`
           } ${item.pending === 'failed' ? 'opacity-60' : ''} ${groupStart ? 'rise-in' : ''}`}
         >
+          {item.forwarded && (
+            <span className={`mb-1 flex items-center gap-1 text-[12px] italic opacity-75 ${media ? 'px-2 pt-1' : ''}`}>
+              <Forward size={13} aria-hidden />
+              Forwarded
+            </span>
+          )}
           {item.replyTo && (
             <button
               type="button"
@@ -470,7 +535,10 @@ function Message(props: MessageProps) {
           )}
           {(item.body || !a) && (
             <div className={media ? 'px-2.5 pt-1.5 pb-1' : a ? 'pt-1.5' : ''}>
-              <span className="break-words whitespace-pre-wrap">{item.body}</span>
+              <span className="break-words whitespace-pre-wrap">
+                <MessageText body={item.body} mentions={item.mentions} meId={meId} mine={item.mine} />
+              </span>
+              {item.preview && <LinkCard preview={item.preview} mine={item.mine} />}
               <Meta item={item} />
             </div>
           )}
@@ -525,6 +593,7 @@ function Message(props: MessageProps) {
           onReply={() => onReply(item)}
           onReact={(e) => onReact(item, e)}
           onDelete={onDelete ? () => onDelete(item) : undefined}
+          extra={extra(item)}
         />
       )}
     </div>
@@ -537,6 +606,7 @@ function Meta({ item, overlay }: { item: ThreadItem; overlay?: boolean }) {
     : `float-right mt-[7px] ml-3 ${item.mine ? 'text-white/75' : 'text-ink-soft'}`;
   return (
     <span className={`inline-flex items-center gap-1 text-[11.5px] leading-none ${place}`}>
+      {item.editedAt && <span title={`Edited ${clock(item.editedAt)}`}>edited</span>}
       {clock(item.createdAt)}
       {item.mine &&
         (item.pending === 'sending' ? (
@@ -555,7 +625,7 @@ function Ticks({ receipt }: { receipt: Receipt }) {
   return <Check size={14} aria-label="Sent" />;
 }
 
-/** Reply and react buttons beside a message (shown on hover or keyboard focus). */
+/** React, reply and more (edit, forward, info, report, delete) beside a message, shown on hover or keyboard focus. */
 function Actions({
   picking,
   setPicking,
@@ -563,6 +633,7 @@ function Actions({
   onReact,
   onInfo,
   onDelete,
+  extra,
 }: {
   picking: boolean;
   setPicking: (v: boolean) => void;
@@ -570,6 +641,7 @@ function Actions({
   onReact: (emoji: string) => void;
   onInfo?: () => void;
   onDelete?: () => void;
+  extra: Extra;
 }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -597,16 +669,9 @@ function Actions({
       <button type="button" aria-label="Reply" onClick={onReply} className="rounded-full p-1.5 text-ink-soft hover:bg-subtle hover:text-ink">
         <Reply size={16} />
       </button>
-      {onInfo && (
-        <button type="button" aria-label="Message info" onClick={onInfo} className="rounded-full p-1.5 text-ink-soft hover:bg-subtle hover:text-ink">
-          <Info size={16} />
-        </button>
-      )}
-      {onDelete && (
-        <button type="button" aria-label="Delete message" onClick={onDelete} className="rounded-full p-1.5 text-ink-soft hover:bg-danger/10 hover:text-danger">
-          <Trash2 size={16} />
-        </button>
-      )}
+      <span className="text-ink-soft">
+        <Menu floating label="More actions" icon={<Ellipsis size={16} />} size={28} items={moreItems({ ...extra, onInfo, onDelete })} />
+      </span>
       {picking && (
         <div role="menu" className="pop-in absolute bottom-9 left-1/2 z-20 flex -translate-x-1/2 gap-0.5 rounded-full border border-line bg-surface p-1 shadow-float">
           {QUICK_REACTIONS.map((e) => (
@@ -627,6 +692,39 @@ function Actions({
         </div>
       )}
     </div>
+  );
+}
+
+/** The "More actions" menu's items, in the order of the press-and-hold menu. */
+function moreItems({ onEdit, onForward, onInfo, onReport, onDelete }: Extra & { onInfo?: () => void; onDelete?: () => void }): MenuItem[] {
+  const items: MenuItem[] = [];
+  if (onEdit) items.push({ label: 'Edit', icon: <Pencil size={17} />, onSelect: onEdit });
+  if (onForward) items.push({ label: 'Forward', icon: <Forward size={17} />, onSelect: onForward });
+  if (onInfo) items.push({ label: 'Message info', icon: <Info size={17} />, onSelect: onInfo });
+  if (onReport) items.push({ label: 'Report', icon: <Flag size={17} />, onSelect: onReport });
+  if (onDelete) items.push({ label: 'Delete', icon: <Trash2 size={17} />, onSelect: onDelete, danger: true });
+  return items;
+}
+
+/** A link's card: the page's picture, site and title, opening the page. */
+function LinkCard({ preview, mine }: { preview: LinkPreview; mine: boolean }) {
+  const [picture, setPicture] = useState(!!preview.image);
+  return (
+    <a
+      href={preview.url}
+      target="_blank"
+      rel="noopener noreferrer nofollow ugc"
+      className={`mt-2 block w-[280px] max-w-full overflow-hidden rounded-2xl ${mine ? 'bg-black/15 hover:bg-black/20' : 'bg-subtle hover:bg-subtle/70'}`}
+    >
+      {picture && preview.image && (
+        <img src={preview.image} alt="" loading="lazy" onError={() => setPicture(false)} className="aspect-[1.91/1] w-full bg-black/10 object-cover" />
+      )}
+      <span className="block px-3 py-2">
+        <span className="block truncate text-[11.5px] font-semibold tracking-wide uppercase opacity-70">{preview.site}</span>
+        <span className="line-clamp-2 block text-[14px] leading-snug font-semibold">{preview.title}</span>
+        {preview.description && <span className="mt-0.5 line-clamp-2 block text-[13px] leading-snug opacity-80">{preview.description}</span>}
+      </span>
+    </a>
   );
 }
 
@@ -868,7 +966,7 @@ async function copyText(text: string) {
   }
 }
 
-/** Press-and-hold menu on phones: react, reply, copy, download. */
+/** Press-and-hold menu on phones: react, reply, copy, edit, forward, info, download, report, delete. */
 function ActionSheet({
   item,
   onClose,
@@ -876,6 +974,7 @@ function ActionSheet({
   onReact,
   onInfo,
   onDelete,
+  extra,
 }: {
   item: ThreadItem;
   onClose: () => void;
@@ -883,7 +982,13 @@ function ActionSheet({
   onReact: (emoji: string) => void;
   onInfo?: () => void;
   onDelete?: () => void;
+  extra: Extra;
 }) {
+  const then = (fn: () => void) => () => {
+    onClose();
+    fn();
+  };
+  const row = 'ripple flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle';
   // Only taps that start once it's open count: lifting the finger that held
   // the message (it opens under that finger) presses nothing and doesn't close
   // it. Clicks from a keyboard or a screen reader (no pointer) always count.
@@ -940,6 +1045,18 @@ function ActionSheet({
               Copy
             </button>
           )}
+          {extra.onEdit && (
+            <button type="button" onClick={then(extra.onEdit)} className={row}>
+              <Pencil size={19} />
+              Edit
+            </button>
+          )}
+          {extra.onForward && (
+            <button type="button" onClick={then(extra.onForward)} className={row}>
+              <Forward size={19} />
+              Forward
+            </button>
+          )}
           {onInfo && (
             <button type="button" onClick={onInfo} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium hover:bg-subtle">
               <Info size={19} />
@@ -956,6 +1073,12 @@ function ActionSheet({
               <Download size={19} />
               Download
             </a>
+          )}
+          {extra.onReport && (
+            <button type="button" onClick={then(extra.onReport)} className={row}>
+              <Flag size={19} />
+              Report
+            </button>
           )}
           {onDelete && (
             <button type="button" onClick={onDelete} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left text-[15px] font-medium text-danger hover:bg-danger/10">
@@ -1074,4 +1197,55 @@ export function TypingLine({ text }: { text: string | null }) {
       )}
     </div>
   );
+}
+
+/** Plain text with its web links tappable (each opens in the browser). */
+function Linked({ text, mine }: { text: string; mine: boolean }) {
+  const parts = splitLinks(text);
+  if (parts.length === 1 && !parts[0].href) return <>{text}</>;
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.href ? (
+          <a
+            key={i}
+            href={p.href}
+            target="_blank"
+            rel="noopener noreferrer nofollow ugc"
+            className={`underline underline-offset-2 [overflow-wrap:anywhere] ${mine ? 'decoration-white/60 hover:decoration-white' : 'text-brand decoration-brand/40 hover:decoration-brand dark:text-live dark:decoration-live/40'}`}
+          >
+            {p.text}
+          </a>
+        ) : (
+          p.text
+        ),
+      )}
+    </>
+  );
+}
+
+/** A message's text, with its links tappable and the people it mentions picked out (me most of all). */
+function MessageText({ body, mentions, meId, mine }: { body: string; mentions?: Mention[] | null; meId: string; mine: boolean }) {
+  if (!mentions?.length) return <Linked text={body} mine={mine} />;
+  const parts: ReactNode[] = [];
+  let at = 0;
+  for (const m of [...mentions].sort((a, b) => a.offset - b.offset)) {
+    if (m.offset < at || m.offset + m.length > body.length) continue;
+    if (m.offset > at) parts.push(<Linked key={`t${at}`} text={body.slice(at, m.offset)} mine={mine} />);
+    const me = m.id === meId;
+    parts.push(
+      <span
+        key={m.offset}
+        data-mention={me ? 'me' : 'other'}
+        className={`font-semibold ${
+          mine ? 'rounded bg-white/20 px-0.5' : me ? 'rounded bg-brand/15 px-0.5 text-brand dark:bg-live/20 dark:text-live' : 'text-brand dark:text-live'
+        }`}
+      >
+        {body.slice(m.offset, m.offset + m.length)}
+      </span>,
+    );
+    at = m.offset + m.length;
+  }
+  parts.push(<Linked key={`t${at}`} text={body.slice(at)} mine={mine} />);
+  return <>{parts}</>;
 }

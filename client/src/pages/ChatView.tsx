@@ -1,17 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Phone, PhoneOff, Settings2, Video } from 'lucide-react';
+import { ArrowLeft, Ban, BellOff, Flag, Phone, PhoneOff, Settings2, ShieldCheck, Video } from 'lucide-react';
+import { errorMessage } from '../lib/api';
 import { lastSeen } from '../lib/format';
+import { useSite } from '../lib/site';
 import { useNow } from '../lib/useMedia';
 import type { ReplyRef } from '../lib/types';
 import { socket } from '../lib/socket';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
-import { useChat } from '../store/chat';
-import { useUi } from '../store/ui';
+import { isMuted, useChat } from '../store/chat';
+import { toast, useUi } from '../store/ui';
 import { Avatar } from '../components/ui/Avatar';
 import { Button, IconButton } from '../components/ui/Button';
-import { Composer, type ComposerHandle } from '../components/Composer';
+import { Dialog } from '../components/ui/Dialog';
+import { Menu, type MenuItem } from '../components/ui/Menu';
+import { MuteDialog, settingsItems } from '../components/ChatActions';
+import { Composer, type ComposerHandle, type EditTarget } from '../components/Composer';
+import { ReportDialog, type ReportTarget } from '../components/ReportDialog';
 import { FileDrop } from '../components/FileDrop';
 import { MessageList, recentEnoughToDelete, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
@@ -33,6 +39,9 @@ export function ChatView() {
   const sendDm = useChat((s) => s.sendDm);
   const react = useChat((s) => s.react);
   const deleteMessage = useChat((s) => s.deleteMessage);
+  const editMessage = useChat((s) => s.editMessage);
+  const conversation = useChat((s) => s.conversations[userId]);
+  const messaging = useSite((s) => s.messaging);
   const callPhase = useCall((s) => s.phase);
   const callPeer = useCall((s) => s.peer?.id);
   const startCall = useCall((s) => s.startCall);
@@ -41,16 +50,23 @@ export function ChatView() {
   const navigate = useNavigate();
   const composer = useRef<ComposerHandle>(null);
   const [replyTo, setReplyTo] = useState<ReplyRef | null>(null);
+  const [editing, setEditing] = useState<EditTarget | null>(null);
   const [info, setInfo] = useState<InfoTarget | null>(null);
+  const [muting, setMuting] = useState(false);
+  const [blocking, setBlocking] = useState(false);
+  const [reporting, setReporting] = useState<ReportTarget | null>(null);
   // "Last seen 5 min ago" keeps counting.
   useNow(30_000, !online);
 
   useEffect(() => {
     openDm(userId);
     setReplyTo(null);
+    setEditing(null);
     return () => openDm(null);
   }, [userId, openDm]);
 
+  // How long my messages can be edited (the host's choice; host admins, any time).
+  const editFor = me?.siteAdmin ? Infinity : messaging.editing ? messaging.editMinutes * 60_000 : 0;
   const items = useMemo<ThreadItem[]>(
     () =>
       (page?.items ?? []).map((m) => {
@@ -76,21 +92,41 @@ export function ChatView() {
           draft: m.draft,
           deleted: !!m.deletedAt,
           canDeleteForEveryone: mine && m.kind === 'text' && m.id > 0 && !m.deletedAt && recentEnoughToDelete(m.createdAt),
+          editedAt: m.editedAt,
+          forwarded: m.forwarded,
+          preview: m.preview,
+          editableUntil: mine && m.kind === 'text' ? new Date(m.createdAt).getTime() + editFor : 0,
         };
       }),
-    [page?.items, me, partner],
+    [page?.items, me, partner, editFor],
   );
 
-  // A message taken back while it's being replied to: the reply goes too.
+  // A message taken back while it's being replied to (or edited): the reply (or edit) goes too.
   useEffect(() => {
     if (replyTo && items.some((m) => m.id === replyTo.id && m.deleted)) setReplyTo(null);
-  }, [items, replyTo]);
+    if (editing && items.some((m) => m.id === editing.id && m.deleted)) setEditing(null);
+  }, [items, replyTo, editing]);
 
   if (userId === me?.id) return <Navigate to="/chats" replace />;
 
   const name = partner?.name ?? '…';
+  const blocked = !!partner?.blocked;
   const onCallWithThem = callPhase !== 'idle' && callPeer === userId;
   const call = (video = false) => partner && void startCall({ id: partner.id, name: partner.name, hue: partner.hue, photo: partner.photo }, { video });
+  const unblock = () =>
+    void useChat
+      .getState()
+      .unblock(userId)
+      .then(() => toast(`${name} is unblocked`))
+      .catch((err) => toast(errorMessage(err), 'error'));
+  // ⋮ in the header: my settings for the chat, and blocking or reporting them.
+  const menu: MenuItem[] = [
+    ...(conversation ? settingsItems('dm', userId, conversation, () => setMuting(true)) : []),
+    blocked
+      ? { label: `Unblock ${name}`, icon: <ShieldCheck size={18} />, onSelect: unblock }
+      : { label: `Block ${name}`, icon: <Ban size={18} />, onSelect: () => setBlocking(true), danger: true },
+    { label: `Report ${name}`, icon: <Flag size={18} />, onSelect: () => setReporting({ scope: 'user', userId, name }), danger: true },
+  ];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -109,7 +145,10 @@ export function ChatView() {
           </>
         )}
         <div className="min-w-0 flex-1">
-          <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{name}</h1>
+          <div className="flex min-w-0 items-center gap-1.5">
+            <h1 className="truncate font-display text-[18px] leading-tight font-semibold tracking-[-0.01em]">{name}</h1>
+            {conversation && isMuted(conversation) && <BellOff size={15} className="shrink-0 text-ink-soft" role="img" aria-label="Notifications muted" />}
+          </div>
           <p className="truncate text-[13px] text-ink-soft">
             <StatusLine>
               {typing ? (
@@ -146,24 +185,29 @@ export function ChatView() {
           <>
             {/* Phones: plain icons, as in other messengers. */}
             <div className="flex md:hidden">
-              <IconButton label={`Video call ${name}`} size={44} className="ripple" onClick={() => call(true)} disabled={!partner || callPhase !== 'idle'}>
+              <IconButton label={`Video call ${name}`} size={44} className="ripple" onClick={() => call(true)} disabled={!partner || blocked || callPhase !== 'idle'}>
                 <Video size={23} />
               </IconButton>
-              <IconButton label={`Voice call ${name}`} size={44} className="ripple" onClick={() => call(false)} disabled={!partner || callPhase !== 'idle'}>
+              <IconButton label={`Voice call ${name}`} size={44} className="ripple" onClick={() => call(false)} disabled={!partner || blocked || callPhase !== 'idle'}>
                 <Phone size={20} />
               </IconButton>
             </div>
             <div className="hidden gap-2 md:flex">
-            <Button variant="soft" size="sm" onClick={() => call(false)} disabled={!partner || callPhase !== 'idle'} aria-label={`Voice call ${name}`}>
+            <Button variant="soft" size="sm" onClick={() => call(false)} disabled={!partner || blocked || callPhase !== 'idle'} aria-label={`Voice call ${name}`}>
               <Phone size={16} className="text-brand dark:text-live" />
               <span className="hidden sm:inline">Voice</span>
             </Button>
-            <Button variant="primary" size="sm" onClick={() => call(true)} disabled={!partner || callPhase !== 'idle'} aria-label={`Video call ${name}`}>
+            <Button variant="primary" size="sm" onClick={() => call(true)} disabled={!partner || blocked || callPhase !== 'idle'} aria-label={`Video call ${name}`}>
               <Video size={17} />
               <span className="hidden sm:inline">Video</span>
             </Button>
             </div>
           </>
+        )}
+        {partner && (
+          <span className="-ml-1 md:ml-0">
+            <Menu label="Chat options" items={menu} size={40} />
+          </span>
         )}
       </header>
 
@@ -177,7 +221,16 @@ export function ChatView() {
           onLoadOlder={() => void loadDm(userId, true)}
           meId={me?.id ?? ''}
           onRetry={(item) => void sendDm(userId, item.draft ?? { body: item.body }, item.key)}
-          onReply={(item) => setReplyTo(replyRefFor(item))}
+          onReply={(item) => {
+            setEditing(null);
+            setReplyTo(replyRefFor(item));
+          }}
+          onEdit={(item) => {
+            setReplyTo(null);
+            setEditing({ id: item.id, body: item.body, hasFile: !!item.attachment });
+          }}
+          scope="dm"
+          canForward={!!me?.siteAdmin || messaging.forwarding}
           onInfo={(item) => {
             const m = page?.items.find((x) => x.id === item.id);
             if (m) setInfo({ scope: 'dm', sentAt: m.createdAt, deliveredAt: m.deliveredAt, readAt: m.readAt, partnerName: name });
@@ -198,17 +251,80 @@ export function ChatView() {
             </div>
           }
         />
-        <Composer
-          ref={composer}
-          key={`composer-${userId}`}
-          placeholder={`Message ${name.split(' ')[0]}`}
-          onSend={(draft) => void sendDm(userId, draft)}
-          onTyping={(t) => socket.emit('dm:typing', { to: userId, typing: t })}
-          replyTo={replyTo}
-          onCancelReply={() => setReplyTo(null)}
-        />
+        {blocked ? (
+          <BlockedBar name={name} onUnblock={unblock} />
+        ) : (
+          <Composer
+            ref={composer}
+            key={`composer-${userId}`}
+            placeholder={`Message ${name.split(' ')[0]}`}
+            onSend={(draft) => void sendDm(userId, draft)}
+            onTyping={(t) => socket.emit('dm:typing', { to: userId, typing: t })}
+            replyTo={replyTo}
+            onCancelReply={() => setReplyTo(null)}
+            editing={editing}
+            onSaveEdit={(target, body) => editMessage('dm', target.id, body)}
+            onCancelEdit={() => setEditing(null)}
+          />
+        )}
       </FileDrop>
       <MessageInfo target={info} onClose={() => setInfo(null)} />
+      <MuteDialog open={muting} scope="dm" id={userId} name={name} onClose={() => setMuting(false)} />
+      <BlockDialog open={blocking} userId={userId} name={name} onClose={() => setBlocking(false)} />
+      <ReportDialog target={reporting} onClose={() => setReporting(null)} />
     </div>
+  );
+}
+
+/** In place of the message box once I've blocked them. */
+function BlockedBar({ name, onUnblock }: { name: string; onUnblock: () => void }) {
+  return (
+    <div className="shrink-0 px-3 pt-2 pb-[max(12px,var(--safe-bottom))] md:px-6 md:pb-5">
+      <div className="mx-auto flex max-w-[860px] flex-wrap items-center justify-center gap-x-4 gap-y-2 rounded-[22px] border border-line/80 bg-subtle/60 px-4 py-3 text-center text-[14px] text-ink-soft">
+        <span className="flex items-center gap-2">
+          <Ban size={16} className="shrink-0" aria-hidden />
+          You blocked {name}. You can't message or call each other.
+        </span>
+        <Button size="sm" variant="soft" onClick={onUnblock}>
+          Unblock
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** "Block them?": what it does, before doing it. */
+function BlockDialog({ open, userId, name, onClose }: { open: boolean; userId: string; name: string; onClose: () => void }) {
+  const [busy, setBusy] = useState(false);
+  async function block() {
+    setBusy(true);
+    try {
+      await useChat.getState().block(userId);
+      toast(`You blocked ${name}`);
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      alert
+      width={400}
+      title={`Block ${name}?`}
+      description="They won't be able to message or call you, or add you to rooms, and neither of you will see when the other is online. They aren't told. Your messages so far stay."
+    >
+      <div className="flex flex-col gap-2">
+        <Button variant="danger" busy={busy} onClick={() => void block()}>
+          Block
+        </Button>
+        <Button variant="ghost" disabled={busy} onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </Dialog>
   );
 }

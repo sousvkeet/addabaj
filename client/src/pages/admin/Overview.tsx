@@ -1,12 +1,15 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link } from 'react-router';
-import { AudioLines, DoorOpen, FileImage, KeyRound, LoaderCircle, MessageCircle, Phone, Radio, RefreshCw, Users, Wifi } from 'lucide-react';
+import { AudioLines, ChevronRight, DoorOpen, FileImage, Flag, KeyRound, LoaderCircle, MessageCircle, Phone, Radio, RefreshCw, Users, Wifi } from 'lucide-react';
 import { api, errorMessage } from '../../lib/api';
 import { formatBytes } from '../../lib/format';
 import { useAuth } from '../../store/auth';
+import { useReports } from '../../store/reports';
 import { Button, IconButton } from '../../components/ui/Button';
 import { ChangePasswordDialog } from '../../components/ChangePasswordDialog';
-import { AdminPage, Chip, Panel, uptime, type Overview as Data } from './shared';
+import { AdminPage, Chip, Panel, uptime, type Overview as Base } from './shared';
+
+type Data = Base & { reports?: { open: number } };
 
 const weekday = new Intl.DateTimeFormat(undefined, { weekday: 'narrow' });
 const dayName = new Intl.DateTimeFormat(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -17,12 +20,18 @@ export function Overview() {
   const [error, setError] = useState('');
   const [changing, setChanging] = useState(false);
   const [tick, setTick] = useState(0);
+  const waiting = useReports((s) => s.open) ?? data?.reports?.open ?? 0;
 
   useEffect(() => {
     let cancelled = false;
     const load = () =>
       api<Data>('/admin/overview')
-        .then((d) => !cancelled && (setData(d), setError('')))
+        .then((d) => {
+          if (cancelled) return;
+          setData(d);
+          setError('');
+          if (d.reports) useReports.getState().setOpen(d.reports.open);
+        })
         .catch((err) => !cancelled && setError(errorMessage(err)));
     void load();
     // Keep the "right now" numbers fresh.
@@ -54,6 +63,22 @@ export function Overview() {
           </div>
           <Button onClick={() => setChanging(true)}>Change password</Button>
         </div>
+      )}
+
+      {waiting > 0 && (
+        <Link
+          to="/admin/reports"
+          className="flex items-center gap-4 rounded-[26px] border border-brand/30 bg-brand/10 p-5 transition-colors hover:border-brand/50 hover:bg-brand/15"
+        >
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-2xl bg-aurora text-white shadow-glow">
+            <Flag size={20} />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-semibold">{waiting === 1 ? '1 report waiting' : `${waiting.toLocaleString()} reports waiting`}</span>
+            <span className="block text-[13.5px] text-ink-soft">Messages and people reported to you. Have a look and decide what to do.</span>
+          </span>
+          <ChevronRight size={20} className="shrink-0 text-ink-soft" />
+        </Link>
       )}
 
       {error && (

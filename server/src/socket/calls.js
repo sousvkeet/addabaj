@@ -5,6 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { one } from '../db.js';
 import { AppError, isUuid } from '../errors.js';
+import { blockedEitherWay, blockedMessage } from '../services/blocks.js';
 import { getIO, presence, userChannel } from '../realtime.js';
 import { DM_COLUMNS, dmMessage } from '../services/dms.js';
 import { findUser } from '../services/users.js';
@@ -76,6 +77,7 @@ export const calls = {
       if (!canCall(userId)) throw new AppError(429, "You're calling too often. Wait a minute and try again.");
       const callee = await findUser(to);
       if (!callee) throw new AppError(404, "That person doesn't exist.");
+      if (blockedEitherWay(userId, to)) throw new AppError(403, blockedMessage(userId, to, callee.name, 'call'));
       // Offline is fine when their phone can ring.
       if (!presence.isOnline(to) && !(await hasDevices(to))) {
         throw new AppError(409, `${callee.name} is offline right now. Send a message instead.`);

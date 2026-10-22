@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { one } from '../db.js';
-import { AppError, assertUuid, badRequest, notFound } from '../errors.js';
-import { findUser, normalizeHandle, publicUser, USER_COLUMNS } from '../services/users.js';
+import { AppError, assertUuid, badRequest, forbidden, notFound } from '../errors.js';
+import { block, blockedBy, unblock } from '../services/blocks.js';
+import { findUser, normalizeHandle, photoUrl, publicUser, USER_COLUMNS } from '../services/users.js';
 import { photoFile } from '../services/photos.js';
 
 export const usersRouter = Router();
@@ -47,6 +48,32 @@ usersRouter.get('/find', lookups, async (req, res) => {
       ...(roomId ? { roomStatus: row.is_member ? 'member' : row.is_invited ? 'invited' : null } : {}),
     },
   });
+});
+
+// ── Blocking ──────────────────────────────────────────────────────────
+// Blocked people can't message or call me, add me to rooms or invite me, and
+// neither of us sees the other's online status. See services/blocks.js.
+
+usersRouter.get('/blocked', async (req, res) => {
+  const rows = await blockedBy(req.userId);
+  res.json({
+    blocked: rows.map((r) => ({ id: r.id, name: r.name, handle: r.handle, hue: r.avatar_hue, photo: photoUrl(r.id, r.photo), blockedAt: r.created_at })),
+  });
+});
+
+usersRouter.post('/:id/block', async (req, res) => {
+  const id = assertUuid(req.params.id, 'person');
+  if (id === req.userId) throw badRequest("You can't block yourself.");
+  const target = await one('SELECT site_role FROM users WHERE id = $1', [id]);
+  if (!target) throw notFound("That person doesn't exist.");
+  if (target.site_role === 'admin') throw forbidden("You can't block the site's host.");
+  await block(req.userId, id);
+  res.json({ blocked: true });
+});
+
+usersRouter.delete('/:id/block', async (req, res) => {
+  await unblock(req.userId, assertUuid(req.params.id, 'person'));
+  res.json({ blocked: false });
 });
 
 // A person whose id you already have (from a chat, a room, or finding them).

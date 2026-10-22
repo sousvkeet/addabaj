@@ -85,7 +85,7 @@ export function SettingsList() {
             hint={sessions ? devicesSummary(sessions) : 'Where you’re logged in'}
             onClick={() => setOpen('devices')}
           />
-          <Row icon={<EyeOff size={19} />} title="Privacy" hint="Last seen, online and read receipts" onClick={() => setOpen('privacy')} />
+          <Row icon={<EyeOff size={19} />} title="Privacy" hint="Last seen, read receipts and blocked people" onClick={() => setOpen('privacy')} />
           <Row icon={<Settings2 size={19} />} title="Microphone, speaker and camera" hint="For calls, voice and video" onClick={() => openDevices(true)} />
           <Row
             icon={<Moon size={19} />}

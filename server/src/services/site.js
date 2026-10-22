@@ -12,7 +12,19 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 /** "admin", or anything short, is a password strangers would guess, so it has to be changed. */
 export const isWeakAdminPassword = (password) => password === 'admin' || password.length < 8;
 
-const DEFAULTS = { allowSignups: true, announcement: null };
+const DEFAULTS = { allowSignups: true, announcement: null, email: null, messaging: null };
+
+/** How messages work, as the host admin set it (Admin › Site settings › Messages). */
+export const MESSAGING_DEFAULTS = {
+  /** Links in messages get a preview card (the server fetches the page). */
+  linkPreviews: true,
+  /** People can edit what they sent, for this many minutes. */
+  editing: true,
+  editMinutes: 15,
+  /** People can forward messages, to this many chats at a time. */
+  forwarding: true,
+  forwardTo: 5,
+};
 let settings = { ...DEFAULTS };
 const disabled = new Set();
 /** userId -> seconds: logins issued before then were signed out by a password change. */
@@ -55,8 +67,23 @@ export async function loadSite() {
 
 export const getSettings = () => settings;
 
-/** What every signed-in person sees (the announcement banner). */
-export const publicSite = () => ({ announcement: settings.announcement });
+export const messaging = () => ({ ...MESSAGING_DEFAULTS, ...(settings.messaging ?? {}) });
+
+export async function saveMessaging(patch) {
+  const next = { ...messaging(), ...patch };
+  await query(
+    `INSERT INTO site_settings (key, value, updated_at) VALUES ('messaging', $1, now())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [JSON.stringify(next)],
+  );
+  settings = { ...settings, messaging: next };
+  // Everyone's app follows at once (what the message menu offers).
+  getIO()?.emit('site:settings', publicSite());
+  return next;
+}
+
+/** What every signed-in person's app goes by: the announcement banner, and how messages work. */
+export const publicSite = () => ({ announcement: settings.announcement, messaging: messaging() });
 
 export async function saveSettings(patch) {
   const next = { ...settings };
@@ -77,6 +104,20 @@ export async function saveSettings(patch) {
   settings = next;
   if (announcementChanged) getIO()?.emit('site:settings', publicSite());
   return settings;
+}
+
+/** The mail server and what email is used for (see services/mail.js); null to go back to server/.env. */
+export async function saveEmailSettings(email) {
+  if (email) {
+    await query(
+      `INSERT INTO site_settings (key, value, updated_at) VALUES ('email', $1, now())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [JSON.stringify(email)],
+    );
+  } else {
+    await query(`DELETE FROM site_settings WHERE key = 'email'`);
+  }
+  settings = { ...settings, email: email ?? null };
 }
 
 export const isDisabled = (userId) => disabled.has(userId);

@@ -29,7 +29,12 @@
     "test:updates": "node tests/app-updates.mjs",
     "test:app": "node tests/app-feel.mjs",
     "test:photos": "node tests/photos.mjs",
-    "test:devices": "node tests/devices.mjs"
+    "test:devices": "node tests/devices.mjs",
+    "test:email": "node tests/email.mjs",
+    "test:mentions": "node tests/mentions.mjs",
+    "test:messages": "node tests/messages.mjs",
+    "test:chats": "node tests/chats.mjs",
+    "test:safety": "node tests/safety.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

@@ -345,6 +345,17 @@ await check('Swipe a message to the right to reply, with a tick as it reaches th
   await p.touch(Array.from({ length: 8 }, (_, i) => ({ x: b.x + 20 + i * 2, y: y - i * 12 })));
   await sleep(300);
   expect(!(await p.getByText('Replying to Bo').count()), 'a scroll started a reply');
+  // Anywhere along the message's row works too, beside the bubble (short messages have small ones,
+  // and starting further in keeps clear of Android's back gesture at the edge).
+  const beside = await thread(p).getByText('Chai at six?').evaluate((el) => {
+    const r = el.closest('[class*="rounded-[22px]"]').getBoundingClientRect();
+    // Its empty side: right of someone else's message, left of mine.
+    const mine = r.left > innerWidth / 2;
+    return { x: mine ? Math.max(30, r.left - 130) : r.right + 24, y: (r.top + r.bottom) / 2 };
+  });
+  expect(beside.x + 100 < 412, `no room beside the bubble: ${JSON.stringify(beside)}`);
+  await p.touch(Array.from({ length: 10 }, (_, i) => ({ x: beside.x + i * 10, y: beside.y })));
+  await p.getByText('Replying to Bo').waitFor({ timeout: 3000 });
   await p.context().close();
 });
 

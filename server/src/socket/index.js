@@ -6,7 +6,8 @@ import { presence, roomChannel, userChannel } from '../realtime.js';
 import { findUser } from '../services/users.js';
 import { hidesPresence } from '../services/privacy.js';
 import { onlineContacts, tellContacts } from '../services/presence.js';
-import { asId, deleteMessage, readDm, readRoom, sendDm, sendRoomMessage } from '../services/chat.js';
+import { asId, deleteMessage, editMessage, forwardMessage, readDm, readRoom, sendDm, sendRoomMessage } from '../services/chat.js';
+import { blockedEitherWay } from '../services/blocks.js';
 import { markAllRoomsDelivered, markDmDelivered } from './receipts.js';
 import { toggleReaction } from '../services/messages.js';
 import { calls } from './calls.js';
@@ -16,9 +17,12 @@ import { voice } from './voice.js';
 import { registerWatch } from './watch.js';
 import { registerQueue } from './queue.js';
 
-// Stops reaction and delete floods: 30 per 10 s per person.
+// Stops reaction, delete and edit floods: 30 per 10 s per person.
 const canReact = rateLimiter(30, 10_000);
 const canDelete = rateLimiter(30, 10_000);
+const canEdit = rateLimiter(30, 10_000);
+// A forward is a handful of sends (each counted as a message too).
+const canForward = rateLimiter(10, 10_000);
 
 // One emoji, nothing else: a picture (with skin tones, joiners and variation
 // parts), a flag, or a keycap like 1️⃣ (but not plain digits, # or *).
@@ -101,7 +105,7 @@ function registerDm(io, socket) {
   socket.on('dm:send', handle(async (input) => ({ message: await sendDm(userId, input.to, input, socket.id) })));
 
   socket.on('dm:typing', ({ to, typing } = {}) => {
-    if (isUuid(to)) socket.to(userChannel(to)).emit('dm:typing', { from: userId, typing: !!typing });
+    if (isUuid(to) && !blockedEitherWay(userId, to)) socket.to(userChannel(to)).emit('dm:typing', { from: userId, typing: !!typing });
   });
 
   socket.on('dm:read', handle(async ({ partnerId }) => {
@@ -129,6 +133,7 @@ function registerRoomChat(io, socket) {
       const m = await one('SELECT sender_id, recipient_id, deleted_at FROM dm_messages WHERE id = $1', [id]);
       if (!m || (m.sender_id !== userId && m.recipient_id !== userId)) throw new AppError(404, 'That message doesn’t exist.');
       if (m.deleted_at) throw new AppError(409, 'That message was deleted.');
+      if (blockedEitherWay(m.sender_id, m.recipient_id)) throw new AppError(403, "You can't message this person.");
       const reactions = await toggleReaction('dm', id, userId, e);
       io.to(userChannel(m.sender_id)).to(userChannel(m.recipient_id)).emit('msg:reactions', {
         scope, messageId: id, between: [m.sender_id, m.recipient_id], reactions,
@@ -151,6 +156,18 @@ function registerRoomChat(io, socket) {
   socket.on('msg:delete', handle(async ({ scope, messageId, forEveryone }) => {
     if (!canDelete(userId)) throw new AppError(429, 'Slow down a little.');
     return deleteMessage(socket.data.user, { scope, messageId, forEveryone: forEveryone === true });
+  }));
+
+  // Change what one of my messages says (see services/chat.js).
+  socket.on('msg:edit', handle(async ({ scope, messageId, body, mentions }) => {
+    if (!canEdit(userId)) throw new AppError(429, 'Slow down a little.');
+    return editMessage(socket.data.user, { scope, messageId, body, mentions });
+  }));
+
+  // Send a copy of a message to other chats and rooms: { results: [{ scope, id, ok, error? }] }.
+  socket.on('msg:forward', handle(async ({ scope, messageId, to }) => {
+    if (!canForward(userId)) throw new AppError(429, 'Slow down a little.');
+    return forwardMessage(socket.data.user, { scope, messageId, to });
   }));
 
   socket.on('room:typing', ({ roomId, typing } = {}) => {

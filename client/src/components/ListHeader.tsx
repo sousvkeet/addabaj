@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Search } from 'lucide-react';
+import { Archive, ArrowLeft, Search } from 'lucide-react';
 import { StatusLine } from './ConnectionNotice';
 
 export function ListHeader({ title, subtitle, action }: { title: string; subtitle?: string; action?: ReactNode }) {
@@ -71,11 +71,55 @@ export function Fab({ label, onClick, children }: { label: string; onClick: () =
 }
 
 /** Unread count on a list row. */
-export function UnreadBadge({ count }: { count: number }) {
+/** Unread messages; grey when the chat is muted. */
+export function UnreadBadge({ count, muted = false }: { count: number; muted?: boolean }) {
   if (!count) return null;
   return (
-    <span className="min-w-[22px] rounded-full bg-aurora px-1.5 text-center text-[12px] leading-[22px] font-bold text-white shadow-glow">
+    <span
+      className={`min-w-[22px] rounded-full px-1.5 text-center text-[12px] leading-[22px] font-bold ${
+        muted ? 'bg-ink-soft/25 text-ink-soft' : 'bg-aurora text-white shadow-glow'
+      }`}
+    >
       {count > 99 ? '99+' : count}
     </span>
+  );
+}
+
+/** The top of a list with archived chats or rooms: opens them. */
+export function ArchivedRow({ count, unread, onOpen }: { count: number; unread: number; onOpen: () => void }) {
+  return (
+    <li>
+      <button type="button" onClick={onOpen} className={`${listRowClass(false)} w-full text-left`}>
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-subtle text-ink-soft">
+          <Archive size={20} />
+        </span>
+        <span className="min-w-0 flex-1 font-semibold">Archived</span>
+        <span className="text-[13px] font-semibold text-ink-soft tabular-nums">
+          {count}
+          {unread > 0 && <span className="sr-only">, {unread} with new messages</span>}
+        </span>
+        {unread > 0 && <span aria-hidden className="size-2.5 rounded-full bg-aurora shadow-glow" />}
+      </button>
+    </li>
+  );
+}
+
+/** Heading of the archived list, back to the rest. */
+export function ArchivedBack({ what, onBack }: { what: string; onBack: () => void }) {
+  return (
+    <li className="flex items-center gap-1 px-2 pb-1 md:px-0.5">
+      <button
+        type="button"
+        onClick={onBack}
+        aria-label={`Back to all ${what}`}
+        className="ripple flex size-10 items-center justify-center rounded-full text-ink-soft hover:bg-subtle hover:text-ink"
+      >
+        <ArrowLeft size={19} />
+      </button>
+      <span>
+        <span className="block font-semibold">Archived {what}</span>
+        <span className="block text-[12.5px] text-ink-soft">They stay here when new messages come in.</span>
+      </span>
+    </li>
   );
 }

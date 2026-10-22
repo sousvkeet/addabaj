@@ -8,6 +8,7 @@ import { useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
 import { useLiveStream } from './store/liveStream';
+import { useReports } from './store/reports';
 import { toast } from './store/ui';
 import { useVoice } from './store/voice';
 import { useWatching } from './store/watching';
@@ -94,6 +95,8 @@ export function bindRealtime() {
 
   // The host admin
   socket.on('site:settings', (site) => useSite.getState().set(site));
+  // A report came in, or was handled: how many are waiting (host admins only).
+  socket.on('admin:reports', ({ open }: { open: number }) => useReports.getState().setOpen(open));
   socket.on('account:changed', () => void useAuth.getState().refresh().catch(() => {}));
   socket.on('account:disabled', () => {
     toast('The host switched off your account.', 'error');
@@ -156,6 +159,17 @@ export function bindRealtime() {
   // Deleted for everyone (the marker stays), or hidden by me on another device.
   socket.on('msg:deleted', (e: Parameters<ReturnType<typeof useChat.getState>['applyDeleted']>[0]) => chat().applyDeleted(e));
   socket.on('msg:hidden', (e: Parameters<ReturnType<typeof useChat.getState>['applyHidden']>[0]) => chat().applyHidden(e));
+  // A message changed by its sender, and a link's card arriving.
+  socket.on('msg:edited', (e: Parameters<ReturnType<typeof useChat.getState>['applyEdited']>[0]) => chat().applyEdited(e));
+  socket.on('msg:preview', (e: Parameters<ReturnType<typeof useChat.getState>['applyPreview']>[0]) => chat().applyPreview(e));
+  // My settings for a chat or room (muted, pinned, archived), from another device.
+  socket.on('chat:settings', (e: Parameters<ReturnType<typeof useChat.getState>['applyChatSettings']>[0]) => chat().applyChatSettings(e));
+  // Someone blocked or unblocked, here or on another device.
+  socket.on('blocks:changed', () => {
+    void api<{ blocked: { id: string }[] }>('/users/blocked')
+      .then(({ blocked }) => chat().applyBlocked(blocked.map((b) => b.id)))
+      .catch(() => {});
+  });
 
   // Rooms
   socket.on('room:message', (m: RoomMessage, ack?: (ok: boolean) => void) => {
@@ -165,8 +179,9 @@ export function bindRealtime() {
   socket.on('room:receipts', (e: Parameters<ReturnType<typeof useChat.getState>['applyRoomReceipts']>[0]) => chat().applyRoomReceipts(e));
   socket.on('room:typing', (e: { roomId: string; userId: string; name: string; typing: boolean }) => chat().setRoomTyping(e));
   socket.on('room:read', ({ roomId }: { roomId: string }) => {
-    useChat.setState((s) => (s.rooms[roomId] ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0 } } } : s));
+    useChat.setState((s) => (s.rooms[roomId] ? { rooms: { ...s.rooms, [roomId]: { ...s.rooms[roomId], unread: 0, unreadMentions: 0 } } } : s));
   });
+  socket.on('room:muted', ({ roomId, mutedUntil }: { roomId: string; mutedUntil: string | null }) => chat().setRoomMuted(roomId, mutedUntil));
   socket.on('room:changed', ({ roomId }: { roomId: string }) => {
     if (chat().rooms[roomId]) void chat().loadRoom(roomId);
   });

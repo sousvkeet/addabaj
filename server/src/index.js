@@ -19,6 +19,8 @@ import { invitesRouter } from './routes/invites.js';
 import { streamRouter } from './routes/stream.js';
 import { filesRouter, uploadsRouter } from './routes/uploads.js';
 import { pushRouter } from './routes/push.js';
+import { reportsRouter } from './routes/reports.js';
+import { previewsRouter } from './routes/previews.js';
 import { appRouter } from './routes/app.js';
 import { pushEnabled } from './services/push.js';
 import { calls } from './socket/calls.js';
@@ -26,6 +28,8 @@ import { assertUuid } from './errors.js';
 import { cleanUploads, maxUploadBytes } from './services/uploads.js';
 import { ensureHostAdmin, loadSite, publicSite } from './services/site.js';
 import { loadPrivacy } from './services/privacy.js';
+import { loadBlocks } from './services/blocks.js';
+import { cleanPreviews } from './services/previews.js';
 import { ensureRoomCodes } from './services/rooms.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
@@ -43,6 +47,7 @@ await migrate();
 await ensureHostAdmin();
 await loadSite();
 await loadPrivacy();
+await loadBlocks();
 await ensureRoomCodes();
 await loadSessions();
 await armQueues();
@@ -134,6 +139,8 @@ app.use('/api/stream', requireAuth, streamRouter);
 app.use('/api/uploads', requireAuth, uploadsRouter);
 app.use('/api/files', requireAuth, filesRouter);
 app.use('/api/push', requireAuth, pushRouter);
+app.use('/api/reports', requireAuth, reportsRouter);
+app.use('/api/previews', requireAuth, previewsRouter);
 // Declining a call from the phone's notification, without opening the app.
 app.post('/api/calls/:callId/decline', requireAuth, (req, res) => {
   calls.decline(req.userId, assertUuid(req.params.callId, 'call'));
@@ -249,8 +256,12 @@ server.listen(config.port, async () => {
   );
   resumeMerges().catch((err) => console.error('Could not resume video preparation', err));
   live.clearStale().catch((err) => console.error('Could not clear old live streams', err));
-  // Unsent uploads (after a day) and files of deleted messages are removed hourly.
-  const clean = () => cleanUploads().catch((err) => console.error('Upload cleanup failed', err));
+  // Unsent uploads (after a day) and files of deleted messages are removed
+  // hourly, and link previews' pictures no message shows any more.
+  const clean = () => {
+    cleanUploads().catch((err) => console.error('Upload cleanup failed', err));
+    cleanPreviews().catch((err) => console.error('Link preview cleanup failed', err));
+  };
   clean();
   setInterval(clean, 60 * 60 * 1000).unref();
 });

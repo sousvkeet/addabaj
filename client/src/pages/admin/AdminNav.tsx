@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router';
-import { DoorOpen, KeyRound, LayoutDashboard, ShieldCheck, SlidersHorizontal, Smartphone, Users } from 'lucide-react';
+import { DoorOpen, Flag, KeyRound, LayoutDashboard, ShieldCheck, SlidersHorizontal, Smartphone, Users } from 'lucide-react';
 import { useAuth } from '../../store/auth';
-import { ListHeader, listRowClass } from '../../components/ListHeader';
+import { useReports } from '../../store/reports';
+import { ListHeader, UnreadBadge, listRowClass } from '../../components/ListHeader';
 import { Button } from '../../components/ui/Button';
 import { ChangePasswordDialog } from '../../components/ChangePasswordDialog';
 
@@ -10,7 +11,8 @@ const ITEMS = [
   { to: '/admin/overview', label: 'Overview', hint: 'Activity at a glance', Icon: LayoutDashboard },
   { to: '/admin/people', label: 'People', hint: 'Accounts, roles and passwords', Icon: Users },
   { to: '/admin/rooms', label: 'Rooms', hint: 'Every room on the site', Icon: DoorOpen },
-  { to: '/admin/settings', label: 'Site settings', hint: 'Sign-ups and announcements', Icon: SlidersHorizontal },
+  { to: '/admin/reports', label: 'Reports', hint: 'What people reported to you', Icon: Flag },
+  { to: '/admin/settings', label: 'Site settings', hint: 'Sign-ups, email, messages and more', Icon: SlidersHorizontal },
   { to: '/admin/app', label: 'App updates', hint: 'New versions of the Android app', Icon: Smartphone },
 ];
 
@@ -19,6 +21,12 @@ export function AdminNav() {
   const user = useAuth((s) => s.user);
   const { pathname } = useLocation();
   const [changing, setChanging] = useState(false);
+  const waiting = useReports((s) => s.open ?? 0);
+
+  // Reports waiting, for the badge (kept up to date live after this).
+  useEffect(() => {
+    void useReports.getState().load();
+  }, []);
 
   return (
     <>
@@ -40,6 +48,14 @@ export function AdminNav() {
                 <span className="block font-semibold">{label}</span>
                 <span className="block truncate text-[13px] text-ink-soft">{hint}</span>
               </span>
+              {to === '/admin/reports' && waiting > 0 && (
+                <>
+                  <span aria-hidden className="ml-auto shrink-0">
+                    <UnreadBadge count={waiting} />
+                  </span>
+                  <span className="sr-only">, {waiting} waiting</span>
+                </>
+              )}
             </NavLink>
           );
         })}

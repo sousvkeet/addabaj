@@ -8,6 +8,8 @@ import { inputClass } from '../../components/ui/Dialog';
 import { Toggle } from '../../components/ui/Toggle';
 import { ChangePasswordDialog } from '../../components/ChangePasswordDialog';
 import { AdminPage, Panel, type SiteSettings as Settings } from './shared';
+import { EmailSettingsPanel } from './EmailSettings';
+import { MessagingSettingsPanel } from './MessagingSettings';
 
 const MAX = 280;
 
@@ -66,6 +68,10 @@ export function SiteSettings() {
               hint="When this is off, the sign-up page says sign-ups are closed, and only a host admin can add people."
             />
           </Panel>
+
+          <EmailSettingsPanel />
+
+          <MessagingSettingsPanel />
 
           <Panel title="Announcement" hint="A banner at the top of the app for everyone who's signed in, for example about maintenance.">
             {settings.announcement && (

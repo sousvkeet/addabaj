@@ -11,6 +11,8 @@ import { findUser, publicUser, roomPhotoUrl } from '../services/users.js';
 import { MAX_PHOTO_BYTES, removeRoomPhoto, roomPhotoFile, saveRoomPhoto } from '../services/photos.js';
 import { enrich } from '../services/messages.js';
 import { asId, readRoom, sendRoomMessage } from '../services/chat.js';
+import { hasBlocked } from '../services/blocks.js';
+import { setRoomSettings } from '../services/chatSettings.js';
 import { rateLimiter } from '../socket/util.js';
 
 // Plenty for anyone, but no floods: 10 new rooms per 10 minutes per person.
@@ -306,6 +308,8 @@ roomsRouter.post('/:id/members', async (req, res) => {
   const targetId = assertUuid(userIdSchema.parse(req.body).userId, 'person');
   const [actor, target] = await Promise.all([me(req), findUser(targetId)]);
   if (!target) throw notFound("That person doesn't exist.");
+  // They blocked me: I can't put them anywhere.
+  if (hasBlocked(targetId, req.userId)) throw forbidden("You can't add this person.");
   const cancelled = await transaction(async (c) => {
     if ((await lockSeat(c, roomId, targetId)).member) throw conflict(`${target.name} is already in this room.`);
     await c.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [roomId, targetId]);
@@ -383,6 +387,7 @@ roomsRouter.post('/:id/invites', async (req, res) => {
   const targetId = assertUuid(userIdSchema.parse(req.body).userId, 'person');
   const target = await findUser(targetId);
   if (!target) throw notFound("That person doesn't exist.");
+  if (hasBlocked(targetId, req.userId)) throw forbidden("You can't invite this person.");
   const room = await one(
     `SELECT r.name, r.max_members, (SELECT count(*)::int FROM room_members m WHERE m.room_id = r.id) AS count,
             EXISTS (SELECT 1 FROM room_members m WHERE m.room_id = r.id AND m.user_id = $2) AS is_member
@@ -429,6 +434,31 @@ roomsRouter.post('/:id/messages', async (req, res) => {
   const roomId = assertUuid(req.params.id, 'room');
   const message = await sendRoomMessage(await me(req), roomId, { body: req.body?.body, replyTo: req.body?.replyTo });
   res.status(201).json({ message });
+});
+
+// My notifications for a room: off for 8 hours, a week, or until I turn them
+// back on. Messages that mention me or reply to me still come through.
+const MUTE_UNTIL = { '8h': `now() + interval '8 hours'`, '1w': `now() + interval '7 days'`, always: `'9999-12-31T00:00:00Z'::timestamptz`, off: 'NULL' };
+
+roomsRouter.put('/:id/mute', async (req, res) => {
+  const roomId = assertUuid(req.params.id, 'room');
+  const { for: span } = z.object({ for: z.enum(['8h', '1w', 'always', 'off'], 'Choose how long to mute it for.') }).parse(req.body);
+  const row = await one(
+    `UPDATE room_members SET muted_until = ${MUTE_UNTIL[span]} WHERE room_id = $1 AND user_id = $2
+     RETURNING CASE WHEN muted_until > now() THEN muted_until END AS muted_until`,
+    [roomId, req.userId],
+  );
+  if (!row) throw notFound("That room doesn't exist or you're not a member.");
+  // My other devices show it too.
+  getIO()?.to(userChannel(req.userId)).emit('room:muted', { roomId, mutedUntil: row.muted_until });
+  res.json({ mutedUntil: row.muted_until });
+});
+
+// Pin a room to the top of my list, or archive it: { pinned?, archived? }.
+roomsRouter.put('/:id/settings', async (req, res) => {
+  const roomId = assertUuid(req.params.id, 'room');
+  const change = z.object({ pinned: z.boolean().optional(), archived: z.boolean().optional() }).parse(req.body);
+  res.json(await setRoomSettings(req.userId, roomId, change));
 });
 
 // "Mark as read" from a notification: everything in the room so far.

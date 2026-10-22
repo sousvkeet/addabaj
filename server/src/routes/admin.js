@@ -1,5 +1,5 @@
 // The host admin's control panel: what's happening on the site, people
-// (switch off, promote, reset passwords, remove), rooms, and site settings.
+// (switch off, promote, reset passwords, remove), rooms, reports, and site settings.
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
@@ -12,7 +12,11 @@ import { deleteRelease, listReleases, saveRelease, updateRelease } from '../serv
 import { forgetPhoto, removePhoto, removeRoomPhoto } from '../services/photos.js';
 import { endOtherSessions } from '../services/sessions.js';
 import { announceRoomChanged, attachMember, deleteRoom, detachMember, lockSeat, postSystemMessage } from '../services/rooms.js';
-import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
+import { endSessions, getSettings, markDisabled, messaging, saveEmailSettings, saveMessaging, saveSettings } from '../services/site.js';
+import { deleteAsHost } from '../services/chat.js';
+import { closeReport, getReport, listReports, reportFile } from '../services/reports.js';
+import { reportedFile, sendFile } from '../services/uploads.js';
+import { emailReady, envMail, mailSettings, sendMail, testEmail } from '../services/mail.js';
 import { announceProfile, photoUrl, publicUser, roomPhotoUrl } from '../services/users.js';
 import { calls } from '../socket/calls.js';
 import { live } from '../socket/live.js';
@@ -45,6 +49,13 @@ const page = (req) => ({
 /** Ends every connection of a person (their calls and voice end with it). */
 const disconnect = (userId) => getIO()?.in(userChannel(userId)).disconnectSockets(true);
 
+/** A just switched-off account: it can't sign in, and its open apps are told why, then closed. */
+function signOutSwitchedOff(userId) {
+  markDisabled(userId, true);
+  getIO()?.to(userChannel(userId)).emit('account:disabled');
+  setTimeout(() => disconnect(userId), 300);
+}
+
 async function otherActiveAdmins(userId) {
   const { n } = await one(
     `SELECT count(*)::int AS n FROM users WHERE site_role = 'admin' AND disabled_at IS NULL AND id <> $1`,
@@ -56,7 +67,7 @@ async function otherActiveAdmins(userId) {
 // ── Overview ──────────────────────────────────────────────────────────
 
 adminRouter.get('/overview', async (_req, res) => {
-  const [users, rooms, messages, files, series, tools] = await Promise.all([
+  const [users, rooms, messages, files, series, tools, reports] = await Promise.all([
     one(`SELECT count(*)::int AS total,
                 count(*) FILTER (WHERE created_at > now() - interval '7 days')::int AS new_this_week,
                 count(*) FILTER (WHERE disabled_at IS NOT NULL)::int AS disabled,
@@ -79,6 +90,7 @@ adminRouter.get('/overview', async (_req, res) => {
                     + (SELECT count(*) FROM room_messages m WHERE date_trunc('day', m.created_at) = d.day))::int AS messages
            FROM days d ORDER BY d.day`),
     videoTools(),
+    one(`SELECT count(*)::int AS open FROM reports WHERE status = 'open'`),
   ]);
   res.json({
     users: { total: users.total, newThisWeek: users.new_this_week, disabled: users.disabled, admins: users.admins, online: presence.list().length },
@@ -89,6 +101,7 @@ adminRouter.get('/overview', async (_req, res) => {
     days: series.rows,
     server: { uptime: Math.round(process.uptime()), memory: process.memoryUsage().rss, node: process.version },
     signupsOpen: getSettings().allowSignups,
+    reports: { open: reports.open },
     videoTools: tools,
   });
 });
@@ -178,14 +191,8 @@ adminRouter.patch('/users/:id', async (req, res) => {
      WHERE id = $1`,
     [id, input.name ?? null, input.siteAdmin ?? null, input.disabled ?? null],
   );
-  if (input.disabled !== undefined) {
-    markDisabled(id, input.disabled);
-    if (input.disabled) {
-      // Tell their tabs why before the connection closes.
-      getIO()?.to(userChannel(id)).emit('account:disabled');
-      setTimeout(() => disconnect(id), 300);
-    }
-  }
+  if (input.disabled) signOutSwitchedOff(id);
+  else if (input.disabled === false) markDisabled(id, false);
   if (input.name) await announceProfile(id, { name: input.name });
   // A new role or name shows up on their next page load; tell open tabs now.
   if (input.siteAdmin !== undefined || input.name) getIO()?.to(userChannel(id)).emit('account:changed');
@@ -417,7 +424,10 @@ adminRouter.delete('/app/releases/:code', async (req, res) => {
 
 // ── Settings ──────────────────────────────────────────────────────────
 
-adminRouter.get('/settings', (_req, res) => res.json({ settings: getSettings() }));
+// (Email has its own page below: its password never goes back to the browser.)
+const siteSettings = () => ({ allowSignups: getSettings().allowSignups, announcement: getSettings().announcement });
+
+adminRouter.get('/settings', (_req, res) => res.json({ settings: siteSettings() }));
 
 adminRouter.patch('/settings', async (req, res) => {
   const input = z
@@ -426,5 +436,125 @@ adminRouter.patch('/settings', async (req, res) => {
       announcement: z.string().max(280, 'Keep the announcement under 280 characters.').nullable().optional(),
     })
     .parse(req.body);
-  res.json({ settings: await saveSettings(input) });
+  await saveSettings(input);
+  res.json({ settings: siteSettings() });
+});
+
+// ── Messages ──────────────────────────────────────────────────────────
+// Link previews, editing and forwarding, for everyone (services/site.js).
+// Host admins themselves can always edit and forward.
+
+adminRouter.get('/messaging', (_req, res) => res.json({ messaging: messaging() }));
+
+adminRouter.patch('/messaging', async (req, res) => {
+  const input = z
+    .object({
+      linkPreviews: z.boolean().optional(),
+      editing: z.boolean().optional(),
+      editMinutes: z.number().int().min(1, 'At least a minute.').max(1440, 'A day at most.').optional(),
+      forwarding: z.boolean().optional(),
+      forwardTo: z.number().int().min(1, 'At least one chat.').max(20, 'Up to 20 chats.').optional(),
+    })
+    .parse(req.body);
+  res.json({ messaging: await saveMessaging(input) });
+});
+
+// ── Reports ───────────────────────────────────────────────────────────
+// What people reported (services/reports.js), and what the host does about it.
+
+adminRouter.get('/reports', async (req, res) => {
+  const { limit, offset } = page(req);
+  res.json(await listReports(req.query.status === 'closed' ? 'closed' : 'open', { limit, offset }));
+});
+
+adminRouter.post('/reports/:id', async (req, res) => {
+  const id = assertUuid(req.params.id, 'report');
+  const { action } = z.object({ action: z.enum(['resolve', 'dismiss', 'reopen', 'delete-message', 'switch-off']) }).parse(req.body);
+  const report = await getReport(id);
+  if (!report) throw notFound('That report was removed.');
+  if (action === 'resolve') return res.json({ report: await closeReport(id, req.userId, 'resolved') });
+  if (action === 'dismiss') return res.json({ report: await closeReport(id, req.userId, 'dismissed') });
+  if (action === 'reopen') return res.json({ report: await closeReport(id, req.userId, 'open') });
+  if (action === 'delete-message') {
+    if (report.scope === 'user' || !report.messageId) throw badRequest("This report isn't about a message.");
+    // Gone for everyone, as if its sender deleted it; the report keeps its copy.
+    await deleteAsHost(req.userId, report.scope, report.messageId);
+    return res.json({ report: await closeReport(id, req.userId, 'resolved', 'deleted-message') });
+  }
+  // Switch off the reported person's account.
+  const target = report.target && !report.target.gone ? await one('SELECT id, site_role FROM users WHERE id = $1', [report.target.id]) : null;
+  if (!target) throw notFound("That person's account was removed.");
+  if (target.id === req.userId || target.site_role === 'admin') throw badRequest("A host admin's account can't be switched off from a report.");
+  await query('UPDATE users SET disabled_at = coalesce(disabled_at, now()) WHERE id = $1', [target.id]);
+  signOutSwitchedOff(target.id);
+  res.json({ report: await closeReport(id, req.userId, 'resolved', 'switched-off') });
+});
+
+// A photo, video, voice message or file in a report's messages.
+adminRouter.get('/reports/:id/files/:fileId', async (req, res) => {
+  const fileId = assertUuid(req.params.fileId, 'file');
+  const file = (await reportFile(assertUuid(req.params.id, 'report'), fileId)) && (await reportedFile(fileId));
+  if (!file) throw notFound('That file was deleted.');
+  sendFile(req, res, file);
+});
+
+// ── Email ─────────────────────────────────────────────────────────────
+
+/** The mail settings as the admin page shows them: never the password itself. */
+function emailView() {
+  const s = mailSettings();
+  return {
+    enabled: !!s?.enabled,
+    host: s?.host ?? '',
+    port: s?.port ?? 587,
+    security: s?.security ?? 'starttls',
+    user: s?.user ?? '',
+    from: s?.from ?? '',
+    verifySignups: s?.verifySignups !== false,
+    passwordSet: !!s?.password,
+    source: s?.source ?? null,
+    envAvailable: envMail(),
+    ready: emailReady(),
+  };
+}
+
+adminRouter.get('/email', (_req, res) => res.json({ email: emailView() }));
+
+const emailSchema = z.object({
+  enabled: z.boolean(),
+  host: z.string().trim().max(253),
+  port: z.coerce.number('Enter the mail server’s port, like 587.').int('Enter the mail server’s port, like 587.').min(1, 'Enter the mail server’s port, like 587.').max(65535, 'Enter the mail server’s port, like 587.'),
+  security: z.enum(['starttls', 'tls', 'none']),
+  user: z.string().trim().max(254),
+  // Left out: keep the saved one.
+  password: z.string().max(500).optional(),
+  from: z.string().trim().max(320),
+  verifySignups: z.boolean(),
+});
+
+adminRouter.put('/email', async (req, res) => {
+  const { password, ...input } = emailSchema.parse(req.body);
+  if (input.enabled && !input.host) throw badRequest('Enter the mail server, for example smtp.gmail.com.');
+  if (input.enabled && !/^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+>?$/.test(input.from.split('<').pop() ?? '')) {
+    throw badRequest('Enter the address emails come from, for example Adda Khana <no-reply@example.com>.');
+  }
+  await saveEmailSettings({ ...input, password: password ?? mailSettings()?.password ?? '' });
+  res.json({ email: emailView() });
+});
+
+// Back to the settings in server/.env.
+adminRouter.delete('/email', async (_req, res) => {
+  await saveEmailSettings(null);
+  res.json({ email: emailView() });
+});
+
+adminRouter.post('/email/test', async (req, res) => {
+  const { to } = z.object({ to: z.string().trim().toLowerCase().email('Enter the address to send the test to.') }).parse(req.body);
+  if (!emailReady()) throw badRequest('Turn email on and save the settings first.');
+  try {
+    await sendMail({ to, ...testEmail() });
+  } catch (err) {
+    throw badRequest(`The test email couldn’t be sent. The mail server said: ${err.message}`);
+  }
+  res.status(204).end();
 });

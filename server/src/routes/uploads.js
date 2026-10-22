@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { AppError } from '../errors.js';
-import { fileFor, saveUpload, showsInline } from '../services/uploads.js';
+import { fileFor, saveUpload, sendFile } from '../services/uploads.js';
 
 export const uploadsRouter = Router();
 export const filesRouter = Router();
@@ -30,13 +30,5 @@ uploadsRouter.post('/', async (req, res) => {
 });
 
 filesRouter.get('/:id', async (req, res) => {
-  const { path, row } = await fileFor(req.params.id, req.userId);
-  const inline = showsInline(row) && req.query.download === undefined;
-  res.setHeader('Content-Type', inline ? row.mime : 'application/octet-stream');
-  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.name)}`);
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  // Opened on its own, a file can never run code in the app's name.
-  res.setHeader('Content-Security-Policy', "default-src 'none'; media-src 'self'; img-src 'self'; style-src 'unsafe-inline'; sandbox");
-  res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
-  res.sendFile(path, { acceptRanges: true, dotfiles: 'allow' });
+  sendFile(req, res, await fileFor(req.params.id, req.userId));
 });

@@ -120,6 +120,8 @@ await check('every private endpoint refuses someone who isn’t logged in', asyn
     ['GET', '/users/find?q=a'], ['GET', '/dms'], ['GET', `/dms/${A.id}`], ['GET', '/rooms'], ['GET', `/rooms/${room.id}`],
     ['GET', `/rooms/${room.id}/messages`], ['GET', '/invites'], ['GET', '/config'], ['GET', '/site'], ['GET', '/admin/overview'],
     ['GET', `/files/${photo.id}`], ['POST', '/rooms'], ['POST', '/uploads'], ['POST', '/auth/password'],
+    ['POST', '/reports'], ['GET', '/users/blocked'], ['POST', `/users/${B.id}/block`], ['PUT', `/dms/${B.id}/settings`],
+    ['PUT', `/rooms/${room.id}/settings`], ['GET', `/previews/${'a'.repeat(32)}`], ['GET', '/admin/reports'], ['GET', '/admin/messaging'],
   ];
   for (const [m, p] of paths) {
     const r = await call(null, m, p, m === 'POST' ? {} : undefined);
@@ -213,9 +215,19 @@ await check('an outsider can’t see, change, join or post in someone else’s r
     ['room:send', { roomId: room.id, body: 'hi' }], ['msg:react', { scope: 'room', messageId: roomMsg.id, emoji: '👍' }],
     ['voice:join', { roomId: room.id }], ['watch:set', { roomId: room.id, url: 'https://example.com/v.mp4' }],
     ['watch:stop', { roomId: room.id }], ['live:start', { roomId: room.id, mode: 'file', title: 'x' }],
+    ['msg:edit', { scope: 'room', messageId: roomMsg.id, body: 'changed' }],
+    ['msg:forward', { scope: 'room', messageId: roomMsg.id, to: [{ scope: 'dm', id: C.id }] }],
+    ['msg:forward', { scope: 'dm', messageId: dmMsg.id, to: [{ scope: 'room', id: room.id }] }],
   ]) {
     const r = await emit(sC, event, payload);
     expect(r?.ok === false, `${event} was allowed for an outsider`);
+  }
+  // Nor pin, archive or mute it, report its messages, or see a report.
+  expect((await call(C, 'PUT', `/rooms/${room.id}/settings`, { pinned: true })).status === 404, 'an outsider pinned the room');
+  expect((await call(C, 'POST', '/reports', { scope: 'room', messageId: roomMsg.id, reason: 'spam' })).status === 404, 'an outsider reported a room message');
+  expect((await call(C, 'POST', '/reports', { scope: 'dm', messageId: dmMsg.id, reason: 'spam' })).status === 404, 'an outsider reported a private message');
+  for (const [m, p, body] of [['GET', '/admin/reports'], ['GET', '/admin/messaging'], ['PATCH', '/admin/messaging', { editing: false }]]) {
+    expect((await call(C, m, p, body)).status === 403, `${m} ${p} was allowed for someone who isn’t the host`);
   }
   const msgs = await call(A, 'GET', `/rooms/${room.id}/messages`);
   expect(!JSON.stringify(msgs.data).includes('Intruder'), 'the outsider left a trace in the room');
@@ -230,6 +242,18 @@ await check('a member who isn’t an admin can’t run the room', async () => {
     const r = await emit(sB, event, payload);
     expect(r?.ok === false, `${event} was allowed for a member`);
   }
+});
+
+await check('nobody can edit a message that isn’t theirs, or forward it as their own', async () => {
+  expect((await emit(sB, 'msg:edit', { scope: 'dm', messageId: dmMsg.id, body: 'Rahul’s words now' })).ok === false, 'Rahul edited Asha’s chat message');
+  expect((await emit(sB, 'msg:edit', { scope: 'room', messageId: roomMsg.id, body: 'Rahul’s words now' })).ok === false, 'Rahul edited Asha’s room message');
+  const fwd = await emit(sB, 'msg:forward', { scope: 'dm', messageId: dmMsg.id, to: [{ scope: 'room', id: room.id }] });
+  expect(fwd.ok && fwd.results[0].ok, `forward: ${JSON.stringify(fwd)}`);
+  const copy = (await call(A, 'GET', `/rooms/${room.id}/messages`)).data.messages.at(-1);
+  expect(copy.sender.id === B.id && copy.forwarded === true && copy.body === 'dm secret', `the copy: ${JSON.stringify(copy)}`);
+  // A forwarded message can't be passed off as fresh, nor a "forwarded" mark faked.
+  const fake = await emit(sC, 'dm:send', { to: B.id, body: 'pretend', forwarded: true, preview: { url: 'https://evil.example', title: 'Phish', image: '/api/files/x' } });
+  expect(fake.ok && !fake.message.forwarded && !fake.message.preview, `the app set server-only fields: ${JSON.stringify(fake.message)}`);
 });
 
 await check('an outsider can’t read or react to a private chat', async () => {
@@ -271,7 +295,18 @@ await check('disguised uploads (SVG with a script, HTML as a photo) only ever do
 });
 
 await check('the host admin’s pages refuse everyone else', async () => {
-  for (const [m, p, body] of [['GET', '/admin/overview'], ['GET', '/admin/users'], ['PATCH', `/admin/users/${C.id}`, { siteAdmin: true }], ['DELETE', `/admin/rooms/${room.id}`], ['PATCH', '/admin/settings', { allowSignups: false }]]) {
+  for (const [m, p, body] of [
+    ['GET', '/admin/overview'],
+    ['GET', '/admin/users'],
+    ['PATCH', `/admin/users/${C.id}`, { siteAdmin: true }],
+    ['DELETE', `/admin/rooms/${room.id}`],
+    ['PATCH', '/admin/settings', { allowSignups: false }],
+    // The mail server: its settings, and sending email through it.
+    ['GET', '/admin/email'],
+    ['PUT', '/admin/email', { enabled: true, host: 'evil.example', port: 25, security: 'none', user: '', from: 'x@evil.example', verifySignups: false }],
+    ['DELETE', '/admin/email'],
+    ['POST', '/admin/email/test', { to: 'victim@example.com' }],
+  ]) {
     const r = await call(C, m, p, body);
     expect(r.status === 403, `${m} ${p} answered ${r.status}`);
   }
@@ -318,6 +353,12 @@ await check('bad input gets a clear 4xx answer, never a crash or a 500', async (
     ['POST', '/auth/register', { name: '', email: 'not-an-email', password: 'short' }],
     ['POST', '/auth/register', { name: 'x'.repeat(41), email: `long.${stamp}@example.com`, password: 'password123' }],
     ['POST', '/auth/login', { email: ['a'], password: { x: 1 } }],
+    ['POST', '/auth/register/confirm', { token: { $ne: 1 }, code: 123 }],
+    ['POST', '/auth/register/confirm', { token: 'x'.repeat(5000), code: '1'.repeat(5000) }],
+    ['POST', '/auth/register/resend', { token: ['a'] }],
+    ['POST', '/auth/forgot', { email: { $gt: '' } }],
+    ['POST', '/auth/reset', { email: 'a@b.co', code: { $ne: '' }, password: 'password123' }],
+    ['POST', '/auth/reset', { email: `nobody.${stamp}@example.com`, code: '123456', password: 'short' }],
     ['POST', '/uploads', undefined, { raw: PNG, headers: { 'content-type': 'application/octet-stream', 'x-upload-meta': '%E0%A4%A' } }],
   ];
   for (const [m, p, body, opts] of cases) {
@@ -329,7 +370,7 @@ await check('bad input gets a clear 4xx answer, never a crash or a 500', async (
   expect(await alive(), 'the server went down');
 });
 
-const EVENTS = ['call:accept', 'call:camera', 'call:decline', 'call:end', 'call:mute', 'call:signal', 'call:start', 'dm:read', 'dm:send', 'dm:typing', 'live:leave', 'live:progress', 'live:resume', 'live:signal', 'live:start', 'live:stop', 'live:watch', 'msg:delete', 'msg:react', 'room:read', 'room:send', 'room:typing', 'time:now', 'voice:join', 'voice:leave', 'voice:mute', 'voice:signal', 'watch:control', 'watch:scan', 'watch:set', 'watch:stop'];
+const EVENTS = ['call:accept', 'call:camera', 'call:decline', 'call:end', 'call:mute', 'call:signal', 'call:start', 'client:state', 'dm:read', 'dm:send', 'dm:typing', 'live:leave', 'live:progress', 'live:resume', 'live:signal', 'live:start', 'live:stop', 'live:watch', 'msg:delete', 'msg:edit', 'msg:forward', 'msg:react', 'room:read', 'room:send', 'room:typing', 'time:now', 'voice:camera', 'voice:join', 'voice:leave', 'voice:mute', 'voice:signal', 'watch:control', 'watch:duration', 'watch:mute', 'watch:next', 'watch:queue-add', 'watch:queue-clear', 'watch:queue-move', 'watch:queue-play', 'watch:queue-remove', 'watch:scan', 'watch:set', 'watch:stop'];
 const BAD = [null, 42, 'text', [], true, { roomId: {}, to: [], callId: null }, { roomId: 'x'.repeat(5000), body: { $ne: 1 } }, { roomId: room.id, messageId: '1; DROP TABLE users', emoji: '<script>' }, { to: B.id, data: { sdp: { type: 'offer', sdp: 42 } }, callId: '../../' }];
 
 await check('every live event survives garbage: the server stays up and answers with an error', async () => {

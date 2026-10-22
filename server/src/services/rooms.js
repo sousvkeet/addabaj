@@ -23,7 +23,12 @@ export function roomMessage(row) {
       ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue, photo: row.sender_photo_url ?? photoUrl(row.sender_id, row.sender_photo) }
       : null,
     replyToId: row.reply_to_id ?? null,
+    // The members named in the text: [{ id, offset, length }].
+    mentions: row.mentions ?? null,
     clientId: row.client_id ?? null,
+    editedAt: row.edited_at ?? null,
+    forwarded: !!row.forwarded,
+    preview: row.preview ?? null,
     deletedAt: row.deleted_at ?? null,
     // Deleted by a room admin rather than by whoever sent it.
     deletedByAdmin: !!row.deleted_at && !!row.deleted_by && row.deleted_by !== row.sender_id,
@@ -34,7 +39,8 @@ export function roomMessage(row) {
 }
 
 export const ROOM_MESSAGE_SELECT = `
-  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id, m.deleted_at, m.deleted_by, m.client_id,
+  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id, m.deleted_at, m.deleted_by, m.client_id, m.mentions,
+         m.edited_at, m.forwarded, m.preview,
          u.name AS sender_name, u.avatar_hue AS sender_hue, u.photo AS sender_photo
   FROM room_messages m LEFT JOIN users u ON u.id = m.sender_id`;
 
@@ -123,6 +129,13 @@ const SUMMARY_SELECT = `
     (SELECT count(*)::int FROM room_messages m
        WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id IS DISTINCT FROM rm.user_id AND m.deleted_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = rm.user_id AND h.message_id = m.id)) AS unread,
+    -- Of those, the ones that mention me or reply to me.
+    (SELECT count(*)::int FROM room_messages m
+       WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id IS DISTINCT FROM rm.user_id AND m.deleted_at IS NULL
+         AND (m.mentions @> jsonb_build_array(jsonb_build_object('id', rm.user_id::text))
+              OR EXISTS (SELECT 1 FROM room_messages p WHERE p.id = m.reply_to_id AND p.sender_id = rm.user_id))
+         AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = rm.user_id AND h.message_id = m.id)) AS unread_mentions,
+    CASE WHEN rm.muted_until > now() THEN rm.muted_until END AS muted_until, rm.pinned_at, rm.archived_at,
     lm.id AS lm_id, lm.kind AS lm_kind, lm.body AS lm_body, lm.created_at AS lm_created_at,
     lm.sender_id AS lm_sender_id, lm.deleted_at AS lm_deleted_at, lm.deleted_by AS lm_deleted_by,
     lu.name AS lm_sender_name, lu.avatar_hue AS lm_sender_hue
@@ -149,6 +162,12 @@ function summary(row) {
     hasPassword: row.has_password,
     ...(row.role === 'admin' ? { joinCode: row.join_code } : {}),
     unread: row.unread,
+    unreadMentions: row.unread_mentions,
+    // My notifications for it are off until then (year 9999: until I turn them on).
+    mutedUntil: row.muted_until ?? null,
+    // Pinned to the top of my list, or archived out of it.
+    pinnedAt: row.pinned_at ?? null,
+    archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     watching: row.watch?.source?.title ?? null,
     lastMessage: row.lm_id

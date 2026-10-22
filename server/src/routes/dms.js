@@ -1,14 +1,17 @@
 import { Router } from 'express';
+import { z } from 'zod';
 import { query } from '../db.js';
-import { assertUuid } from '../errors.js';
+import { AppError, assertUuid } from '../errors.js';
 import { DM_COLUMNS, dmForViewer, dmMessage } from '../services/dms.js';
 import { enrich } from '../services/messages.js';
 import { publicUser } from '../services/users.js';
 import { asId, readDm, sendDm } from '../services/chat.js';
+import { MUTE_SPANS, setDmSettings, settingsOf } from '../services/chatSettings.js';
 
 export const dmsRouter = Router();
 
-// One row per person you've talked with: latest message + unread count.
+// One row per person you've talked with: latest message, unread count, and my
+// settings for the chat (muted, pinned, archived).
 dmsRouter.get('/', async (req, res) => {
   const { rows } = await query(
     `WITH latest AS (
@@ -21,10 +24,12 @@ dmsRouter.get('/', async (req, res) => {
        ORDER BY partner, id DESC
      )
      SELECT l.*, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at,
+       s.muted_until, s.pinned_at, s.archived_at,
        (SELECT count(*)::int FROM dm_messages d
          WHERE d.recipient_id = $1 AND d.sender_id = l.partner AND d.read_at IS NULL AND d.deleted_at IS NULL AND d.kind = 'text'
            AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id)) AS unread
      FROM latest l JOIN users u ON u.id = l.partner
+     LEFT JOIN dm_settings s ON s.user_id = $1 AND s.peer_id = l.partner
      ORDER BY l.id DESC`,
     [req.userId],
   );
@@ -32,6 +37,7 @@ dmsRouter.get('/', async (req, res) => {
       partner: publicUser({ id: r.partner, email: r.email, handle: r.handle, name: r.name, avatar_hue: r.avatar_hue, photo: r.photo, last_seen_at: r.last_seen_at }, req.userId),
       lastMessage: dmForViewer(dmMessage(r), req.userId),
       unread: r.unread,
+      ...settingsOf(r),
     }));
   await enrich('dm', conversations.map((c) => c.lastMessage));
   res.json({ conversations });
@@ -59,6 +65,16 @@ dmsRouter.post('/:userId/messages', async (req, res) => {
   const partner = assertUuid(req.params.userId, 'person');
   const message = await sendDm(req.userId, partner, { body: req.body?.body, replyTo: req.body?.replyTo });
   res.status(201).json({ message });
+});
+
+// My settings for a chat: { mute?: '8h' | '1w' | 'always' | 'off', pinned?, archived? }.
+dmsRouter.put('/:userId/settings', async (req, res) => {
+  const peer = assertUuid(req.params.userId, 'person');
+  const change = z
+    .object({ mute: z.enum(MUTE_SPANS, 'Choose how long to mute it for.').optional(), pinned: z.boolean().optional(), archived: z.boolean().optional() })
+    .parse(req.body);
+  if (peer === req.userId) throw new AppError(400, "That's you.");
+  res.json(await setDmSettings(req.userId, peer, change));
 });
 
 // "Mark as read" from a notification.

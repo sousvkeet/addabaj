@@ -1,6 +1,7 @@
 import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { getIO, presence, userChannel } from '../realtime.js';
+import { blockedEitherWay, hasBlocked } from './blocks.js';
 import { hidesPresence } from './privacy.js';
 
 export const USER_COLUMNS = 'id, email, handle, name, avatar_hue, photo, last_seen_at';
@@ -16,11 +17,13 @@ export const roomPhotoUrl = (roomId, version) => (version ? `/api/rooms/${roomId
 
 /**
  * A person as others see them. Pass who is looking (`viewerId`): when either
- * of them doesn't share presence, online and last seen are left out.
+ * of them doesn't share presence, or one blocked the other, online and last
+ * seen are left out.
  */
 export function publicUser(row, viewerId) {
   if (!row) return null;
-  const hidden = hidesPresence(row.id) || (viewerId && viewerId !== row.id && hidesPresence(viewerId));
+  const other = viewerId && viewerId !== row.id;
+  const hidden = hidesPresence(row.id) || (other && (hidesPresence(viewerId) || blockedEitherWay(viewerId, row.id)));
   return {
     id: row.id,
     handle: row.handle ?? null,
@@ -30,6 +33,8 @@ export function publicUser(row, viewerId) {
     lastSeenAt: hidden ? null : row.last_seen_at,
     online: hidden ? false : presence.isOnline(row.id),
     ...(hidden ? { presenceHidden: true } : {}),
+    // I blocked them (whether they blocked me isn't said).
+    ...(other && hasBlocked(viewerId, row.id) ? { blocked: true } : {}),
   };
 }
 
@@ -86,7 +91,8 @@ export async function contactIds(userId) {
        WHERE mine.user_id = $1`,
     [userId],
   );
-  return new Set(rows.map((r) => r.id));
+  // Someone either of them blocked isn't told when the other comes and goes.
+  return new Set(rows.map((r) => r.id).filter((id) => !blockedEitherWay(userId, id)));
 }
 
 /**

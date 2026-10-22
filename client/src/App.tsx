@@ -9,6 +9,7 @@ import { EmptyPane } from './pages/EmptyPane';
 import { Overview } from './pages/admin/Overview';
 import { People } from './pages/admin/People';
 import { RoomsAdmin } from './pages/admin/RoomsAdmin';
+import { Reports } from './pages/admin/Reports';
 import { SiteSettings } from './pages/admin/SiteSettings';
 import { AppReleases } from './pages/admin/AppReleases';
 import { Toasts } from './components/Toasts';
@@ -42,7 +43,7 @@ function PendingJoin() {
   const { pathname } = useLocation();
   useEffect(() => {
     // Let the redirects after logging in (to / and then /chats) finish first.
-    if (pathname === '/login' || pathname === '/signup' || pathname === '/') return;
+    if (pathname === '/login' || pathname === '/signup' || pathname === '/forgot' || pathname === '/') return;
     let code: string | null = null;
     try {
       code = sessionStorage.getItem(PENDING_JOIN);
@@ -120,6 +121,7 @@ export const appRoutes = createRoutesFromElements(
   <Route element={<Root />}>
     <Route path="/login" element={<SignedOut><AuthPage mode="login" /></SignedOut>} />
     <Route path="/signup" element={<SignedOut><AuthPage mode="signup" /></SignedOut>} />
+    <Route path="/forgot" element={<SignedOut><AuthPage mode="forgot" /></SignedOut>} />
     <Route path="/join/:code" element={<Join />} />
     <Route path="/" element={<SignedIn><AppShell /></SignedIn>}>
       <Route index element={<Navigate to="/chats" replace />} />
@@ -133,6 +135,7 @@ export const appRoutes = createRoutesFromElements(
       <Route path="admin/overview" element={<HostOnly><Overview /></HostOnly>} />
       <Route path="admin/people" element={<HostOnly><People /></HostOnly>} />
       <Route path="admin/rooms" element={<HostOnly><RoomsAdmin /></HostOnly>} />
+      <Route path="admin/reports" element={<HostOnly><Reports /></HostOnly>} />
       <Route path="admin/settings" element={<HostOnly><SiteSettings /></HostOnly>} />
       <Route path="admin/app" element={<HostOnly><AppReleases /></HostOnly>} />
     </Route>

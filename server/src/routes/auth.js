@@ -9,6 +9,8 @@ import { adoptLogin, clearAuthCookie, COOKIE_NAME, readToken, requireAuth, setAu
 import { findSessionUser, HANDLE_RULES, normalizeHandle, SESSION_COLUMNS, sessionUser } from '../services/users.js';
 import { endSessions, getSettings, retireLogins } from '../services/site.js';
 import { createSession, endOtherSessions, endSession, listSessions, rotateSession, touchSession } from '../services/sessions.js';
+import { checkReset, checkSignup, CODE_MINUTES, dropSignup, findSignup, finishSignups, RESEND_SECONDS, resendSignup, startReset, startSignup } from '../services/codes.js';
+import { confirmingSignups, emailReady, resetEmail, sendMail, signupEmail } from '../services/mail.js';
 import { savePrivacy } from '../services/privacy.js';
 import { onlineContacts, tellContacts } from '../services/presence.js';
 import { MAX_PHOTO_BYTES, removePhoto, savePhoto } from '../services/photos.js';
@@ -29,6 +31,16 @@ const limiter = rateLimit({
   standardHeaders: 'draft-8',
   legacyHeaders: false,
   message: { error: 'Too many attempts. Wait a few minutes and try again.' },
+});
+
+// Codes by email: sending them and trying them. (Each code also has its own
+// limits, see services/codes.js.)
+const codes = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: config.isProd ? 30 : 600,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'Too many tries. Wait a few minutes and try again.' },
 });
 
 // Changing your own photo or user ID: per person, so it never locks others
@@ -70,30 +82,132 @@ export async function nextHue() {
 
 // What the login page needs before anyone is signed in.
 authRouter.get('/options', (_req, res) => {
-  res.json({ allowSignups: getSettings().allowSignups });
+  res.json({ allowSignups: getSettings().allowSignups, passwordReset: emailReady() });
 });
+
+const TAKEN = 'An account with this email already exists. Log in instead.';
+const TOO_MANY_CODES = 'That’s a lot of codes for this email today. Try again tomorrow.';
+
+async function createAccount({ email, name, passwordHash }) {
+  // The database gives each account a user ID; two sign-ups getting the same one at once just try again.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await one(
+        `INSERT INTO users (email, name, password_hash, avatar_hue) VALUES ($1, $2, $3, $4)
+         RETURNING ${SESSION_COLUMNS}`,
+        [email, name, passwordHash, await nextHue()],
+      );
+    } catch (err) {
+      if (err.code === '23505' && err.constraint === 'users_handle_key' && attempt < 3) continue;
+      if (err.code === '23505') throw conflict(TAKEN);
+      throw err;
+    }
+  }
+}
+
+/** Sends an email with a code; if that fails, the person is asked to try again (the server log says why). */
+async function mailCode(message) {
+  try {
+    await sendMail(message);
+  } catch (err) {
+    console.error(`Sending email to ${message.to} failed: ${err.message}`);
+    throw new AppError(503, 'We couldn’t send the email just now. Try again in a few minutes.');
+  }
+}
+
+/** A code that didn't work, said plainly. */
+function codeProblem(check) {
+  if (check.result === 'ok') return;
+  if (check.result === 'wrong') {
+    throw new AppError(
+      400,
+      check.left > 0
+        ? `That code isn’t right. ${check.left} ${check.left === 1 ? 'try' : 'tries'} left.`
+        : 'That code isn’t right, and it can’t be used any more. Send a new code.',
+    );
+  }
+  if (check.result === 'expired') throw new AppError(400, 'That code has expired. Send a new one.');
+  throw new AppError(400, 'That code can’t be used any more. Send a new one.');
+}
 
 authRouter.post('/register', limiter, async (req, res) => {
   if (!getSettings().allowSignups) throw forbidden('New sign-ups are closed right now. Ask the host to add you.');
   const { name, email, password } = registerSchema.parse(req.body);
-  const hash = await bcrypt.hash(password, 10);
-  // The database gives each account a user ID; two sign-ups getting the same one at once just try again.
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const row = await one(
-        `INSERT INTO users (email, name, password_hash, avatar_hue) VALUES ($1, $2, $3, $4)
-         RETURNING ${SESSION_COLUMNS}`,
-        [email, name, hash, await nextHue()],
-      );
-      setAuthCookie(res, row.id, await createSession(row.id, req));
-      res.status(201).json({ user: sessionUser(row) });
-      return;
-    } catch (err) {
-      if (err.code === '23505' && err.constraint === 'users_handle_key' && attempt < 3) continue;
-      if (err.code === '23505') throw conflict('An account with this email already exists. Log in instead.');
-      throw err;
-    }
+  const passwordHash = await bcrypt.hash(password, 10);
+  if (!confirmingSignups()) {
+    const row = await createAccount({ email, name, passwordHash });
+    setAuthCookie(res, row.id, await createSession(row.id, req));
+    res.status(201).json({ user: sessionUser(row) });
+    return;
   }
+  // The account is made once the code sent to this address comes back, from
+  // this browser or app (it holds the token): whoever owns the inbox, and
+  // chose this password, gets it.
+  if (await one('SELECT 1 FROM users WHERE lower(email) = $1', [email])) throw conflict(TAKEN);
+  const signup = await startSignup({ email, name, passwordHash });
+  if (!signup) throw new AppError(429, TOO_MANY_CODES);
+  try {
+    await mailCode({ to: email, ...signupEmail({ name, code: signup.code, minutes: CODE_MINUTES }) });
+  } catch (err) {
+    await dropSignup(signup.id);
+    throw err;
+  }
+  res.status(202).json({ confirm: { token: signup.token, email, resendIn: RESEND_SECONDS } });
+});
+
+const GONE = 'This sign-up has expired. Start again.';
+
+authRouter.post('/register/confirm', codes, async (req, res) => {
+  const { token, code } = z.object({ token: z.string().max(100), code: z.string().max(20) }).parse(req.body);
+  const signup = await findSignup(token);
+  if (!signup) throw new AppError(410, GONE);
+  // The host closed sign-ups meanwhile.
+  if (!getSettings().allowSignups) throw forbidden('New sign-ups are closed right now. Ask the host to add you.');
+  codeProblem(await checkSignup(signup.id, code));
+  const row = await createAccount({ email: signup.email, name: signup.name, passwordHash: signup.password_hash });
+  await finishSignups(signup.email);
+  setAuthCookie(res, row.id, await createSession(row.id, req));
+  res.status(201).json({ user: sessionUser(row) });
+});
+
+authRouter.post('/register/resend', codes, async (req, res) => {
+  const signup = await findSignup(req.body?.token);
+  if (!signup) throw new AppError(410, GONE);
+  const next = await resendSignup(signup);
+  if (next.limited) throw new AppError(429, TOO_MANY_CODES);
+  if (next.wait) throw new AppError(429, `You can send another code in ${next.wait} seconds.`);
+  await mailCode({ to: signup.email, ...signupEmail({ name: signup.name, code: next.code, minutes: CODE_MINUTES }) });
+  res.json({ resendIn: RESEND_SECONDS });
+});
+
+// A forgotten password: a code goes to the account's email. The answer is the
+// same whether or not there's an account, and comes before any email is sent.
+authRouter.post('/forgot', codes, async (req, res) => {
+  const input = z.object({ email }).parse(req.body);
+  if (!emailReady()) throw new AppError(503, 'Resetting a password by email isn’t set up here. Ask the site’s host to reset it for you.');
+  res.json({ resendIn: RESEND_SECONDS });
+  try {
+    const user = await one('SELECT id, name, email FROM users WHERE lower(email) = $1 AND disabled_at IS NULL', [input.email]);
+    const code = user && (await startReset(user.id));
+    if (code) await sendMail({ to: user.email, ...resetEmail({ name: user.name, email: user.email, code, minutes: CODE_MINUTES }) });
+  } catch (err) {
+    console.error(`Sending a password reset email failed: ${err.message}`);
+  }
+});
+
+authRouter.post('/reset', codes, async (req, res) => {
+  const input = z.object({ email, code: z.string().max(20), password: newPassword }).parse(req.body);
+  const user = await one('SELECT id, disabled_at FROM users WHERE lower(email) = $1', [input.email]);
+  if (!user) throw new AppError(400, 'That code isn’t right. Check it, or send a new one.');
+  codeProblem(await checkReset(user.id, input.code));
+  if (user.disabled_at) throw forbidden('This account has been switched off by the host.');
+  await query('UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1', [user.id, await bcrypt.hash(input.password, 10)]);
+  // Signed out everywhere else (anyone who had the old password too); this device is signed in.
+  await endOtherSessions(user.id, null, 'password');
+  await endSessions(user.id);
+  getIO()?.in(userChannel(user.id)).disconnectSockets(true);
+  setAuthCookie(res, user.id, await createSession(user.id, req));
+  res.json({ user: await findSessionUser(user.id) });
 });
 
 authRouter.post('/login', limiter, async (req, res) => {

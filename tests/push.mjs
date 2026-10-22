@@ -282,6 +282,73 @@ await check('Notifications carry the sender’s profile photo, which the phone c
   expect((await fetch(API + photo)).status === 401, 'anyone could download it');
 });
 
+await check('A muted room stays quiet, except for messages that mention you or reply to you', async () => {
+  // Cy asks something, then mutes the room for good.
+  const question = await call(cy, 'POST', `/rooms/${roomId}/messages`, { body: 'Who has the tickets?' });
+  expect(question.status === 201, `question: ${question.status}`);
+  const muted = await call(cy, 'PUT', `/rooms/${roomId}/mute`, { for: 'always' });
+  expect(muted.status === 200 && muted.data.mutedUntil?.startsWith('9999'), `mute: ${muted.status} ${JSON.stringify(muted.data)}`);
+  expect((await emit(anaSock, 'room:send', { roomId, body: 'Quiet one' })).ok, 'send');
+  // Bo hasn't muted it: he hears; Cy doesn't.
+  expect(await waitFor(() => pushesFor(TOKEN_BO, 'message').find((x) => x.data.text === 'Quiet one')), 'Bo got nothing');
+  await sleep(300);
+  expect(!pushesFor(TOKEN_CY, 'message').some((x) => x.data.text === 'Quiet one'), 'Cy was pushed in a room she muted');
+  // Mentioning her gets through.
+  const text = 'Hey @Cy, are you coming?';
+  const mention = await emit(anaSock, 'room:send', { roomId, body: text, mentions: [{ id: cy.id, offset: 4, length: 3 }] });
+  expect(mention.ok && mention.message.mentions?.[0]?.id === cy.id, `mention: ${JSON.stringify(mention)}`);
+  expect(await waitFor(() => pushesFor(TOKEN_CY, 'message').find((x) => x.data.text === text)), 'the mention did not reach Cy');
+  // A "mention" that doesn't say her name is dropped: no hidden pings.
+  const sneaky = await emit(anaSock, 'room:send', { roomId, body: 'Hello @everyone', mentions: [{ id: cy.id, offset: 6, length: 9 }] });
+  expect(sneaky.ok && !sneaky.message.mentions, `a mention not naming her was kept: ${JSON.stringify(sneaky.message?.mentions)}`);
+  // So does a reply to her own message.
+  const reply = await emit(anaSock, 'room:send', { roomId, body: 'I have them!', replyTo: question.data.message.id });
+  expect(reply.ok, 'reply');
+  expect(await waitFor(() => pushesFor(TOKEN_CY, 'message').find((x) => x.data.text === 'I have them!')), 'the reply did not reach Cy');
+  await sleep(300);
+  expect(!pushesFor(TOKEN_CY, 'message').some((x) => x.data.text === 'Hello @everyone'), 'the dropped mention still buzzed Cy');
+  // Her room list: muted, 4 unread, 2 of them for her.
+  const mine = (await call(cy, 'GET', '/rooms')).data.rooms.find((r) => r.id === roomId);
+  expect(mine.mutedUntil?.startsWith('9999') && mine.unread === 4 && mine.unreadMentions === 2, `room list: ${JSON.stringify({ mutedUntil: mine.mutedUntil, unread: mine.unread, unreadMentions: mine.unreadMentions })}`);
+  // Muted for 8 hours, then back on: everything buzzes again.
+  const eight = await call(cy, 'PUT', `/rooms/${roomId}/mute`, { for: '8h' });
+  const hours = (new Date(eight.data.mutedUntil).getTime() - Date.now()) / 3600_000;
+  expect(hours > 7.9 && hours <= 8, `8 hours: ${eight.data.mutedUntil}`);
+  expect((await call(cy, 'PUT', `/rooms/${roomId}/mute`, { for: 'off' })).data.mutedUntil === null, 'unmute');
+  expect((await emit(anaSock, 'room:send', { roomId, body: 'Loud again' })).ok, 'send');
+  expect(await waitFor(() => pushesFor(TOKEN_CY, 'message').find((x) => x.data.text === 'Loud again')), 'unmuted, Cy got nothing');
+  // Only members, and only real choices.
+  expect((await call(cy, 'PUT', `/rooms/${roomId}/mute`, { for: 'forever' })).status === 400, 'a made-up length was accepted');
+  const dan = await register('Dana');
+  expect((await call(dan, 'PUT', `/rooms/${roomId}/mute`, { for: 'always' })).status === 404, 'an outsider muted the room');
+});
+
+await check('A muted chat stays quiet (calls still ring); a blocked one sends nothing at all', async () => {
+  const muted = await call(bo, 'PUT', `/dms/${ana.id}/settings`, { mute: 'always' });
+  expect(muted.status === 200 && muted.data.mutedUntil?.startsWith('9999'), `mute: ${muted.status} ${JSON.stringify(muted.data)}`);
+  expect((await emit(anaSock, 'dm:send', { to: bo.id, body: 'Shh, muted' })).ok, 'send');
+  await sleep(500);
+  expect(!pushesFor(TOKEN_BO, 'message').some((x) => x.data.text === 'Shh, muted'), 'Bo was pushed in a chat he muted');
+  // Cy hasn't muted Ana: she still hears.
+  expect((await emit(anaSock, 'dm:send', { to: cy.id, body: 'Not muted for Cy' })).ok, 'send');
+  expect(await waitFor(() => pushesFor(TOKEN_CY, 'message').find((x) => x.data.text === 'Not muted for Cy')), 'Cy got nothing');
+  expect((await call(bo, 'PUT', `/dms/${ana.id}/settings`, { mute: 'off' })).data.mutedUntil === null, 'unmute');
+  expect((await emit(anaSock, 'dm:send', { to: bo.id, body: 'Loud chat again' })).ok, 'send');
+  expect(await waitFor(() => pushesFor(TOKEN_BO, 'message').find((x) => x.data.text === 'Loud chat again')), 'unmuted, Bo got nothing');
+  // Blocked: the message isn't sent, so nothing buzzes.
+  expect((await call(bo, 'POST', `/users/${ana.id}/block`)).status === 200, 'block');
+  const refused = await emit(anaSock, 'dm:send', { to: bo.id, body: 'Blocked message' });
+  expect(!refused.ok, 'a blocked message was sent');
+  await sleep(300);
+  expect(!pushesFor(TOKEN_BO, 'message').some((x) => x.data.text === 'Blocked message'), 'Bo was pushed by someone he blocked');
+  // In a room they share, her messages show, but don't buzz him, mentioning him or not.
+  const mention = await emit(anaSock, 'room:send', { roomId, body: 'Hey @Bo, look', mentions: [{ id: bo.id, offset: 4, length: 3 }] });
+  expect(mention.ok, `room send: ${JSON.stringify(mention)}`);
+  await sleep(500);
+  expect(!pushesFor(TOKEN_BO, 'message').some((x) => x.data.text === 'Hey @Bo, look'), 'Bo was pushed by someone he blocked, in a room');
+  expect((await call(bo, 'DELETE', `/users/${ana.id}/block`)).status === 200, 'unblock');
+});
+
 await check('Replying and marking read from a notification (REST) work like the app', async () => {
   const before = anaSock.events.length;
   const reply = await call(cy, 'POST', `/rooms/${roomId}/messages`, { body: 'In!' });
