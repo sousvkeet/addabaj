@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
 import { postSystemMessage, requireAdmin } from '../services/rooms.js';
-import { cleanPosition, getWatch, playbackFor, publicWatch, saveWatch } from '../services/watch.js';
+import { cleanPosition, getWatch, muteWatch, playbackFor, publicWatch, saveWatch } from '../services/watch.js';
 import { forgetStream } from '../stream/cache.js';
 import { cancelMerge, startMerge } from '../stream/merge.js';
 import { bestFor, findVideos, takeOption } from '../stream/find.js';
@@ -161,6 +161,20 @@ export function registerWatch(socket) {
     if (!current || current.id !== watchId || current.duration || !seconds || seconds > 7 * 24 * 3600) return {};
     await saveWatch(roomId, { ...current, duration: seconds });
     return {};
+  }));
+
+  // An admin turns the video's sound off for everyone in the room, or back on.
+  // It stays off for the videos that follow, and for live streams too, until
+  // an admin turns it back on or stops the video.
+  socket.on('watch:mute', handle(async ({ roomId, muted }) => {
+    await requireAdmin(roomId, user.id);
+    const watch = await muteWatch(roomId, muted ? { by: user.id, byName: user.name } : null);
+    if (!watch) {
+      if (!(await getWatch(roomId))) throw new AppError(409, 'Nothing is playing right now.');
+      return {}; // it already was
+    }
+    await postSystemMessage(roomId, `${user.name} ${muted ? 'muted' : 'unmuted'} the video for everyone`);
+    return { watch };
   }));
 
   socket.on('watch:stop', handle(async ({ roomId }) => {

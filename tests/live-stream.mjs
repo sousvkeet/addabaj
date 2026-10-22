@@ -188,6 +188,36 @@ await check('Asha muting her own speakers doesn’t mute the stream', async () =
   await stage(A.page).getByRole('button', { name: 'Unmute (only for you)' }).click();
 });
 
+await check('Asha mutes the stream for everyone: Rahul’s and Mitali’s players and her own file go quiet; unmuting brings everyone’s own sound back', async () => {
+  const viewer = (u) => u.page.evaluate(() => document.querySelector('[data-live-video]')?.muted);
+  // The file Asha streams plays in a hidden player of its own.
+  const hostFile = () => A.page.evaluate(() => [...document.querySelectorAll('body > video')].map((v) => v.muted));
+  // Asha had turned her own speakers off: that's hers, and stays.
+  await stage(A.page).getByRole('button', { name: 'Mute (only for you)' }).click();
+  await stage(A.page).getByRole('button', { name: 'Mute for everyone', exact: true }).click();
+  await stage(B.page).getByText('Muted for everyone by Asha Sen').waitFor({ timeout: 5000 });
+  await stage(C.page).getByText('Muted for everyone by Asha Sen').waitFor({ timeout: 5000 });
+  await C.page.getByRole('log').getByText('Asha Sen muted the video for everyone').waitFor({ timeout: 5000 });
+  const muted = [await viewer(B), await viewer(C), await hostFile()];
+  if (muted[0] !== true || muted[1] !== true || String(muted[2]) !== 'true') throw new Error(`not muted for everyone: ${JSON.stringify(muted)}`);
+  await C.page.screenshot({ path: `${SHOTS}live-05-muted-phone.png` });
+  // Rahul's own button can't turn it back on; reloading, he comes back to it muted.
+  await stage(B.page).getByRole('button', { name: 'Muted for everyone' }).click();
+  await B.page.getByText(/Only an admin can turn its sound back on/).waitFor();
+  await B.page.reload();
+  await seesStream(B, { sound: false });
+  if ((await viewer(B)) !== true) throw new Error('Rahul came back with sound');
+  await stage(A.page).getByRole('button', { name: 'Unmute for everyone', exact: true }).click();
+  await B.page.getByRole('log').getByText('Asha Sen unmuted the video for everyone').waitFor({ timeout: 5000 });
+  await A.page.waitForTimeout(2500);
+  await seesStream(B);
+  await seesStream(C);
+  const back = [await viewer(B), await viewer(C), await hostFile()];
+  if (back[0] !== false || back[1] !== false || String(back[2]) !== 'true') throw new Error(`the sound did not come back as it was: ${JSON.stringify(back)}`);
+  await stage(A.page).getByRole('button', { name: 'Unmute (only for you)' }).click();
+  if (String(await hostFile()) !== 'false') throw new Error('Asha could not turn her own sound back on');
+});
+
 await check('the stream keeps going while Asha looks at another page; her live bar brings her back', async () => {
   await A.page.getByRole('link', { name: /^Chats/ }).click();
   await A.page.waitForURL(/\/chats/);

@@ -15,6 +15,7 @@ import { Button, IconButton } from '../ui/Button';
 import { Dialog, Field, inputClass } from '../ui/Dialog';
 import { LiveStage } from './LiveStage';
 import { FileView, YouTubeView, type PlayerAdapter, type UserAction } from './players';
+import { MuteForEveryone, MutedForEveryone, mutedForEveryone } from './RoomSound';
 
 /** Where the video should be right now, from the last shared state. */
 function expected(w: WatchState) {
@@ -136,6 +137,19 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
     [adapter, meId],
   );
 
+  // The sound: off while an admin has it muted for everyone, else as I set it
+  // (an admin can still unmute their own player with its controls). Set
+  // before the player first plays, so a muted room starts without a tap.
+  const roomMuted = !!watch.muted;
+  useEffect(() => {
+    if (!adapter) return;
+    const silent = roomMuted || muted;
+    // Turning the sound on can make a browser pause a video nobody has tapped
+    // yet (it then asks for a tap): that isn't anyone's control.
+    if (!silent) suppressUntil.current = Math.max(suppressUntil.current, Date.now() + 1500);
+    adapter.setMuted(silent);
+  }, [adapter, roomMuted, muted]);
+
   // Follow every new shared state, and line up as soon as the player is ready.
   useEffect(() => {
     void apply();
@@ -164,7 +178,8 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
         // the timeline (e.g. after buffering, or a seek in YouTube's controls),
         // and only while the host's video is really playing.
         if (w.playing && !adapter.playing()) {
-          if (!pausing.current) void adapter.play();
+          // A browser that wants a tap first (say, as the sound comes back on) gets one.
+          if (!pausing.current) void adapter.play().then((ok) => !ok && setNeedsTap(true));
           return;
         }
         const t = adapter.time();
@@ -215,7 +230,7 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
 
   async function watchAlong() {
     if (!adapter) return;
-    adapter.setMuted(false);
+    adapter.setMuted(!!watchRef.current.muted);
     setMuted(false);
     const ok = await adapter.play();
     setNeedsTap(!ok);
@@ -253,6 +268,8 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
         {/* Members follow the host: block clicks that would pause or seek. */}
         {!isAdmin && <div className="absolute inset-0" aria-hidden />}
 
+        <MutedForEveryone watch={watch} small={docked} />
+
         {needsTap && !error && (
           <button
             type="button"
@@ -275,15 +292,16 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
         {!isAdmin && adapter && !error && !docked && (
           <div className="absolute right-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/55 p-1 pr-2 text-white backdrop-blur-sm">
             <IconButton
-              label={muted ? 'Unmute video' : 'Mute video'}
+              label={roomMuted ? 'Muted for everyone' : muted ? 'Unmute video' : 'Mute video'}
               size={32}
               variant="on-dark"
               onClick={() => {
+                if (roomMuted) return mutedForEveryone(watch);
                 adapter.setMuted(!muted);
                 setMuted(!muted);
               }}
             >
-              {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+              {roomMuted || muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
             </IconButton>
             <input
               type="range"
@@ -291,7 +309,8 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
               min={0}
               max={1}
               step={0.05}
-              value={muted ? 0 : volume}
+              value={roomMuted || muted ? 0 : volume}
+              disabled={roomMuted}
               onChange={(e) => {
                 const v = Number(e.target.value);
                 adapter.setVolume(v);
@@ -308,9 +327,10 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
         )}
       </div>
 
-      <div hidden={docked} className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
+      <div hidden={docked} className="@container flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
         <MonitorPlay size={18} className="shrink-0 text-live" aria-hidden />
-        <div className="min-w-0 flex-1">
+        {/* Room to read the title: on a phone, an admin's buttons go under it. */}
+        <div className="min-w-0 flex-1 basis-48">
           <p className="truncate text-[14.5px]">
             <span className="font-semibold">{watch.source.title}</span>
             {watch.source.detail && <span className="ml-2 text-on-brand/60">{watch.source.detail}</span>}
@@ -324,7 +344,8 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
           </p>
         </div>
         {isAdmin && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <MuteForEveryone roomId={room.id} watch={watch} />
             <Button size="sm" variant="on-dark" onClick={onChange}>
               Change video
             </Button>

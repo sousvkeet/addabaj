@@ -222,8 +222,8 @@ export async function roomDetail(roomId, userId) {
     })),
     invites,
     voice: voice.participants(roomId),
-    ...(await one('SELECT watch, watch_queue FROM rooms WHERE id = $1', [roomId]).then((r) => ({
-      watch: publicWatch(r?.watch ?? null),
+    ...(await one('SELECT watch, watch_queue, watch_muted FROM rooms WHERE id = $1', [roomId]).then((r) => ({
+      watch: publicWatch(r?.watch ?? null, r?.watch_muted),
       queue: publicQueue(r?.watch_queue),
     }))),
   };

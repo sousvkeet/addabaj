@@ -207,6 +207,8 @@ export type WatchState = {
   byName: string;
   /** How long it is (seconds), once known: Up next moves on at its end. */
   duration?: number | null;
+  /** An admin turned the sound off for everyone, until an admin turns it back on. */
+  muted?: { by: string; byName: string } | null;
 };
 
 export type RoomSummary = {

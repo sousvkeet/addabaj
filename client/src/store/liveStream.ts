@@ -5,6 +5,7 @@ import { inApp } from '../lib/native';
 import { emitAck, socket } from '../lib/socket';
 import { probeSound, SoundFix, type LocalOutput } from '../lib/soundFix';
 import { onLogout, useAuth } from './auth';
+import { useChat } from './chat';
 import { canPickSpeaker, chosen, onDeviceChoice } from './devices';
 import { toast } from './ui';
 
@@ -140,6 +141,8 @@ const hostPeers = new Map<string, { pc: RTCPeerConnection; queue: CandidateQueue
 let reportTimer = 0;
 let anchorTimer = 0;
 let lastReport = { playing: false, position: 0, at: 0 };
+/** An admin muted the room's video for everyone: the host doesn't hear the file either (see followRoomSound). */
+let roomMuted = false;
 
 // ── Viewer resources ──
 let viewerPc: RTCPeerConnection | null = null;
@@ -369,7 +372,8 @@ export const useLiveStream = create<LiveState>()((set, get) => {
                     time: source.currentTime,
                     duration: Number.isFinite(source.duration) ? source.duration : s.host.duration,
                     volume: localOutput()?.volume ?? source.volume,
-                    muted: localOutput()?.muted ?? source.muted,
+                    // The host's own mute, not the room's.
+                    muted: roomMuted ? s.host.muted : (localOutput()?.muted ?? source.muted),
                   },
                 }
               : s,
@@ -443,13 +447,13 @@ export const useLiveStream = create<LiveState>()((set, get) => {
       const out = localOutput();
       if (!out) return;
       out.volume = volume;
-      out.muted = volume === 0;
+      out.muted = volume === 0 || roomMuted;
       set((s) => (s.host ? { host: { ...s.host, volume, muted: volume === 0 } } : s));
     },
     setMuted: (muted) => {
       const out = localOutput();
       if (!out) return;
-      out.muted = muted;
+      out.muted = muted || roomMuted;
       set((s) => (s.host ? { host: { ...s.host, muted } } : s));
     },
 
@@ -630,6 +634,20 @@ window.addEventListener('pagehide', () => {
 onDeviceChoice((kind) => {
   if (kind === 'audiooutput') toChosenSpeaker(localOutput());
 });
+
+// An admin can mute the room's video for everyone, the host included: then
+// the host doesn't hear the file either, and their own mute comes back after.
+// (Viewers still get its sound, for when it's turned back on.)
+function followRoomSound() {
+  const host = useLiveStream.getState().host;
+  const muted = !!host && !!useChat.getState().roomDetails[host.roomId]?.watch?.muted;
+  if (muted === roomMuted) return;
+  roomMuted = muted;
+  const out = localOutput();
+  if (out && host) out.muted = muted || host.muted;
+}
+useChat.subscribe(followRoomSound);
+useLiveStream.subscribe(followRoomSound);
 
 onLogout(() => {
   if (useLiveStream.getState().host) void useLiveStream.getState().stop();

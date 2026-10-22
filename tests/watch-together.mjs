@@ -395,6 +395,70 @@ await check('in the app the sound goes on out of sight (the phone pauses the pic
   }
 });
 
+/** The room's video on this page: whether it's muted and playing, and what it plays. */
+const audio = (p) =>
+  p.evaluate(() => {
+    const v = document.querySelector('video[data-watch-video]');
+    return v && { muted: v.muted, paused: v.paused, src: v.currentSrc };
+  });
+
+await check('an admin mutes the video for everyone: every player goes quiet, a member can’t undo it, it stays for the next video, and unmuting brings back everyone’s own sound', async () => {
+  const everyone = [A.page, B.page, C.page];
+  await playClip(everyone);
+  const stageOf = (p) => p.getByRole('region', { name: 'Watch together' });
+  // Rahul turned his own sound off before: that's his, and stays.
+  await stageOf(B.page).getByRole('button', { name: 'Mute video' }).click();
+  await stageOf(A.page).getByRole('button', { name: 'Mute for everyone', exact: true }).click();
+  await waitFor(async () => {
+    const all = await Promise.all(everyone.map(audio));
+    return { ok: all.every((v) => v?.muted && !v.paused), all };
+  }, 5000, 'not muted for everyone');
+  await stageOf(C.page).getByText('Muted for everyone by Asha Host').waitFor();
+  await C.page.getByRole('log').getByText('Asha Host muted the video for everyone').waitFor({ timeout: 5000 });
+  await C.page.screenshot({ path: `${SHOTS}watch-7-muted-phone.png` });
+  // A member can't turn it back on: not with their player's button, nor by asking the server.
+  await stageOf(C.page).getByRole('button', { name: 'Muted for everyone' }).click();
+  await C.page.getByText(/Only an admin can turn its sound back on/).waitFor();
+  const s = await socketOf(C);
+  const refused = await s.timeout(5000).emitWithAck('watch:mute', { roomId, muted: false });
+  s.close();
+  if (refused.ok !== false || !/admins/.test(refused.error)) throw new Error(JSON.stringify(refused));
+  if (!(await audio(C.page)).muted) throw new Error('a member turned the sound back on');
+  // The next video is muted too, also for someone opening the room now (a muted video needs no tap).
+  const a = await socketOf(A);
+  const next = await a.timeout(30000).emitWithAck('watch:set', { roomId, url: CLIP2 });
+  a.close();
+  if (!next.ok) throw new Error(next.error);
+  await C.page.reload();
+  const r = await waitFor(async () => {
+    const all = await Promise.all(everyone.map(audio));
+    return { ok: all.every((v) => v?.src.includes('tone-60s') && v.muted && !v.paused), all };
+  }, 15000, 'the next video was not muted for everyone');
+  if (await C.page.getByRole('button', { name: 'Click to watch along' }).isVisible()) throw new Error('a muted video asked for a tap');
+  // Back on: everyone hears it again, except Rahul, who had turned his own sound off.
+  await stageOf(A.page).getByRole('button', { name: 'Unmute for everyone', exact: true }).click();
+  await B.page.getByRole('log').getByText('Asha Host unmuted the video for everyone').waitFor({ timeout: 5000 });
+  // Mitali hasn't touched the page since it loaded: her browser may want a tap for sound.
+  await C.page.waitForTimeout(2500);
+  if (await watchAlong(C.page)) console.log('     (Mitali’s browser wanted a tap for the sound)');
+  const back = await waitFor(async () => {
+    const [a2, b2, c2] = await Promise.all(everyone.map(audio));
+    return { ok: !a2.muted && b2.muted && !c2.muted && !a2.paused && !b2.paused && !c2.paused, a2, b2, c2 };
+  }, 8000, 'the sound did not come back as it was');
+  await stageOf(B.page).getByRole('button', { name: 'Unmute video' }).click();
+  if ((await audio(B.page)).muted) throw new Error('Rahul could not turn his own sound back on');
+  console.log(`     muted at ${JSON.stringify(r.all.map((v) => v.muted))}, then ${JSON.stringify([back.a2, back.b2, back.c2].map((v) => v.muted))}`);
+  // Stopping ends it: the next video plays with sound.
+  const a3 = await socketOf(A);
+  await a3.timeout(5000).emitWithAck('watch:mute', { roomId, muted: true });
+  await a3.timeout(5000).emitWithAck('watch:stop', { roomId });
+  await a3.timeout(30000).emitWithAck('watch:set', { roomId, url: CLIP });
+  a3.close();
+  const cookie = (await B.ctx.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+  const { room } = await (await fetch(`${API}/api/rooms/${roomId}`, { headers: { cookie } })).json();
+  if (room.watch?.muted !== null) throw new Error(`still muted after a stop: ${JSON.stringify(room.watch?.muted)}`);
+});
+
 const playingSrc = (p) => p.evaluate(() => document.querySelector('video[data-watch-video]')?.currentSrc ?? '');
 
 await check('Up next: an admin queues a video, everyone sees it, and it plays by itself when the current one ends', async () => {

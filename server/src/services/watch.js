@@ -113,11 +113,14 @@ export function cleanPosition(value) {
   return Math.min(n, MAX_POSITION);
 }
 
-/** The watch state as members may see it (without the private relay details). */
-export function publicWatch(watch) {
+/**
+ * The watch state as members may see it (without the private relay details),
+ * with the room's mute when given (see muteWatch).
+ */
+export function publicWatch(watch, muted) {
   if (!watch) return null;
   const { stream: _private, ...rest } = watch;
-  return rest;
+  return muted === undefined ? rest : { ...rest, muted: muted ?? null };
 }
 
 /** Up next as members may see it (not the links or choices behind each video). */
@@ -145,7 +148,28 @@ export function onWatchSaved(fn) {
 }
 
 export async function saveWatch(roomId, watch) {
-  await one('UPDATE rooms SET watch = $2 WHERE id = $1 RETURNING id', [roomId, watch]);
-  getIO()?.to(roomChannel(roomId)).emit('watch:state', { roomId, watch: publicWatch(watch) });
+  // A mute for everyone holds for the videos that follow, and ends when the video stops.
+  const row = await one(
+    'UPDATE rooms SET watch = $2, watch_muted = CASE WHEN $2::jsonb IS NULL THEN NULL ELSE watch_muted END WHERE id = $1 RETURNING watch_muted',
+    [roomId, watch],
+  );
+  getIO()?.to(roomChannel(roomId)).emit('watch:state', { roomId, watch: publicWatch(watch, row?.watch_muted) });
   saved(roomId, watch);
+}
+
+/**
+ * Turns the video's sound off for everyone in the room (`mute`: the admin
+ * who did, { by, byName }) or back on (null). Kept apart from the playback
+ * state, so a play or seek at the same moment can't undo it. The new state;
+ * null when nothing is playing or it already was that way.
+ */
+export async function muteWatch(roomId, mute) {
+  const row = await one(
+    'UPDATE rooms SET watch_muted = $2 WHERE id = $1 AND watch IS NOT NULL AND (watch_muted IS NULL) = $3 RETURNING watch',
+    [roomId, mute, !!mute],
+  );
+  if (!row) return null;
+  const watch = publicWatch(row.watch, mute);
+  getIO()?.to(roomChannel(roomId)).emit('watch:state', { roomId, watch });
+  return watch;
 }

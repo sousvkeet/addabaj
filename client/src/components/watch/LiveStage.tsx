@@ -11,6 +11,7 @@ import { canPickSpeaker, useDevices } from '../../store/devices';
 import { useLiveStream, type HostSession } from '../../store/liveStream';
 import { toast } from '../../store/ui';
 import { Button, IconButton } from '../ui/Button';
+import { MuteForEveryone, MutedForEveryone, mutedForEveryone } from './RoomSound';
 
 /** Where the host's file is now, from the last shared state. */
 const positionOf = (w: WatchState) => (w.playing ? w.position + Math.max(0, serverNow() - w.at) / 1000 : w.position);
@@ -44,17 +45,19 @@ export function LiveStage({ room, onChange, docked = false }: { room: RoomDetail
   return (
     <section aria-label="Live stream" className={docked ? 'size-full bg-black' : 'shrink-0 border-b border-line bg-black'}>
       <div ref={frame} className={docked ? 'relative size-full bg-black' : 'relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black'}>
-        {mine ? <HostView host={host} frame={frame} /> : <ViewerView key={device.sessionId} room={room} watch={watch} frame={frame} docked={docked} />}
+        {mine ? <HostView host={host} watch={watch} frame={frame} /> : <ViewerView key={device.sessionId} room={room} watch={watch} frame={frame} docked={docked} />}
         <span className="pointer-events-none absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[12px] font-bold tracking-wide text-white">
           <span className="rec-dot size-2 rounded-full bg-danger" aria-hidden />
           LIVE
           <span className="font-semibold opacity-80">· {mine ? `${watching} watching` : device.hostName}</span>
         </span>
+        <MutedForEveryone watch={watch} small={docked} className={docked ? 'top-2 right-2' : 'top-10 left-2'} />
       </div>
 
-      <div hidden={docked} className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
+      <div hidden={docked} className="@container flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
         <Radio size={18} className="shrink-0 text-live" aria-hidden />
-        <div className="min-w-0 flex-1">
+        {/* Room to read the title: on a phone, an admin's buttons go under it. */}
+        <div className="min-w-0 flex-1 basis-48">
           <p className="truncate text-[14.5px]">
             <span className="font-semibold">{watch.source.title}</span>
             {watch.source.detail && <span className="ml-2 text-on-brand/60">{watch.source.detail}</span>}
@@ -68,12 +71,16 @@ export function LiveStage({ room, onChange, docked = false }: { room: RoomDetail
           </p>
         </div>
         {mine ? (
-          <Button size="sm" variant="danger" onClick={() => void useLiveStream.getState().stop()}>
-            Stop streaming
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <MuteForEveryone roomId={room.id} watch={watch} />
+            <Button size="sm" variant="danger" onClick={() => void useLiveStream.getState().stop()}>
+              Stop streaming
+            </Button>
+          </div>
         ) : (
           isAdmin && (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <MuteForEveryone roomId={room.id} watch={watch} />
               <Button size="sm" variant="on-dark" onClick={onChange}>
                 Change video
               </Button>
@@ -101,10 +108,12 @@ const fullscreen = (frame: RefObject<HTMLDivElement | null>) => void frame.curre
 
 // ── The host ─────────────────────────────────────────────────────────
 
-function HostView({ host, frame }: { host: HostSession; frame: RefObject<HTMLDivElement | null> }) {
+function HostView({ host, watch, frame }: { host: HostSession; watch: WatchState; frame: RefObject<HTMLDivElement | null> }) {
   const preview = useRef<HTMLVideoElement>(null);
   const live = useLiveStream.getState();
   const hasVideo = host.preview.getVideoTracks().length > 0;
+  // While it's muted for everyone, the file is muted here too (see liveStream's followRoomSound).
+  const roomMuted = !!watch.muted;
 
   useEffect(() => {
     const el = preview.current;
@@ -155,8 +164,13 @@ function HostView({ host, frame }: { host: HostSession; frame: RefObject<HTMLDiv
             onChange={(e) => live.seek(Number(e.target.value))}
             className="min-w-0 flex-1 accent-[var(--live)]"
           />
-          <IconButton label={host.muted ? 'Unmute (only for you)' : 'Mute (only for you)'} size={32} variant="on-dark" onClick={() => live.setMuted(!host.muted)}>
-            {host.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          <IconButton
+            label={roomMuted ? 'Muted for everyone' : host.muted ? 'Unmute (only for you)' : 'Mute (only for you)'}
+            size={32}
+            variant="on-dark"
+            onClick={() => (roomMuted ? mutedForEveryone(watch, true) : live.setMuted(!host.muted))}
+          >
+            {roomMuted || host.muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </IconButton>
           <input
             type="range"
@@ -164,7 +178,8 @@ function HostView({ host, frame }: { host: HostSession; frame: RefObject<HTMLDiv
             min={0}
             max={1}
             step={0.05}
-            value={host.muted ? 0 : host.volume}
+            value={roomMuted || host.muted ? 0 : host.volume}
+            disabled={roomMuted}
             onChange={(e) => live.setVolume(Number(e.target.value))}
             className="hidden w-16 accent-[var(--live)] sm:block"
           />
@@ -208,6 +223,18 @@ function ViewerView({ room, watch, frame, docked }: { room: RoomDetail; watch: W
     return () => useLiveStream.getState().unwatch();
   }, [room.id, device.sessionId]);
 
+  // The sound: off while an admin has it muted for everyone, else as I set it.
+  // (Set before the stream first plays, so a muted room starts without a tap.)
+  const roomMuted = !!watch.muted;
+  useEffect(() => {
+    const el = video.current;
+    if (!el) return;
+    const playing = !el.paused;
+    el.muted = roomMuted || muted;
+    // Turning the sound on can make the browser stop a stream nobody has tapped yet.
+    if (playing && el.paused) setNeedsTap(true);
+  }, [roomMuted, muted]);
+
   useEffect(() => {
     const el = video.current;
     if (!el || !stream) return;
@@ -229,7 +256,7 @@ function ViewerView({ room, watch, frame, docked }: { room: RoomDetail; watch: W
     unlockAudio();
     const el = video.current;
     if (!el) return;
-    el.muted = false;
+    el.muted = roomMuted;
     setMuted(false);
     try {
       await el.play();
@@ -310,15 +337,16 @@ function ViewerView({ room, watch, frame, docked }: { room: RoomDetail; watch: W
             <span className="flex-1" />
           )}
           <IconButton
-            label={muted ? 'Unmute' : 'Mute'}
+            label={roomMuted ? 'Muted for everyone' : muted ? 'Unmute' : 'Mute'}
             size={32}
             variant="on-dark"
             onClick={() => {
+              if (roomMuted) return mutedForEveryone(watch, room.myRole === 'admin');
               if (video.current) video.current.muted = !muted;
               setMuted(!muted);
             }}
           >
-            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            {roomMuted || muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </IconButton>
           <input
             type="range"
@@ -326,7 +354,8 @@ function ViewerView({ room, watch, frame, docked }: { room: RoomDetail; watch: W
             min={0}
             max={1}
             step={0.05}
-            value={muted ? 0 : volume}
+            value={roomMuted || muted ? 0 : volume}
+            disabled={roomMuted}
             onChange={(e) => {
               const v = Number(e.target.value);
               if (video.current) {

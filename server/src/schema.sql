@@ -264,3 +264,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS room_messages_client_idx ON room_messages (sen
 -- Watch together's Up next: videos an admin queued to play after the current
 -- one; the server moves on by itself when a video ends (see socket/queue.js).
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS watch_queue jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+-- Watch together: an admin turned the video's sound off for everyone in the
+-- room ({ by, byName }), until an admin turns it back on or the video stops.
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS watch_muted jsonb;
