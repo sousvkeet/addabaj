@@ -68,4 +68,8 @@
     <string name="fsi_text">To show incoming calls on the full screen, even when your phone is locked, allow Adda Khana to use full-screen notifications.</string>
     <string name="fsi_allow">Allow</string>
     <string name="not_now">Not now</string>
+    <!-- The picture-in-picture window's buttons during a video call. -->
+    <string name="pip_mute">Mute</string>
+    <string name="pip_unmute">Unmute</string>
+    <string name="pip_hang_up">Hang up</string>
 </resources>

@@ -33,6 +33,8 @@ import org.json.JSONObject;
 public class CallService extends Service {
     static final String ACTION_UPDATE = "com.addakhana.app.CALL_UPDATE";
     static final String ACTION_HANGUP = "com.addakhana.app.CALL_HANGUP";
+    /** Mute or unmute (the picture-in-picture window's button). */
+    static final String ACTION_MUTE = "com.addakhana.app.CALL_MUTE";
     static final String ACTION_STOP = "com.addakhana.app.CALL_STOP";
     static final int ID = 5;
 
@@ -103,12 +105,22 @@ public class CallService extends Service {
         instance = this;
     }
 
+    /** Hang up or mute, from a notification's button or the picture-in-picture window's. */
+    static PendingIntent action(Context c, String action) {
+        return PendingIntent.getService(c, ACTION_MUTE.equals(action) ? 72 : 71, new Intent(c, CallService.class).setAction(action),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         String action = intent == null ? ACTION_STOP : intent.getAction();
         if (ACTION_HANGUP.equals(action)) {
             // The page ends it and then reports "none", which stops this service.
             if (!MainActivity.send(Push.event("hangup"))) stop(startId);
+            return START_NOT_STICKY;
+        }
+        if (ACTION_MUTE.equals(action)) {
+            MainActivity.send(Push.event("mute"));
             return START_NOT_STICKY;
         }
         if (!ACTION_UPDATE.equals(action)) {
@@ -177,8 +189,7 @@ public class CallService extends Service {
         boolean video = session.optBoolean("video");
         long startedAt = session.optLong("startedAt", 0);
         PendingIntent open = Notifications.open(this, null, 70);
-        PendingIntent hangup = PendingIntent.getService(this, 71, new Intent(this, CallService.class).setAction(ACTION_HANGUP),
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        PendingIntent hangup = action(this, ACTION_HANGUP);
 
         NotificationCompat.Builder b = new NotificationCompat.Builder(this, AddaApp.CH_ONGOING)
                 .setColor(Notifications.BRAND)

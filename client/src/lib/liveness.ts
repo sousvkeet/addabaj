@@ -48,6 +48,8 @@ export function watchConnection(isAuthed: () => boolean) {
   const returning = () => void checkConnection(isAuthed, true);
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && returning());
   window.addEventListener('online', returning);
+  // Switched networks (Wi-Fi to mobile data, or back): the old line is probably dead, so check it now.
+  (navigator as { connection?: EventTarget }).connection?.addEventListener?.('change', returning);
   // The phone says the network is gone: drop the line now rather than wait for
   // the heartbeat to notice, so nothing seems sent that wasn't.
   window.addEventListener('offline', () => socket.connected && socket.io.engine?.close());

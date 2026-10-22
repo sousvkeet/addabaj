@@ -2,6 +2,9 @@
 // and relays WebRTC offers, answers and ICE candidates between the two sockets.
 // Someone whose app is closed or in the background is rung on their phone
 // (a push notification); their app joins the call when they answer there.
+// A dropped connection (mobile data to Wi-Fi, a tunnel) doesn't end the call:
+// it waits for them (the other side sees them reconnecting), and carries on
+// on their new connection (call:resume), as in other messengers.
 import { randomUUID } from 'node:crypto';
 import { one } from '../db.js';
 import { AppError, isUuid } from '../errors.js';
@@ -18,6 +21,10 @@ const RING_TIMEOUT_MS = 35_000;
 const PHONE_RING_TIMEOUT_MS = 45_000;
 // Answered, but the caller's app never connected (it hung up as it was placed, or went away).
 const CONNECT_TIMEOUT_MS = 30_000;
+// How long a call waits for someone whose connection dropped.
+const AWAY_MS = 45_000;
+// How long a ring waits for a callee whose app went offline (back on another network soon, or gone).
+const RINGING_AWAY_MS = 10_000;
 // Ringing someone's phone is loud: 5 calls a minute per caller.
 const canCall = rateLimiter(5, 60_000);
 const active = new Map(); // callId -> call
@@ -48,6 +55,8 @@ async function recordCall(call, outcome) {
 function finish(call, reason) {
   if (!active.has(call.id)) return;
   clearTimeout(call.timer);
+  clearTimeout(call.away?.caller);
+  clearTimeout(call.away?.callee);
   active.delete(call.id);
   if (userCall.get(call.callerId) === call.id) userCall.delete(call.callerId);
   if (userCall.get(call.calleeId) === call.id) userCall.delete(call.calleeId);
@@ -144,6 +153,26 @@ export const calls = {
       return {};
     }));
 
+    // Back on a new connection after the last one dropped (`from` is its id).
+    // Ringing here: the new connection rings on (see handleConnect). In the
+    // call: it goes on here, and the other side hears they're back (the
+    // caller then finds the media a new path). `answered`: while they were away.
+    socket.on('call:resume', handle(async ({ callId, from }) => {
+      const call = getCall(callId);
+      const side = call.callerId === userId ? 'caller' : 'callee';
+      if (side === 'callee' && !call.calleeSocket) return { ringing: true };
+      const key = side === 'caller' ? 'callerSocket' : 'calleeSocket';
+      if (call[key] !== from && call[key] !== socket.id) throw new AppError(409, 'The call went on on another device.');
+      clearTimeout(call.away?.[side]);
+      if (call.away) call.away[side] = null;
+      call[key] = socket.id;
+      // The old connection is dead (the server just may not have noticed yet).
+      if (from && from !== socket.id) io.sockets.sockets.get(from)?.disconnect(true);
+      const other = otherSocket(call, socket.id);
+      if (other) io.to(other).emit('call:peer-back', { callId });
+      return { answered: !!call.calleeSocket, video: !!call.video };
+    }));
+
     socket.on('call:signal', ({ callId, data } = {}) => {
       const call = active.get(callId);
       const target = call && otherSocket(call, socket.id);
@@ -188,11 +217,20 @@ export const calls = {
     const userId = socket.data.userId;
     const call = active.get(userCall.get(userId));
     if (!call) return;
-    if (socket.id === call.callerSocket || socket.id === call.calleeSocket) {
-      finish(call, call.startedAt ? 'dropped' : 'cancelled');
-    } else if (!call.calleeSocket && call.calleeId === userId && !presence.isOnline(userId) && !call.pushed) {
-      // (A phone that was rung keeps ringing: its app may just be asleep.)
-      finish(call, 'missed');
+    const side = socket.id === call.callerSocket ? 'caller' : socket.id === call.calleeSocket ? 'callee' : null;
+    if (side) {
+      // In the call (or calling): it waits for them to come back on a new connection.
+      call.away ??= {};
+      clearTimeout(call.away[side]);
+      call.away[side] = setTimeout(() => finish(call, call.startedAt ? 'dropped' : 'cancelled'), AWAY_MS);
+      const other = side === 'caller' ? call.calleeSocket : call.callerSocket;
+      if (other) getIO()?.to(other).emit('call:peer-away', { callId: call.id });
+    } else if (!call.calleeSocket && call.calleeId === userId && !call.pushed) {
+      // Rung here, and offline now: missed, unless they're back in a moment (a
+      // network change). (A phone that was rung keeps ringing: its app may just be asleep.)
+      setTimeout(() => {
+        if (active.get(call.id) === call && !call.calleeSocket && !presence.isOnline(userId)) finish(call, 'missed');
+      }, RINGING_AWAY_MS);
     }
   },
 };

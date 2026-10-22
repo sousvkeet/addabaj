@@ -34,7 +34,11 @@
     "test:mentions": "node tests/mentions.mjs",
     "test:messages": "node tests/messages.mjs",
     "test:chats": "node tests/chats.mjs",
-    "test:safety": "node tests/safety.mjs"
+    "test:safety": "node tests/safety.mjs",
+    "test:permissions": "node tests/permissions.mjs",
+    "test:incall": "node tests/in-call.mjs",
+    "test:network": "node tests/network.mjs",
+    "test:pip": "node tests/pip.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

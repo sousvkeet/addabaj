@@ -2,6 +2,18 @@ import { io, type Socket } from 'socket.io-client';
 
 export const socket: Socket = io({ autoConnect: false, withCredentials: true, transports: ['websocket', 'polling'] });
 
+// The connection before this one: a call or a voice seat carries on from it on
+// the new one (the server checks it was really ours). Set before anything else
+// hears about the new connection.
+let currentId: string | null = null;
+let previousId: string | null = null;
+socket.on('connect', () => {
+  previousId = currentId;
+  currentId = socket.id ?? null;
+});
+/** The id of the connection that dropped before this one (null on the first). */
+export const droppedSocketId = () => previousId;
+
 type Ack<T> = ({ ok: true } & T) | { ok: false; error: string };
 
 /**

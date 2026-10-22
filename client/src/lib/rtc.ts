@@ -172,16 +172,34 @@ export function watchLevel(stream: MediaStream, onLevel: (level: number) => void
   };
 }
 
-/** Holds ICE candidates that arrive before the remote description is set. */
+/** Holds ICE candidates that arrive before their description is set: the first one, or an ICE restart's. */
 export class CandidateQueue {
   private queue: RTCIceCandidateInit[] = [];
   constructor(private pc: RTCPeerConnection) {}
-  async add(candidate: RTCIceCandidateInit) {
-    if (this.pc.remoteDescription) await this.pc.addIceCandidate(candidate).catch(() => {});
-    else this.queue.push(candidate);
+  /** The other side's current ICE credentials (an ICE restart changes them). */
+  private ufrag() {
+    return /a=ice-ufrag:(\S+)/.exec(this.pc.remoteDescription?.sdp ?? '')?.[1] ?? null;
   }
+  /** For a description that isn't in place yet: before the first, or a restart's still on its way. */
+  private early(c: RTCIceCandidateInit) {
+    const ufrag = this.ufrag();
+    return !this.pc.remoteDescription || (!!c.usernameFragment && !!ufrag && c.usernameFragment !== ufrag);
+  }
+  async add(candidate: RTCIceCandidateInit) {
+    if (this.early(candidate)) {
+      // Kept for the description they belong to (a few: older sessions' never match).
+      this.queue.push(candidate);
+      if (this.queue.length > 60) this.queue.shift();
+    } else {
+      await this.pc.addIceCandidate(candidate).catch(() => {});
+    }
+  }
+  /** After a new description from the other side: whatever was waiting for it. */
   async flush() {
     const items = this.queue.splice(0);
-    for (const c of items) await this.pc.addIceCandidate(c).catch(() => {});
+    for (const c of items) {
+      if (this.early(c)) this.queue.push(c);
+      else await this.pc.addIceCandidate(c).catch(() => {});
+    }
   }
 }

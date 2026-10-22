@@ -3,22 +3,46 @@
 // live stream, a room's video) so it can keep it going in the background, and
 // acts on what the person did in the app's notifications and call screen.
 import { api } from './lib/api';
-import { inApp, nativeReady, nativeRinging, nativeSession, nativeUser, onNative, pushToken, setNativeAnswer, type Session } from './lib/native';
+import { inApp, nativeReady, nativeRinging, nativeSession, nativeUser, onNative, pushToken, setNativeAnswer, type Pip, type Session } from './lib/native';
 import { startTone } from './lib/sounds';
 import { socket } from './lib/socket';
+import { onVideoSize, videoSize } from './lib/videoSize';
 import { beforeLogout, onLogout, useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
 import { useLiveStream } from './store/liveStream';
+import { usePermissions } from './store/permissions';
+import { usePip } from './store/pip';
 import { useVoice } from './store/voice';
 import { useWatching } from './store/watching';
 
 let voiceSince = 0;
 let liveSince = 0;
 
+const SHAPES: Pip[] = [
+  { w: 9, h: 16 },
+  { w: 3, h: 4 },
+  { w: 1, h: 1 },
+  { w: 4, h: 3 },
+  { w: 16, h: 9 },
+];
+
+/** The picture-in-picture window's shape for a video: the nearest common one (portrait 3:4 until its picture says). */
+function pipShape(stream: MediaStream | null | undefined): Pip {
+  // A remote camera's size is known once its picture is decoded; my own camera's track says.
+  const decoded = stream ? videoSize(stream) : undefined;
+  const settings = stream?.getVideoTracks()[0]?.getSettings();
+  const width = decoded?.w ?? settings?.width;
+  const height = decoded?.h ?? settings?.height;
+  if (!width || !height) return SHAPES[1];
+  const ratio = Math.log(width / height);
+  return SHAPES.reduce((a, b) => (Math.abs(Math.log(b.w / b.h) - ratio) < Math.abs(Math.log(a.w / a.h) - ratio) ? b : a));
+}
+
 function currentSession(): Session {
   const call = useCall.getState();
   if (call.phase !== 'idle' && call.peer) {
+    const video = call.cameraOn || call.peerCameraOn;
     return {
       kind: 'call',
       phase: call.phase,
@@ -26,15 +50,28 @@ function currentSession(): Session {
       name: call.peer.name,
       hue: call.peer.hue,
       photo: call.peer.photo ?? null,
-      video: call.cameraOn || call.peerCameraOn,
+      video,
       startedAt: call.startedAt,
+      muted: call.muted,
+      // A video call shrinks into Android's picture-in-picture when you leave the app.
+      ...(video && call.phase !== 'incoming' ? { pip: pipShape(call.peerCameraOn ? call.remoteStream : call.localVideo) } : {}),
     };
   }
-  const rooms = useChat.getState().rooms;
+  const chat = useChat.getState();
+  const rooms = chat.rooms;
   const voice = useVoice.getState();
   if (voice.roomId && voice.status !== 'idle') {
     voiceSince ||= Date.now();
-    return { kind: 'voice', roomId: voice.roomId, name: rooms[voice.roomId]?.name ?? 'Room', startedAt: voiceSince, video: voice.cameraOn };
+    const cameras = voice.cameraOn || (chat.voice[voice.roomId] ?? []).some((p) => p.camera);
+    return {
+      kind: 'voice',
+      roomId: voice.roomId,
+      name: rooms[voice.roomId]?.name ?? 'Room',
+      startedAt: voiceSince,
+      video: voice.cameraOn,
+      muted: voice.muted,
+      ...(cameras && voice.status === 'live' ? { pip: { w: 3, h: 4 } } : {}),
+    };
   }
   voiceSince = 0;
   const host = useLiveStream.getState().host;
@@ -158,6 +195,20 @@ export function bindNative() {
       case 'sight':
         sight(e.visible);
         break;
+      case 'pip':
+        usePip.setState({ native: !!e.on });
+        break;
+      case 'mute': {
+        // The picture-in-picture window's mute button: the call, or room voice.
+        const call = useCall.getState();
+        if (call.phase !== 'idle' && call.phase !== 'incoming') call.toggleMute();
+        else if (useVoice.getState().status === 'live') useVoice.getState().toggleMute();
+        break;
+      }
+      case 'permissions':
+        // After Android's prompt, or back from the phone's settings.
+        if (e.state && typeof e.state === 'object') usePermissions.getState().set(e.state);
+        break;
       case 'open':
         // Only this site's own pages.
         if (typeof e.path !== 'string' || !e.path.startsWith('/') || e.path.startsWith('//')) break;
@@ -180,8 +231,10 @@ export function bindNative() {
   useLiveStream.subscribe(sync);
   useWatching.subscribe(sync);
   useChat.subscribe((s, prev) => {
-    if (s.rooms !== prev.rooms || s.roomDetails !== prev.roomDetails) sync();
+    if (s.rooms !== prev.rooms || s.roomDetails !== prev.roomDetails || s.voice !== prev.voice) sync();
   });
+  // The other person's picture changed shape (they turned their phone): so does the floating window.
+  onVideoSize(sync);
 
   nativeReady();
 }

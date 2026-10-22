@@ -13,6 +13,8 @@ import { ChangePasswordDialog } from '../components/ChangePasswordDialog';
 import { useAuth } from '../store/auth';
 import { AudioSinks, CallStage, IncomingCall, LiveBar, useLive } from '../components/CallUi';
 import { RoomCallStage } from '../components/RoomCall';
+import { CallNotices } from '../components/CallNotices';
+import { CallPip } from '../components/CallPip';
 import { DeviceSettings } from '../components/DeviceSettings';
 import { ConnectionNotice } from '../components/ConnectionNotice';
 import { WatchDock } from '../components/watch/WatchDock';
@@ -78,6 +80,8 @@ export function AppShell() {
       <WatchDock />
       <CallStage />
       <RoomCallStage />
+      <CallPip />
+      <CallNotices />
       <IncomingCall />
       <DeviceSettings />
       <ConnectionNotice />

@@ -84,7 +84,7 @@ await check('to someone offline a message shows one tick (sent)', async () => {
   await A.page.goto(`${BASE}/chats/${B.id}`);
   await send(A.page, 'Message Rahul', 'Are you there?');
   await tick(A.page, 'Are you there?', 'Sent').waitFor({ timeout: 8000 });
-  await header(A.page).getByText(/Last seen/).waitFor({ timeout: 8000 });
+  await header(A.page).getByText(/Last seen/).waitFor({ timeout: 15_000 });
 });
 
 await check('when they come online it turns into two ticks (delivered), live', async () => {
@@ -127,7 +127,7 @@ await check('message info shows when it was delivered and read', async () => {
 
 await check('last seen: closing the app shows "Last seen just now", coming back shows "Online"', async () => {
   await B.page.close();
-  await header(A.page).getByText('Last seen just now').waitFor({ timeout: 8000 });
+  await header(A.page).getByText('Last seen just now').waitFor({ timeout: 15_000 });
   await B.open();
   await B.page.goto(`${BASE}/chats/${A.id}`);
   await header(A.page).getByText('Online').waitFor({ timeout: 8000 });
@@ -225,7 +225,7 @@ await check('room members show online / last seen in the panel', async () => {
   await C.page.close();
   const panel = A.page.locator('aside').filter({ hasText: 'Members' });
   await panel.getByText('Online').first().waitFor({ timeout: 8000 });
-  await panel.getByText(/Last seen just now/).waitFor({ timeout: 8000 });
+  await panel.getByText(/Last seen just now/).waitFor({ timeout: 15_000 });
   await C.open();
 });
 

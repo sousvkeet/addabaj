@@ -21,6 +21,9 @@ type Bridge = {
   installUpdate?(url: string, sha256: string): void;
   haptic?(kind: string): void;
   setBackHandled?(handled: boolean): void;
+  permissions?(): string;
+  askPermission?(which: string): void;
+  permissionsSeen?(): void;
 };
 
 /** What the app tells the page (window event "addanative"). */
@@ -34,6 +37,12 @@ export type NativeEvent =
   | { type: 'screen'; state: 'denied' | 'ended' | 'failed' }
   /** The app is out of sight (false) or back (true) while it keeps the page awake; null: as the page sees it. */
   | { type: 'sight'; visible: boolean | null }
+  /** Where the permissions stand now: after Android's prompt, or back from the phone's settings. */
+  | { type: 'permissions'; state: AppPermissions }
+  /** The app went into Android's picture-in-picture (a small window over other apps), or came back out. */
+  | { type: 'pip'; on: boolean }
+  /** Mute (or unmute) from the picture-in-picture window. */
+  | { type: 'mute' }
   | {
       type: 'update';
       state: 'downloading' | 'downloaded' | 'permission' | 'permission-needed' | 'installing' | 'cancelled' | 'failed';
@@ -95,12 +104,30 @@ export function nativeUser(user: { id: string; name: string } | null) {
   bridge?.setUser?.(user ? JSON.stringify({ id: user.id, name: user.name }) : '');
 }
 
+/**
+ * A video call is on: leaving the app turns it into Android's
+ * picture-in-picture window of this shape (width:height), app 1.10.0 on.
+ * `muted` sets that window's mute button.
+ */
+export type Pip = { w: number; h: number };
+
 /** What's running, so the app keeps it going in the background with a notification. */
 export type Session =
   | { kind: 'none' }
-  | { kind: 'call'; phase: string; callId: string | null; name: string; hue: number; photo?: string | null; video: boolean; startedAt: number | null }
+  | {
+      kind: 'call';
+      phase: string;
+      callId: string | null;
+      name: string;
+      hue: number;
+      photo?: string | null;
+      video: boolean;
+      startedAt: number | null;
+      pip?: Pip;
+      muted?: boolean;
+    }
   /** `video`: my camera is on (the app keeps it going in the background). */
-  | { kind: 'voice'; roomId: string; name: string; startedAt: number; video: boolean }
+  | { kind: 'voice'; roomId: string; name: string; startedAt: number; video: boolean; pip?: Pip; muted?: boolean }
   | { kind: 'live'; roomId: string; name: string; mode: string; startedAt: number }
   /** Watching a room's video that can play on out of sight (a file or a live stream; YouTube can't). */
   | { kind: 'watch'; roomId: string; name: string; title: string; paused: boolean };
@@ -136,6 +163,35 @@ export const setNativeAnswer = (callId: string | null) => {
 };
 /** Answered on the call screen already (so the page doesn't ring first). */
 export const nativeAnswering = (callId: string) => answering === callId;
+
+// ── Permissions ───────────────────────────────────────────────────────
+
+/** What the app needs from the phone (app 1.10.0 on; see components/Permissions.tsx). */
+export type PermissionName = 'notifications' | 'microphone' | 'camera' | 'fullScreen' | 'battery';
+/**
+ * granted; ask (Android's own prompt can show); settings (only the phone's
+ * settings can change it now). Missing: not on this version of Android.
+ */
+export type PermissionStatus = 'granted' | 'ask' | 'settings';
+export type AppPermissions = Partial<Record<PermissionName, PermissionStatus>> & {
+  /** The first-run screen was seen already. */
+  seen?: boolean;
+};
+
+/** Where they stand (null: an app without the screen, or a browser). Asking tells the app the page shows its own screen. */
+export function nativePermissions(): AppPermissions | null {
+  try {
+    return bridge?.permissions ? (JSON.parse(bridge.permissions()) as AppPermissions) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Android's prompt for one ('all': each that can still prompt, in turn), or its page in the phone's settings. */
+export const nativeAskPermission = (which: PermissionName | 'all') => bridge?.askPermission?.(which);
+
+/** The first-run screen was seen (continued from, or put off): it doesn't open by itself again. */
+export const nativePermissionsSeen = () => bridge?.permissionsSeen?.();
 
 // ── App updates ───────────────────────────────────────────────────────
 

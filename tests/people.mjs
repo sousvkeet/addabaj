@@ -117,7 +117,8 @@ await check('A first message makes contacts: they see each other online from the
   expect(anaSock.events.some((e) => e.event === 'presence:update' && e.data.userId === bo.id && e.data.online), 'Ana not told Bo is online');
   expect(boSock.events.some((e) => e.event === 'presence:update' && e.data.userId === ana.id && e.data.online), 'Bo not told Ana is online');
   boSock.disconnect();
-  await sleep(500);
+  // (Offline only once they've stayed away a few seconds: a network change doesn't count.)
+  await sleep(7000);
   const off = anaSock.events.find((e) => e.event === 'presence:update' && e.data.userId === bo.id && !e.data.online);
   expect(off && off.data.lastSeenAt, 'Ana not told Bo went offline');
   // Reconnecting: the snapshot has contacts only.

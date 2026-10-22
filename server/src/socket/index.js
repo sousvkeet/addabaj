@@ -17,6 +17,13 @@ import { voice } from './voice.js';
 import { registerWatch } from './watch.js';
 import { registerQueue } from './queue.js';
 
+/**
+ * Someone whose last connection dropped shows as offline only after this:
+ * back on a new one in time (switching from mobile data to Wi-Fi), they were
+ * never offline to their contacts.
+ */
+const OFFLINE_AFTER_MS = 6000;
+
 // Stops reaction, delete and edit floods: 30 per 10 s per person.
 const canReact = rateLimiter(30, 10_000);
 const canDelete = rateLimiter(30, 10_000);
@@ -66,12 +73,15 @@ export function initSocket(io) {
       calls.handleDisconnect(socket);
       voice.handleDisconnect(socket);
       live.handleDisconnect(socket);
-      if (offline) {
-        const row = await one('UPDATE users SET last_seen_at = now() WHERE id = $1 RETURNING last_seen_at', [userId]).catch(() => null);
+      if (!offline) return;
+      const at = new Date();
+      setTimeout(async () => {
+        if (presence.isOnline(userId)) return;
+        const row = await one('UPDATE users SET last_seen_at = $2 WHERE id = $1 RETURNING last_seen_at', [userId, at]).catch(() => null);
         if (!presence.isOnline(userId) && !hidesPresence(userId)) {
-          await tellContacts(userId, { userId, online: false, lastSeenAt: row?.last_seen_at ?? new Date() }).catch(() => {});
+          await tellContacts(userId, { userId, online: false, lastSeenAt: row?.last_seen_at ?? at }).catch(() => {});
         }
-      }
+      }, OFFLINE_AFTER_MS);
     });
 
     socket.join(userChannel(userId));

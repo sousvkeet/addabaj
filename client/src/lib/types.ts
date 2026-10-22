@@ -308,6 +308,8 @@ export type VoiceParticipant = {
   muted: boolean;
   /** Their camera is on (room video). */
   camera?: boolean;
+  /** Their connection dropped (a network change): their seat waits for them. */
+  away?: boolean;
 };
 
 export type RoomDetail = RoomSummary & {

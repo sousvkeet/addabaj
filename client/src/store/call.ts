@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
 import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, stopStream, watchSpeaking } from '../lib/rtc';
-import { emitAck, socket } from '../lib/socket';
+import { droppedSocketId, emitAck, socket } from '../lib/socket';
 import { startTone, stopTone, unlockAudio } from '../lib/sounds';
 import { inApp, nativeAnswering, nativeRinging, pushToken } from '../lib/native';
 import type { User } from '../lib/types';
@@ -47,12 +47,17 @@ type CallState = {
 
   onIncoming: (e: { callId: string; from: Peer; video?: boolean }) => void;
   onAccepted: (e: { callId: string; video?: boolean }) => Promise<void>;
-  onSignal: (e: { callId: string; data: { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit } }) => Promise<void>;
+  onSignal: (e: { callId: string; data: { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; restart?: boolean } }) => Promise<void>;
   onPeerMute: (e: { callId: string; muted: boolean }) => void;
   onPeerCamera: (e: { callId: string; on: boolean }) => void;
   onEnded: (e: { callId: string; reason: string }) => void;
   onDismissed: (e: { callId: string }) => void;
   onConnectionLost: () => void;
+  /** Connected again: the call carries on here, and finds its sound and video a new path. */
+  onReconnected: () => Promise<void>;
+  /** The other person's connection dropped, or came back. */
+  onPeerAway: (e: { callId: string }) => void;
+  onPeerBack: (e: { callId: string }) => void;
 };
 
 const idle = {
@@ -79,6 +84,18 @@ const idle = {
 // Every call negotiates one audio and one video slot up front. The video slot
 // starts empty for voice calls, so turning a camera on later is just a track
 // swap: no renegotiation, no risk of both sides offering at once.
+//
+// A network change (mobile data to Wi-Fi, a tunnel) doesn't end a call. The
+// connection to the server comes back by itself and the call resumes on it
+// (the server waits); the sound and video get a new path with an ICE restart,
+// which the caller always offers (the callee asks for one when it notices first).
+
+/** How long a call waits for its connection to come back before giving up (the server waits about as long). */
+const RECONNECT_MS = 50_000;
+/** A connection "disconnected" this long gets a new path (it rarely comes back by itself after a network change). */
+const STALL_MS = 2500;
+/** At most one new path this often. */
+const REPAIR_EVERY_MS = 4000;
 let pc: RTCPeerConnection | null = null;
 let queue: CandidateQueue | null = null;
 let micStream: MediaStream | null = null;
@@ -90,6 +107,10 @@ let remote = new MediaStream();
 let stopLocalMeter: (() => void) | null = null;
 let stopRemoteMeter: (() => void) | null = null;
 let healthTimer = 0;
+/** Who started the call: the caller makes every offer, ICE restarts included. */
+let role: 'caller' | 'callee' | null = null;
+let lostTimer = 0;
+let lastRepair = 0;
 
 /** Bytes of call audio received so far, or null if unknown. */
 async function audioBytesReceived(conn: RTCPeerConnection) {
@@ -106,6 +127,9 @@ export const useCall = create<CallState>()((set, get) => {
   function cleanup() {
     window.clearInterval(healthTimer);
     healthTimer = 0;
+    window.clearTimeout(lostTimer);
+    role = null;
+    lastRepair = 0;
     stopTone();
     stopLocalMeter?.();
     stopRemoteMeter?.();
@@ -160,7 +184,43 @@ export const useCall = create<CallState>()((set, get) => {
     emitCamera(false);
   }
 
-  function setupPeer(callId: string, role: 'caller' | 'callee') {
+  /** The call's connection is down: "Reconnecting…", and ends if it doesn't come back in time. */
+  function waitForLine() {
+    set({ reconnecting: true });
+    window.clearTimeout(lostTimer);
+    lostTimer = window.setTimeout(() => {
+      if (get().phase === 'idle' || (pc?.connectionState === 'connected' && socket.connected)) return;
+      get().endCall();
+      toast('The call ended: the connection didn’t come back.', 'error');
+    }, RECONNECT_MS);
+  }
+
+  /** A new path for the sound and video (the network changed): an ICE restart, offered by the caller. */
+  async function restartIce() {
+    const conn = pc;
+    const { callId } = get();
+    if (!conn || !callId || role !== 'caller' || !socket.connected) return;
+    try {
+      const offer = await conn.createOffer({ iceRestart: true });
+      if (pc !== conn) return;
+      await conn.setLocalDescription(offer);
+      socket.emit('call:signal', { callId, data: { sdp: conn.localDescription?.toJSON() } });
+    } catch (err) {
+      console.warn('Call ICE restart failed', err);
+    }
+  }
+
+  /** The call's connection broke: the caller finds it a new path; the callee asks it to. */
+  function repair() {
+    const { callId } = get();
+    if (!pc || !callId || !socket.connected || Date.now() - lastRepair < REPAIR_EVERY_MS) return;
+    lastRepair = Date.now();
+    if (role === 'caller') void restartIce();
+    else socket.emit('call:signal', { callId, data: { restart: true } });
+  }
+
+  function setupPeer(callId: string, as: 'caller' | 'callee') {
+    role = as;
     const conn = createPeer();
     pc = conn;
     queue = new CandidateQueue(conn);
@@ -168,7 +228,7 @@ export const useCall = create<CallState>()((set, get) => {
     const mic = micStream?.getAudioTracks()[0];
     if (mic) audioSender = conn.addTrack(mic, outStream);
     // The caller creates the video slot; the callee adopts it from the offer.
-    if (role === 'caller') {
+    if (as === 'caller') {
       videoTx = conn.addTransceiver(cameraTrack ?? 'video', { direction: 'sendrecv', streams: [outStream] });
     }
     conn.onicecandidate = (e) => {
@@ -187,6 +247,7 @@ export const useCall = create<CallState>()((set, get) => {
       if (pc !== conn) return;
       const state = conn.connectionState;
       if (state === 'connected') {
+        window.clearTimeout(lostTimer);
         set((s) => ({ phase: 'active', reconnecting: false, startedAt: s.startedAt ?? Date.now() }));
         watchIncomingAudio(conn);
         // Tell the other side where our camera ended up (it may have changed while ringing).
@@ -195,10 +256,20 @@ export const useCall = create<CallState>()((set, get) => {
           emitCamera(get().cameraOn);
         }
       } else if (state === 'disconnected') {
-        set({ reconnecting: true });
+        // Often a network change: if it doesn't come back by itself, give it a new path.
+        waitForLine();
+        window.setTimeout(() => {
+          if (pc === conn && (conn.connectionState === 'disconnected' || conn.connectionState === 'failed')) repair();
+        }, STALL_MS);
       } else if (state === 'failed') {
-        toast("The call couldn't connect. If you're on different networks, a TURN server may be needed.", 'error');
-        get().endCall();
+        if (get().startedAt) {
+          // It was working: find it a new path, rather than end the call.
+          waitForLine();
+          repair();
+        } else {
+          toast("The call couldn't connect. If you're on different networks, a TURN server may be needed.", 'error');
+          get().endCall();
+        }
       }
     };
     watchLocalMic();
@@ -380,6 +451,14 @@ export const useCall = create<CallState>()((set, get) => {
     onSignal: async ({ callId, data }) => {
       if (get().callId !== callId || !pc) return;
       const conn = pc;
+      // The callee's side broke: it asks me (the caller) for a new path.
+      if (data.restart) {
+        if (role === 'caller') {
+          lastRepair = Date.now();
+          void restartIce();
+        }
+        return;
+      }
       try {
         if (data.sdp) {
           await conn.setRemoteDescription(data.sdp);
@@ -435,9 +514,58 @@ export const useCall = create<CallState>()((set, get) => {
     },
 
     onConnectionLost: () => {
+      // Ringing here, or in the call: it carries on once the connection is back.
       if (get().phase === 'idle') return;
-      cleanup();
-      toast('Your call ended because the connection dropped.', 'error');
+      waitForLine();
+    },
+
+    onReconnected: async () => {
+      const { callId, phase } = get();
+      if (!callId || phase === 'idle') return;
+      try {
+        const res = await emitAck<{ ringing?: boolean; answered?: boolean; video?: boolean }>('call:resume', { callId, from: droppedSocketId() });
+        if (get().callId !== callId) return;
+        if (res.ringing || get().phase === 'incoming') {
+          window.clearTimeout(lostTimer);
+          set({ reconnecting: false });
+          return;
+        }
+        // Answered while my connection was down: start connecting now.
+        if (get().phase === 'outgoing') {
+          window.clearTimeout(lostTimer);
+          set({ reconnecting: false });
+          if (res.answered) await get().onAccepted({ callId, video: res.video });
+          return;
+        }
+        if (pc?.connectionState === 'connected') {
+          window.clearTimeout(lostTimer);
+          set({ reconnecting: false });
+        }
+        // The network changed, so the sound and video need a new path too.
+        lastRepair = Date.now();
+        if (role === 'caller') void restartIce();
+        else socket.emit('call:signal', { callId, data: { restart: true } });
+      } catch (err) {
+        if (get().callId !== callId) return;
+        cleanup();
+        toast(errorMessage(err), 'error');
+      }
+    },
+
+    onPeerAway: ({ callId }) => {
+      if (get().callId === callId && get().phase !== 'incoming') waitForLine();
+    },
+
+    onPeerBack: ({ callId }) => {
+      if (get().callId !== callId) return;
+      // Still working (it can ride out a short drop): nothing to wait for.
+      if (pc?.connectionState === 'connected') {
+        window.clearTimeout(lostTimer);
+        set({ reconnecting: false });
+      }
+      // Their network changed: the caller gives the sound and video a new path.
+      lastRepair = Date.now();
+      if (role === 'caller') void restartIce();
     },
   };
 });

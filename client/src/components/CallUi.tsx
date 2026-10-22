@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from 'react-router';
 import { AudioLines, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff } from 'lucide-react';
 import { useBackClose } from '../lib/back';
 import { duration } from '../lib/format';
-import { useNow } from '../lib/useMedia';
+import { useMedia, useNow } from '../lib/useMedia';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
 import { useChat } from '../store/chat';
@@ -13,7 +13,7 @@ import { useUi } from '../store/ui';
 import { useVoice } from '../store/voice';
 import { Avatar } from './ui/Avatar';
 import { IconButton } from './ui/Button';
-import { MuteButton, SoundBlocked, SpeakerButton, VideoView } from './CallControls';
+import { MuteButton, ResizeCorners, SoundBlocked, SpeakerButton, VideoView, useCallWindow } from './CallControls';
 import { RoomCameraButton, useCallCameras, useRoomStageOpen } from './RoomCall';
 
 const LIVE_PHASES = ['outgoing', 'connecting', 'active'];
@@ -21,6 +21,24 @@ const LIVE_PHASES = ['outgoing', 'connecting', 'active'];
 /** True when the call should show the video window rather than the bar. */
 function useVideoActive() {
   return useCall((s) => s.cameraOn || s.peerCameraOn || (s.videoCall && s.phase !== 'active'));
+}
+
+/** The one-to-one call's video window is showing (rather than just the call bar). */
+export function useCallStageOpen() {
+  const live = useCall((s) => LIVE_PHASES.includes(s.phase) && !!s.peer && !s.minimized);
+  return useVideoActive() && live;
+}
+
+/** A one-to-one video call shrunk to its bar: its video floats over the app (components/CallPip.tsx). */
+export function useCallPip() {
+  const live = useCall((s) => LIVE_PHASES.includes(s.phase) && !!s.peer && s.minimized);
+  return useVideoActive() && live;
+}
+
+/** A one-to-one video call, open or shrunk (the app's own picture-in-picture shows it). */
+export function useCallVideo() {
+  const live = useCall((s) => LIVE_PHASES.includes(s.phase) && !!s.peer);
+  return useVideoActive() && live;
 }
 
 /** Full-screen ring for an incoming one-to-one call. */
@@ -213,7 +231,6 @@ function CallBar() {
 export function CallStage() {
   const phase = useCall((s) => s.phase);
   const peer = useCall((s) => s.peer);
-  const minimized = useCall((s) => s.minimized);
   const cameraOn = useCall((s) => s.cameraOn);
   const peerCameraOn = useCall((s) => s.peerCameraOn);
   const localVideo = useCall((s) => s.localVideo);
@@ -226,12 +243,14 @@ export function CallStage() {
   const endCall = useCall((s) => s.endCall);
   const setMinimized = useCall((s) => s.setMinimized);
   const openDevices = useUi((s) => s.setDevicesOpen);
-  const videoActive = useVideoActive();
+  const open = useCallStageOpen();
   const status = useCallStatus();
+  const wide = useMedia('(min-width: 768px)');
+  const win = useCallWindow();
   // Back shrinks the video to the call bar rather than changing the screen hidden behind it.
-  useBackClose(LIVE_PHASES.includes(phase) && !!peer && videoActive && !minimized, () => setMinimized(true));
+  useBackClose(open, () => setMinimized(true));
 
-  if (!LIVE_PHASES.includes(phase) || !peer || !videoActive || minimized) return null;
+  if (!open || !peer) return null;
   const remoteVideo = peerCameraOn && phase !== 'outgoing' && remoteStream?.getVideoTracks().length ? remoteStream : null;
   const first = peer.name.split(' ')[0];
 
@@ -239,8 +258,10 @@ export function CallStage() {
     <div
       role="region"
       aria-label={`Video call with ${peer.name}`}
-      className="pop-in fixed inset-0 z-[45] flex flex-col bg-deep text-on-brand md:inset-auto md:right-4 md:bottom-4 md:h-[min(560px,calc(100dvh-32px))] md:w-[min(780px,calc(100vw-440px))] md:overflow-hidden md:rounded-[28px] md:border md:border-white/10 md:shadow-[0_30px_70px_-20px_rgb(4_6_18/0.75)]"
+      style={wide ? win.style : undefined}
+      className="pop-in fixed z-[45] flex flex-col bg-deep text-on-brand max-md:inset-0 md:overflow-hidden md:rounded-[28px] md:border md:border-white/10 md:shadow-[0_30px_70px_-20px_rgb(4_6_18/0.75)]"
     >
+      {wide && <ResizeCorners resize={win.resize} />}
       <div className="relative min-h-0 flex-1 bg-black/30">
         {remoteVideo ? (
           <VideoView stream={remoteVideo} remote className="size-full object-cover md:object-contain" />
@@ -253,8 +274,11 @@ export function CallStage() {
           </div>
         )}
 
-        {/* Name and timer stay legible over any picture. */}
-        <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-[linear-gradient(rgb(0_0_0/0.55),transparent)] p-3 pt-[max(12px,var(--safe-top))]">
+        {/* Name and timer stay legible over any picture. On a computer, the window is dragged by this. */}
+        <div
+          {...(wide ? win.drag : {})}
+          className={`absolute inset-x-0 top-0 flex items-start justify-between gap-3 bg-[linear-gradient(rgb(0_0_0/0.55),transparent)] p-3 pt-[max(12px,var(--safe-top))] ${wide ? (win.active ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+        >
           <div className="min-w-0 pl-1">
             <p className="truncate font-display text-[21px] leading-tight text-white">{peer.name}</p>
             <p className="truncate text-[13px] text-white/80 tabular-nums">
@@ -295,6 +319,7 @@ function VoiceBar() {
   const roomId = useVoice((s) => s.roomId);
   const status = useVoice((s) => s.status);
   const muted = useVoice((s) => s.muted);
+  const reconnecting = useVoice((s) => s.reconnecting);
   const toggleMute = useVoice((s) => s.toggleMute);
   const leave = useVoice((s) => s.leave);
   const meSpeaking = useVoice((s) => !!s.speaking[useAuth.getState().user?.id ?? '']);
@@ -325,7 +350,7 @@ function VoiceBar() {
         <span className="min-w-0">
           <span className="block truncate font-semibold">{room?.name ?? 'Room voice'}</span>
           <span className="block truncate text-[13px] text-on-brand/70">
-            {status === 'joining' ? 'Joining voice…' : cameras ? `${cameras} on camera, tap to see` : talking}
+            {status === 'joining' ? 'Joining voice…' : reconnecting ? 'Reconnecting…' : cameras ? `${cameras} on camera, tap to see` : talking}
           </span>
         </span>
       </button>

@@ -1,6 +1,7 @@
 // Tells the server whether this app or tab is actually in use, so the
 // person's phone only buzzes with notifications when they aren't looking at
 // Adda Khana anywhere (like a messenger that's open on a computer).
+import { usePip } from '../store/pip';
 import { inApp } from './native';
 import { socket } from './socket';
 
@@ -12,6 +13,8 @@ let reported: boolean | null = null;
 
 function looking() {
   if (document.visibilityState !== 'visible') return false;
+  // Shrunk to Android's floating call window, the person is in another app.
+  if (usePip.getState().native) return false;
   // The phone app on screen is in use (the screen turns off otherwise).
   if (inApp) return true;
   return document.hasFocus() && Date.now() - lastInput < IDLE_MS;
@@ -39,6 +42,7 @@ export function watchActivity() {
   document.addEventListener('visibilitychange', back);
   window.addEventListener('focus', back);
   window.addEventListener('blur', () => report());
+  usePip.subscribe(() => report());
   socket.on('connect', () => report(true));
   // Notices a computer going idle.
   window.setInterval(() => report(), 30_000);

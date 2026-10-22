@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Ear, Mic, MicOff, Volume2 } from 'lucide-react';
+import { useFloating, type Corner } from '../lib/floating';
 import { canToggleSpeaker, nativeSetSpeaker, nativeSpeakerOn, onNative } from '../lib/native';
 import { audioContext } from '../lib/sounds';
+import { noteVideoSize } from '../lib/videoSize';
 import { useUi } from '../store/ui';
 import { IconButton } from './ui/Button';
 
@@ -84,6 +86,11 @@ export function VideoView({ stream, mirrored, remote, className = '' }: { stream
     if (!el) return;
     if (el.srcObject !== stream) el.srcObject = stream;
     void el.play().catch(() => {});
+    // The picture's size (a phone turned, a new camera) shapes Android's floating window.
+    const sized = () => noteVideoSize(stream, el.videoWidth, el.videoHeight);
+    sized();
+    el.addEventListener('resize', sized);
+    return () => el.removeEventListener('resize', sized);
   }, [stream]);
   return (
     <video
@@ -96,4 +103,40 @@ export function VideoView({ stream, mirrored, remote, className = '' }: { stream
       className={`${mirrored ? '-scale-x-100' : ''} ${className}`}
     />
   );
+}
+
+/** Invisible corners of a call window on a computer: drag one to resize the window (see lib/floating.ts). */
+export function ResizeCorners({ resize }: { resize: (corner: Corner) => object }) {
+  const at: Record<Corner, string> = {
+    tl: 'top-0 left-0 cursor-nwse-resize',
+    tr: 'top-0 right-0 cursor-nesw-resize',
+    bl: 'bottom-0 left-0 cursor-nesw-resize',
+    br: 'right-0 bottom-0 cursor-nwse-resize',
+  };
+  return (
+    <>
+      {(Object.keys(at) as Corner[]).map((c) => (
+        // As big as the window's rounded corner, which clips what's outside its curve.
+        <span key={c} {...resize(c)} aria-hidden className={`absolute z-[2] size-7 ${at[c]}`} />
+      ))}
+    </>
+  );
+}
+
+/**
+ * A call window on a computer: drag it by its top, resize it from a corner.
+ * Where it was left and how big are kept for every call (phones show calls full screen).
+ */
+export function useCallWindow() {
+  return useFloating({
+    name: 'call-window',
+    aspect: null,
+    initial: (vw, vh) => {
+      const w = Math.max(420, Math.min(780, vw - 440));
+      const h = Math.min(560, vh - 32);
+      return { x: vw - w - 16, y: vh - h - 16, w, h };
+    },
+    min: { w: 360, h: 280 },
+    max: (vw, vh) => ({ w: vw - 16, h: vh - 16 }),
+  });
 }

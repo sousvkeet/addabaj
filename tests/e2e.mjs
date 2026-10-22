@@ -371,7 +371,7 @@ await check('three people join room voice and all mesh links connect', async () 
   await A.page.screenshot({ path: `${SHOTS}06-room-voice.png` });
 });
 
-await check('room video: cameras go on in the call and everyone sees them, each as big as they show it, and a shrunk window gets none', async () => {
+await check('room video: cameras go on in the call and everyone sees them, each as big as they show it, and a shrunk window gets just the one it floats', async () => {
   const stage = (u) => u.page.getByRole('region', { name: /^Video call in/ });
   const id = (u) => u.page.evaluate(async () => (await (await fetch('/api/auth/me')).json()).user.id);
   const [a, b] = [await id(A), await id(B)];
@@ -387,18 +387,20 @@ await check('room video: cameras go on in the call and everyone sees them, each 
       who,
       { timeout: 20000 },
     );
-  /** Video arriving at this page, all connections together (bytes). */
+  /** Video arriving at this page over each of its connections (bytes). */
   const videoIn = (u) =>
-    u.page.evaluate(async () => {
-      let bytes = 0;
-      for (const pc of window.__pcs) {
-        if (pc.connectionState !== 'connected') continue;
-        (await pc.getStats()).forEach((r) => {
-          if (r.type === 'inbound-rtp' && r.kind === 'video') bytes += r.bytesReceived;
-        });
-      }
-      return bytes;
-    });
+    u.page.evaluate(() =>
+      Promise.all(
+        window.__pcs.map(async (pc) => {
+          let bytes = 0;
+          if (pc.connectionState !== 'connected') return bytes;
+          (await pc.getStats()).forEach((r) => {
+            if (r.type === 'inbound-rtp' && r.kind === 'video') bytes += r.bytesReceived;
+          });
+          return bytes;
+        }),
+      ),
+    );
 
   // Asha turns her camera on from the room's panel: the call's window opens for everyone.
   await A.page.getByRole('region', { name: 'Voice', exact: true }).getByRole('button', { name: 'Turn camera on' }).click();
@@ -429,13 +431,15 @@ await check('room video: cameras go on in the call and everyone sees them, each 
     { timeout: 10000 },
   );
 
-  // Mitali shrinks the window to the voice bar: nobody sends her video then; it comes back with the window.
+  // Mitali shrinks the window: one of them floats over the app, and only that camera still comes to her;
+  // the rest come back with the window.
   await stage(C).getByRole('button', { name: 'Shrink video' }).click();
+  await C.page.locator('[data-call-pip] video').waitFor();
   await C.page.waitForTimeout(2500);
   const before = await videoIn(C);
   await C.page.waitForTimeout(3000);
-  const shrunk = (await videoIn(C)) - before;
-  if (shrunk > 0) throw new Error(`${shrunk} bytes of video still arrived with the window shrunk`);
+  const sending = (await videoIn(C)).filter((bytes, i) => bytes > (before[i] ?? 0)).length;
+  if (sending !== 1) throw new Error(`${sending} cameras sent video to the shrunk window, not just the one it floats`);
   await C.page.getByRole('button', { name: /^Show video in/ }).click();
   await sees(C, [a, b]);
 

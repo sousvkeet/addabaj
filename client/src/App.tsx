@@ -14,6 +14,7 @@ import { SiteSettings } from './pages/admin/SiteSettings';
 import { AppReleases } from './pages/admin/AppReleases';
 import { Toasts } from './components/Toasts';
 import { AppUpdate } from './components/AppUpdate';
+import { FirstRunPermissions } from './components/Permissions';
 import { Logo, Wordmark } from './components/ui/Logo';
 import { setNativeNavigator } from './nativeApp';
 
@@ -105,6 +106,7 @@ function Root() {
   return (
     <>
       <Outlet />
+      <FirstRunPermissions />
       <Toasts />
       <AppUpdate />
       <NativeNavigator />

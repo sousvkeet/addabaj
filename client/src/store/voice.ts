@@ -2,11 +2,12 @@ import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
 import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, stopStream, watchSpeaking } from '../lib/rtc';
 import { inApp } from '../lib/native';
-import { emitAck, socket } from '../lib/socket';
+import { droppedSocketId, emitAck, socket } from '../lib/socket';
 import { blip, unlockAudio } from '../lib/sounds';
 import type { VoiceParticipant } from '../lib/types';
 import { myId, onLogout } from './auth';
 import { useCall } from './call';
+import { useChat } from './chat';
 import { onDeviceChoice } from './devices';
 import { toast } from './ui';
 
@@ -20,6 +21,13 @@ import { toast } from './ui';
 // "view") and gets just that: nothing while its call window is closed or out
 // of sight, a small picture for a tile in a big grid, a sharp one for a
 // focused tile.
+//
+// A network change (mobile data to Wi-Fi, a tunnel) doesn't end it: the
+// connection to the server comes back by itself, the seat is taken back
+// (the server kept it), and every call connection that broke is made again.
+// A call connection that breaks while the server is still reachable is
+// repaired too: the person with the larger id offers a fresh one (the other
+// asks them to), so both never offer at once.
 
 /** How big someone's camera is shown: not at all, or a small, medium or large tile. */
 export type View = 'hidden' | 'small' | 'medium' | 'large';
@@ -34,7 +42,16 @@ const QUALITY = {
 /** All the copies of my camera together stay within this, so many viewers don't choke my upload. */
 const UPLOAD_BUDGET = 3_000_000;
 
-type Signal = { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; view?: View };
+type Signal = { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; view?: View; restart?: boolean };
+
+/** How long the call waits for the connection to come back before giving up (the server keeps the seat about as long). */
+const RECONNECT_MS = 50_000;
+/** A call connection that's been "disconnected" this long is made again (it rarely comes back by itself after a network change). */
+const STALL_MS = 2500;
+/** At most one fresh connection to the same person this often. */
+const REPAIR_EVERY_MS = 4000;
+/** Both offering within this of each other is a real collision; an older offer of mine went to a connection of theirs that dropped. */
+const COLLISION_MS = 2500;
 
 type VoiceState = {
   roomId: string | null;
@@ -52,20 +69,28 @@ type VoiceState = {
   localVideo: MediaStream | null;
   /** The call window is shrunk to the bar. */
   minimized: boolean;
+  /** My connection to the server dropped (a network change): the call carries on once it's back. */
+  reconnecting: boolean;
 
   join: (roomId: string, options?: { video?: boolean }) => Promise<void>;
   leave: () => Promise<void>;
   toggleMute: () => void;
   toggleCamera: () => Promise<void>;
   setMinimized: (minimized: boolean) => void;
-  /** How big the call window shows each person now (anyone missing isn't shown). */
-  setViews: (views: Record<string, View>) => void;
+  /**
+   * How big the call window (or, `from` 'pip', the call's small floating view)
+   * shows each person now; anyone missing isn't shown. The small view's say
+   * counts while it's there.
+   */
+  setViews: (views: Record<string, View>, from?: 'window' | 'pip') => void;
 
   onPeerJoined: (e: { roomId: string; userId: string }) => void;
   onPeerLeft: (e: { roomId: string; userId: string }) => void;
   onSignal: (e: { roomId: string; from: string; data: Signal }) => Promise<void>;
   onKicked: (e: { roomId: string; reason: string }) => void;
   onConnectionLost: () => void;
+  /** Connected again: take my seat back, and make again whatever broke. */
+  onReconnected: () => Promise<void>;
 };
 
 type Peer = {
@@ -76,6 +101,8 @@ type Peer = {
   video: RTCRtpTransceiver | null;
   /** Changes to what goes into the video slot, one at a time. */
   sending: Promise<void>;
+  /** When I last offered on this connection (an offer that long unanswered was lost). */
+  offeredAt?: number;
 };
 
 type WithSetStreams = RTCRtpSender & { setStreams?: (...streams: MediaStream[]) => void };
@@ -92,6 +119,7 @@ const idle = {
   cameraBusy: false,
   localVideo: null,
   minimized: false,
+  reconnecting: false,
 };
 
 let localStream: MediaStream | null = null;
@@ -100,10 +128,14 @@ let stopLocalMeter: (() => void) | null = null;
 const peers = new Map<string, Peer>();
 /** How big each person shows my camera (as they asked). */
 const wanted = new Map<string, View>();
-/** How big I show each person (as the call window last said). */
+/** How big I show each person (as the call window, or its small floating view, last said). */
 let shown: Record<string, View> = {};
+const shownBy: Partial<Record<'window' | 'pip', Record<string, View>>> = {};
 /** What I last told each person about that. */
 const told = new Map<string, View>();
+/** When each person's connection was last made again (see REPAIR_EVERY_MS). */
+const repaired = new Map<string, number>();
+let lostTimer = 0;
 
 const without = <T,>(rec: Record<string, T>, key: string) => {
   const next = { ...rec };
@@ -154,6 +186,8 @@ export const useVoice = create<VoiceState>()((set, get) => {
   }
 
   function cleanup() {
+    window.clearTimeout(lostTimer);
+    repaired.clear();
     for (const id of [...peers.keys()]) closePeer(id);
     stopLocalMeter?.();
     stopLocalMeter = null;
@@ -164,6 +198,8 @@ export const useVoice = create<VoiceState>()((set, get) => {
     wanted.clear();
     told.clear();
     shown = {};
+    delete shownBy.window;
+    delete shownBy.pip;
     set({ ...idle });
   }
 
@@ -231,6 +267,12 @@ export const useVoice = create<VoiceState>()((set, get) => {
       if (pc.connectionState === 'connected') {
         tell(userId, true);
         sendVideo(userId);
+      } else if (pc.connectionState === 'failed') {
+        repair(userId);
+      } else if (pc.connectionState === 'disconnected') {
+        window.setTimeout(() => {
+          if (peers.get(userId)?.pc === pc && (pc.connectionState === 'disconnected' || pc.connectionState === 'failed')) repair(userId);
+        }, STALL_MS);
       }
     };
     tell(userId, true);
@@ -318,10 +360,28 @@ export const useVoice = create<VoiceState>()((set, get) => {
     }
   });
 
+  /**
+   * A call connection broke (a network change on either side): the one of us
+   * with the larger id makes a fresh one; the other asks them to. Not while
+   * the server is out of reach (onReconnected makes them all again then).
+   */
+  function repair(userId: string) {
+    const { roomId, status } = get();
+    if (!roomId || status !== 'live' || !socket.connected || !peers.has(userId)) return;
+    // Their connection dropped: they make it again when they're back.
+    if (useChat.getState().voice[roomId]?.some((p) => p.userId === userId && p.away)) return;
+    if (Date.now() - (repaired.get(userId) ?? 0) < REPAIR_EVERY_MS) return;
+    repaired.set(userId, Date.now());
+    if (myId() > userId) void offerTo(userId, roomId).catch((err) => console.warn('Voice offer failed', err));
+    else socket.emit('voice:signal', { roomId, to: userId, data: { restart: true } });
+  }
+
   async function offerTo(userId: string, roomId: string) {
-    const { pc } = connect(userId, roomId, true);
+    const peer = connect(userId, roomId, true);
+    const { pc } = peer;
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
+    peer.offeredAt = Date.now();
     socket.emit('voice:signal', { roomId, to: userId, data: { sdp: pc.localDescription?.toJSON() } });
   }
 
@@ -404,8 +464,10 @@ export const useVoice = create<VoiceState>()((set, get) => {
 
     setMinimized: (minimized) => set({ minimized }),
 
-    setViews: (views) => {
-      shown = views;
+    setViews: (views, from = 'window') => {
+      if (Object.keys(views).length) shownBy[from] = views;
+      else delete shownBy[from];
+      shown = shownBy.pip ?? shownBy.window ?? {};
       for (const id of peers.keys()) tell(id);
     },
 
@@ -431,8 +493,16 @@ export const useVoice = create<VoiceState>()((set, get) => {
         return;
       }
       if (!localStream) return;
+      // They ask me (the larger id) for a fresh connection: theirs broke.
+      if (data.restart) {
+        if (myId() > from) repair(from);
+        return;
+      }
       try {
         if (data.sdp?.type === 'offer') {
+          // Both offered at once (both reconnecting): the larger id's offer wins.
+          const mine = peers.get(from);
+          if (mine?.pc.signalingState === 'have-local-offer' && myId() > from && Date.now() - (mine.offeredAt ?? 0) < COLLISION_MS) return;
           const peer = connect(from, roomId, false);
           const { pc, queue } = peer;
           await pc.setRemoteDescription(data.sdp);
@@ -470,9 +540,53 @@ export const useVoice = create<VoiceState>()((set, get) => {
     },
 
     onConnectionLost: () => {
-      if (get().status === 'idle') return;
-      cleanup();
-      toast('You left voice because the connection dropped.', 'error');
+      const { status } = get();
+      if (status === 'idle') return;
+      // Not in yet: try joining again once the line is back.
+      if (status === 'joining') {
+        cleanup();
+        toast('You left voice because the connection dropped.', 'error');
+        return;
+      }
+      // The call carries on (sound may pause) while the connection comes back.
+      set({ reconnecting: true });
+      window.clearTimeout(lostTimer);
+      lostTimer = window.setTimeout(() => {
+        if (get().status === 'idle' || socket.connected) return;
+        cleanup();
+        toast('You left voice: the connection didn’t come back.', 'error');
+      }, RECONNECT_MS);
+    },
+
+    onReconnected: async () => {
+      window.clearTimeout(lostTimer);
+      const { roomId, status, muted, cameraOn } = get();
+      if (!roomId || status !== 'live') return;
+      try {
+        const res = await emitAck<{ peers: VoiceParticipant[]; resumed: boolean }>('voice:join', {
+          roomId,
+          resume: true,
+          from: droppedSocketId(),
+          muted,
+          camera: cameraOn,
+        });
+        if (get().roomId !== roomId) return;
+        set({ reconnecting: false });
+        const here = new Set(res.peers.map((p) => p.userId));
+        // Gone while I was away.
+        for (const id of [...peers.keys()]) if (!here.has(id)) closePeer(id);
+        // A fresh connection to whoever's isn't working (after a network change, nobody's is).
+        for (const p of res.peers) {
+          const peer = peers.get(p.userId);
+          if (res.resumed && peer?.pc.connectionState === 'connected') continue;
+          repaired.set(p.userId, Date.now());
+          void offerTo(p.userId, roomId).catch((err) => console.warn('Voice offer failed', err));
+        }
+      } catch (err) {
+        if (get().roomId !== roomId) return;
+        cleanup();
+        toast(errorMessage(err), 'error');
+      }
     },
   };
 });

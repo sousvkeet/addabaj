@@ -5,14 +5,18 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.DownloadManager;
+import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
 import android.content.MutableContextWrapper;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Color;
 import android.graphics.Insets;
+import android.graphics.drawable.Icon;
 import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
@@ -20,7 +24,9 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.Rational;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
@@ -45,6 +51,7 @@ import android.widget.Toast;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
+import androidx.annotation.RequiresApi;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONObject;
@@ -470,6 +477,7 @@ public class MainActivity extends Activity {
         public void callState(String json) {
             main.post(() -> {
                 CallService.update(app, json);
+                pipFrom(json);
                 // Streaming a file live from this phone: it keeps playing out of sight (see PageView).
                 if (page instanceof PageView) ((PageView) page).keepAwake(json.contains("\"kind\":\"live\"") && json.contains("\"mode\":\"file\""));
                 // Nothing running and nobody looking: the page can go.
@@ -512,6 +520,29 @@ public class MainActivity extends Activity {
             return CallService.speakerOn(app);
         }
 
+        /** Where each permission the app needs stands (see Permissions), as JSON. */
+        @JavascriptInterface
+        public String permissions() {
+            // The page shows its own screen for them: the app no longer asks by itself.
+            Permissions.pageAsks = true;
+            MainActivity a = current.get();
+            return Permissions.state(a != null ? a : app).toString();
+        }
+
+        /** Android's prompt for one ("all": every one it can still prompt for), or its settings page. */
+        @JavascriptInterface
+        public void askPermission(String which) {
+            main.post(() -> {
+                MainActivity a = current.get();
+                if (a != null && which != null) Permissions.ask(a, which);
+            });
+        }
+
+        @JavascriptInterface
+        public void permissionsSeen() {
+            Permissions.seen(app);
+        }
+
         @JavascriptInterface
         public void screenCapture(String action) {
             main.post(() -> {
@@ -549,12 +580,15 @@ public class MainActivity extends Activity {
         if (a != null) a.askNotifications();
     }
 
-    /** Signed in: ask to show notifications (Android 13+), then to ring full screen (Android 14+). */
+    /**
+     * Signed in: ask to show notifications (Android 13+), then to ring full
+     * screen (Android 14+), unless the page has its own screen for that (or it was seen).
+     */
     private void askNotifications() {
-        if (askedNotifications) return;
+        if (askedNotifications || Permissions.pageAsks || Permissions.wasSeen(this)) return;
         askedNotifications = true;
         if (Build.VERSION.SDK_INT >= 33 && !granted(Manifest.permission.POST_NOTIFICATIONS)) {
-            requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, REQUEST_NOTIFY);
+            askFor(new String[] { Manifest.permission.POST_NOTIFICATIONS }, REQUEST_NOTIFY);
         } else {
             askFullScreenCalls();
         }
@@ -685,7 +719,7 @@ public class MainActivity extends Activity {
                 } else {
                     if (pendingMediaRequest != null) pendingMediaRequest.deny();
                     pendingMediaRequest = request;
-                    requestPermissions(needed.toArray(new String[0]), REQUEST_MEDIA);
+                    askFor(needed.toArray(new String[0]), REQUEST_MEDIA);
                 }
             });
         }
@@ -764,6 +798,131 @@ public class MainActivity extends Activity {
                     : 0);
             applyBars();
         }
+    }
+
+    // ── Picture in picture (Android 8+) ────────────────────────────────
+    // A video call on screen (the page's session says so, with its shape):
+    // leaving the app shrinks it into Android's floating window over other
+    // apps, as in other messengers (Android 12+ as the home gesture starts).
+    // Android lets the person drag it, pinch it bigger or smaller, and tap it
+    // to come back. The page shows only the video in it (CallPip.tsx); the
+    // window has mute and hang-up buttons.
+
+    /** A video call is on: leaving the app floats it. */
+    private static volatile boolean pipWanted;
+    private static volatile int pipW = 3, pipH = 4;
+    private static volatile boolean pipMuted;
+    /** The app is in its floating window now (other apps in front). */
+    static volatile boolean inPip;
+
+    /** From the page's session: whether a video call is on, its shape, and whether I'm muted. */
+    private static void pipFrom(String json) {
+        try {
+            JSONObject s = new JSONObject(json);
+            JSONObject pip = s.optJSONObject("pip");
+            pipWanted = pip != null;
+            if (pip != null) {
+                pipW = Math.max(1, pip.optInt("w", 3));
+                pipH = Math.max(1, pip.optInt("h", 4));
+            }
+            pipMuted = s.optBoolean("muted");
+        } catch (Exception e) {
+            pipWanted = false;
+        }
+        MainActivity a = current.get();
+        if (a != null) a.updatePip();
+    }
+
+    private boolean canPip() {
+        return Build.VERSION.SDK_INT >= 26 && getPackageManager().hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE);
+    }
+
+    @RequiresApi(26)
+    private PictureInPictureParams pipParams() {
+        // Android takes shapes from 1:2.39 to 2.39:1.
+        float r = (float) pipW / pipH;
+        Rational shape = r < 0.42f ? new Rational(42, 100) : r > 2.39f ? new Rational(239, 100) : new Rational(pipW, pipH);
+        List<RemoteAction> actions = new ArrayList<>();
+        String mute = getString(pipMuted ? R.string.pip_unmute : R.string.pip_mute);
+        actions.add(new RemoteAction(Icon.createWithResource(this, pipMuted ? R.drawable.ic_mic_off : R.drawable.ic_mic), mute, mute,
+                CallService.action(this, CallService.ACTION_MUTE)));
+        String hangUp = getString(R.string.pip_hang_up);
+        actions.add(new RemoteAction(Icon.createWithResource(this, R.drawable.ic_call_end), hangUp, hangUp, CallService.action(this, CallService.ACTION_HANGUP)));
+        PictureInPictureParams.Builder b = new PictureInPictureParams.Builder().setAspectRatio(shape).setActions(actions);
+        if (Build.VERSION.SDK_INT >= 31) b.setAutoEnterEnabled(pipWanted).setSeamlessResizeEnabled(false);
+        return b.build();
+    }
+
+    /** Keeps Android told: the shape, the buttons, whether to float on leaving. */
+    private void applyPip() {
+        if (!canPip()) return;
+        try {
+            setPictureInPictureParams(pipParams());
+        } catch (IllegalStateException | IllegalArgumentException ignored) {
+            // Not now (finishing, say).
+        }
+    }
+
+    /** The window closed because its call ended: this activity goes, the page stays (see onDestroy). */
+    private boolean closingPip;
+
+    /**
+     * After the page's news; a call that ended closes the window. Not by
+     * moving the task to the back: Android doesn't tell an activity it no
+     * longer floats once it's out of sight, so it would think it still does,
+     * and not float again. The next time the app opens it's straight back.
+     */
+    void updatePip() {
+        applyPip();
+        updateBack();
+        if (canPip() && !pipWanted && isInPictureInPictureMode() && !isFinishing()) {
+            closingPip = true;
+            finish();
+        }
+    }
+
+    /** When the app last opened a screen or prompt of its own (a permission, a file picker, screen sharing). */
+    private long promptedAt;
+
+    /** Every screen the app opens goes through here (startActivity too). */
+    @Override
+    public void startActivityForResult(Intent intent, int requestCode, Bundle options) {
+        promptedAt = SystemClock.uptimeMillis();
+        super.startActivityForResult(intent, requestCode, options);
+    }
+
+    /** Asks Android for permissions. */
+    void askFor(String[] permissions, int requestCode) {
+        promptedAt = SystemClock.uptimeMillis();
+        requestPermissions(permissions, requestCode);
+    }
+
+    /**
+     * Leaving the app (home, recents) during a video call floats it (Android
+     * 12+ does that by itself). Android 8 to 11 says the same of the app's own
+     * prompts, which shouldn't.
+     */
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        if (Build.VERSION.SDK_INT < 31 && pipWanted && canPip() && SystemClock.uptimeMillis() - promptedAt > 1500) enterPip();
+    }
+
+    private boolean enterPip() {
+        if (Build.VERSION.SDK_INT < 26) return false;
+        try {
+            return enterPictureInPictureMode(pipParams());
+        } catch (IllegalStateException ignored) {
+            // Android said no (another window, a dialog).
+            return false;
+        }
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean floating, Configuration config) {
+        super.onPictureInPictureModeChanged(floating, config);
+        inPip = floating;
+        send(Push.event("pip").put("on", floating));
     }
 
     // ── Screen sharing ─────────────────────────────────────────────────
@@ -869,7 +1028,14 @@ public class MainActivity extends Activity {
             startDownload(d.url, d.userAgent, d.disposition, d.mime, results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED);
         } else if (requestCode == REQUEST_NOTIFY && results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) {
             askFullScreenCalls();
+        } else if (requestCode == Permissions.REQUEST) {
+            sendPermissions(this);
         }
+    }
+
+    /** Tells the page where the permissions stand (after a prompt, or back from the phone's settings). */
+    static void sendPermissions(Activity a) {
+        send(Push.event("permissions").put("state", Permissions.state(a)));
     }
 
     @Override
@@ -915,7 +1081,7 @@ public class MainActivity extends Activity {
         }
         if (Build.VERSION.SDK_INT <= 28 && !granted(Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
             pendingDownload = new PendingDownload(url, userAgent, disposition, mime);
-            requestPermissions(new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE }, REQUEST_STORAGE);
+            askFor(new String[] { Manifest.permission.WRITE_EXTERNAL_STORAGE }, REQUEST_STORAGE);
             return;
         }
         startDownload(url, userAgent, disposition, mime, true);
@@ -985,6 +1151,8 @@ public class MainActivity extends Activity {
     private void historyBack() {
         if (web.canGoBack()) {
             web.goBack();
+        } else if (pipWanted && canPip() && enterPip()) {
+            // Leaving during a video call floats it, as Home does.
         } else {
             // Like other chat apps: go to the background, keeping calls and voice running.
             moveTaskToBack(true);
@@ -1009,7 +1177,8 @@ public class MainActivity extends Activity {
      */
     private void updateBack() {
         if (Build.VERSION.SDK_INT < 33 || web == null) return;
-        boolean wanted = customView != null || pageBack || web.canGoBack() || !launcherTask;
+        // During a video call too: leaving with Back floats it (historyBack).
+        boolean wanted = customView != null || pageBack || web.canGoBack() || !launcherTask || pipWanted;
         if (wanted == backClaimed) return;
         if (backCallback == null) backCallback = (OnBackInvokedCallback) this::goBack;
         OnBackInvokedDispatcher dispatcher = getOnBackInvokedDispatcher();
@@ -1030,6 +1199,10 @@ public class MainActivity extends Activity {
         super.onResume();
         // During an update: back from the installer, or from allowing "install unknown apps".
         Updater.resume(this);
+        // Back from a prompt or the phone's settings, perhaps with a permission changed.
+        if (Permissions.pageAsks) sendPermissions(this);
+        // A new activity for a call already going (the page outlived the last one) floats it too.
+        applyPip();
     }
 
     @Override
@@ -1052,10 +1225,16 @@ public class MainActivity extends Activity {
             current.clear();
             AddaApp.visible = false;
         }
+        // Closing the floating window can end the activity without saying it's no longer floating.
+        if (inPip) {
+            inPip = false;
+            send(Push.event("pip").put("on", false));
+        }
         if (web != null && web == page) {
             root.removeView(web);
-            // A call or screen share keeps going without the window; otherwise the page closes.
-            if (CallService.running || ScreenCaptureService.running) pageContext.setBaseContext(getApplicationContext());
+            // A call or screen share keeps going without the window, and a call that ended
+            // in the floating window leaves the page for the app's next opening; otherwise it closes.
+            if (CallService.running || ScreenCaptureService.running || closingPip) pageContext.setBaseContext(getApplicationContext());
             else destroyPage();
         }
         web = null;

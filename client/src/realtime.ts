@@ -7,6 +7,7 @@ import type { DmMessage, Invite, QueueItem, RoomMessage, RoomSummary, User, Voic
 import { useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
+import { noticeDm, noticeRoom } from './store/callNotices';
 import { useLiveStream } from './store/liveStream';
 import { useReports } from './store/reports';
 import { toast } from './store/ui';
@@ -63,6 +64,9 @@ export function bindRealtime() {
   watchSiteVersion();
 
   socket.on('connect', () => {
+    // Back after a dropped connection (a network change): a call or room voice carries on.
+    void useCall.getState().onReconnected();
+    void useVoice.getState().onReconnected();
     void chat().sync();
     void syncClock();
     useLiveStream.getState().onReconnected();
@@ -150,6 +154,8 @@ export function bindRealtime() {
   // Answering tells the server this device has the message, so the sender sees "delivered".
   socket.on('dm:new', ({ message, partner }: { message: DmMessage; partner: User }, ack?: (ok: boolean) => void) => {
     chat().receiveDm(message, partner);
+    // During a video call, as a banner over it.
+    noticeDm(message, partner);
     if (typeof ack === 'function') ack(true);
   });
   socket.on('dm:delivered', (e: { partnerId: string; ids: number[]; deliveredAt: string }) => chat().applyDmDelivered(e));
@@ -174,6 +180,7 @@ export function bindRealtime() {
   // Rooms
   socket.on('room:message', (m: RoomMessage, ack?: (ok: boolean) => void) => {
     chat().receiveRoomMessage(m);
+    noticeRoom(m);
     if (typeof ack === 'function') ack(true);
   });
   socket.on('room:receipts', (e: Parameters<ReturnType<typeof useChat.getState>['applyRoomReceipts']>[0]) => chat().applyRoomReceipts(e));
@@ -241,6 +248,9 @@ export function bindRealtime() {
   socket.on('call:signal', (e) => void call().onSignal(e));
   socket.on('call:peer-mute', (e) => call().onPeerMute(e));
   socket.on('call:peer-camera', (e) => call().onPeerCamera(e));
+  // Their connection dropped, or came back (a network change on their side).
+  socket.on('call:peer-away', (e) => call().onPeerAway(e));
+  socket.on('call:peer-back', (e) => call().onPeerBack(e));
   socket.on('call:ended', (e) => call().onEnded(e));
   socket.on('call:dismissed', (e) => call().onDismissed(e));
 

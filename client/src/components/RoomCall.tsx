@@ -9,7 +9,8 @@ import { useUi } from '../store/ui';
 import { useVoice, type View } from '../store/voice';
 import { Avatar } from './ui/Avatar';
 import { IconButton } from './ui/Button';
-import { MuteButton, SoundBlocked, SpeakerButton } from './CallControls';
+import { MuteButton, ResizeCorners, SoundBlocked, SpeakerButton, useCallWindow } from './CallControls';
+import { useMedia } from '../lib/useMedia';
 
 // A room's call with video: everyone in the room's voice, on camera or not.
 // The window opens when a camera is on in the call; Back or "Shrink video"
@@ -32,6 +33,47 @@ export function useRoomStageOpen() {
   const cameras = useCallCameras();
   const minimized = useVoice((s) => s.minimized);
   return cameras > 0 && !minimized;
+}
+
+/** The room call shrunk to its bar while cameras are on: its video floats over the app (components/CallPip.tsx). */
+export function useRoomPip() {
+  const cameras = useCallCameras();
+  const minimized = useVoice((s) => s.minimized);
+  return cameras > 0 && minimized;
+}
+
+/** Talking this long takes over the room call's small view... */
+const TAKE_OVER_MS = 1200;
+/** ...which stays with whoever has it at least this long. */
+const HOLD_MS = 3000;
+
+/**
+ * Who a small view of the room call shows: whoever last spoke on camera (not
+ * me), else anyone else on camera, else me with my camera on.
+ */
+export function useMainPerson(roomId: string | null) {
+  const meId = useAuth((s) => s.user?.id ?? '');
+  const participants = useChat((s) => (roomId ? (s.voice[roomId] ?? EMPTY) : EMPTY));
+  const speaking = useVoice((s) => s.speaking);
+  const cameraOn = useVoice((s) => s.cameraOn);
+  const [last, setLast] = useState<string | null>(null);
+  const since = useRef(0);
+  const onCamera = participants.filter((p) => p.camera && p.userId !== meId).map((p) => p.userId);
+  const talker = onCamera.find((id) => speaking[id]);
+  // The first to talk takes the view at once. After that someone takes it
+  // over by talking a while, and keeps it a while: people talking over each
+  // other, or a cough, don't flick it back and forth (each switch is a moment
+  // of waiting for the new camera's picture).
+  useEffect(() => {
+    if (!talker || talker === last) return;
+    const wait = last ? Math.max(TAKE_OVER_MS, HOLD_MS - (Date.now() - since.current)) : 0;
+    const id = window.setTimeout(() => {
+      since.current = Date.now();
+      setLast(talker);
+    }, wait);
+    return () => window.clearTimeout(id);
+  }, [talker, last]);
+  return (last && onCamera.includes(last) ? last : onCamera[0]) ?? (cameraOn ? meId : null);
 }
 
 /** My camera in the room call, on or off. */
@@ -92,6 +134,8 @@ type Person = {
   stream: MediaStream | null;
   me: boolean;
   connecting: boolean;
+  /** Their connection dropped (a network change): their seat waits for them. */
+  away: boolean;
 };
 
 /**
@@ -99,7 +143,7 @@ type Person = {
  * 720p. (Sharp screens count for a bit more, not all of it: a phone's small
  * tiles don't need a computer's picture.)
  */
-function viewFor(w: number, h: number): View {
+export function viewFor(w: number, h: number): View {
   const px = Math.max(w, h) * Math.min(window.devicePixelRatio || 1, 1.5);
   return px < 340 ? 'small' : px < 680 ? 'medium' : 'large';
 }
@@ -131,6 +175,7 @@ function Stage({ roomId }: { roomId: string }) {
   const localVideo = useVoice((s) => s.localVideo);
   const speaking = useVoice((s) => s.speaking);
   const connection = useVoice((s) => s.connection);
+  const reconnecting = useVoice((s) => s.reconnecting);
   const muted = useVoice((s) => s.muted);
   const cameraOn = useVoice((s) => s.cameraOn);
   const toggleMute = useVoice((s) => s.toggleMute);
@@ -143,6 +188,9 @@ function Stage({ roomId }: { roomId: string }) {
   const [full, setFull] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const area = useRef<HTMLDivElement>(null);
+  // On a computer it's a window you can drag by its top and resize from a corner.
+  const wide = useMedia('(min-width: 768px)');
+  const win = useCallWindow();
 
   useLayoutEffect(() => {
     const el = area.current;
@@ -178,6 +226,7 @@ function Stage({ roomId }: { roomId: string }) {
         stream: videos[p.userId] ?? null,
         me: false,
         connecting: connection[p.userId] !== 'connected',
+        away: !!p.away,
       };
     });
   const others = people.length;
@@ -192,6 +241,7 @@ function Stage({ roomId }: { roomId: string }) {
     stream: localVideo,
     me: true,
     connecting: false,
+    away: false,
   });
   const cameras = people.filter((p) => p.camera).length;
   const focused = focus ? people.find((p) => p.id === focus) : undefined;
@@ -279,13 +329,18 @@ function Stage({ roomId }: { roomId: string }) {
       ref={root}
       role="region"
       aria-label={`Video call in ${roomName}`}
-      className="pop-in fixed inset-0 z-[45] flex flex-col bg-deep text-on-brand md:inset-auto md:right-4 md:bottom-4 md:h-[min(560px,calc(100dvh-32px))] md:w-[min(780px,calc(100vw-440px))] md:overflow-hidden md:rounded-[28px] md:border md:border-white/10 md:shadow-[0_30px_70px_-20px_rgb(4_6_18/0.75)]"
+      style={wide ? win.style : undefined}
+      className="pop-in fixed z-[45] flex flex-col bg-deep text-on-brand max-md:inset-0 md:overflow-hidden md:rounded-[28px] md:border md:border-white/10 md:shadow-[0_30px_70px_-20px_rgb(4_6_18/0.75)]"
     >
-      <div className="flex shrink-0 items-center gap-2 px-3 pt-[max(12px,var(--safe-top))] pb-2">
+      {wide && !full && <ResizeCorners resize={win.resize} />}
+      <div
+        {...(wide && !full ? win.drag : {})}
+        className={`flex shrink-0 items-center gap-2 px-3 pt-[max(12px,var(--safe-top))] pb-2 ${wide && !full ? (win.active ? 'cursor-grabbing' : 'cursor-grab') : ''}`}
+      >
         <div className="min-w-0 flex-1 pl-1">
           <p className="truncate font-display text-[19px] leading-tight text-white">{roomName}</p>
-          <p className="truncate text-[13px] text-white/75">
-            {people.length} in the call, {cameras} on camera
+          <p className="truncate text-[13px] text-white/75" role={reconnecting ? 'status' : undefined}>
+            {reconnecting ? 'Reconnecting…' : `${people.length} in the call, ${cameras} on camera`}
           </p>
         </div>
         <span className="hidden md:inline-flex">
@@ -346,7 +401,7 @@ function Tile({ person, width, height, fill, contain, mirrored, small, onClick, 
   }`;
   const content = (
     <>
-      <span className={`absolute inset-0 flex items-center justify-center ${person.connecting ? 'opacity-50' : ''}`}>
+      <span className={`absolute inset-0 flex items-center justify-center ${person.connecting || person.away ? 'opacity-50' : ''}`}>
         <Avatar name={person.name} hue={person.hue} photo={person.photo} size={avatar} />
       </span>
       {person.camera && person.stream && <TileVideo stream={person.stream} mirrored={!!mirrored} contain={!!contain} who={person.me ? 'me' : person.id} />}
@@ -356,7 +411,7 @@ function Tile({ person, width, height, fill, contain, mirrored, small, onClick, 
         }`}
       >
         {person.muted && <MicOff size={small ? 11 : 13} className="shrink-0 text-live" aria-hidden />}
-        <span className="truncate">{person.connecting ? `${label}, connecting…` : label}</span>
+        <span className="truncate">{person.away ? `${label}, reconnecting…` : person.connecting ? `${label}, connecting…` : label}</span>
       </span>
     </>
   );

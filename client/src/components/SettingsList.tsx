@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { AtSign, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, Settings2 } from 'lucide-react';
+import { AtSign, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, Settings2, ShieldCheck } from 'lucide-react';
 import { inApp, nativeAppVersion } from '../lib/native';
 import { useAuth } from '../store/auth';
 import { useUi } from '../store/ui';
@@ -11,6 +11,8 @@ import { PrivacyDialog } from './PrivacyDialog';
 import { MyIdDialog } from './MyIdDialog';
 import { PhotoEditor } from './PhotoEditor';
 import { DevicesDialog, devicesSummary, useSessions } from './DevicesDialog';
+import { PermissionsDialog, permissionsSummary } from './Permissions';
+import { usePermissions } from '../store/permissions';
 
 type RowProps = { icon: ReactNode; title: string; hint?: string; onClick: () => void; trailing?: ReactNode; danger?: boolean; checked?: boolean };
 
@@ -42,7 +44,8 @@ export function SettingsList() {
   const theme = useUi((s) => s.theme);
   const toggleTheme = useUi((s) => s.toggleTheme);
   const openDevices = useUi((s) => s.setDevicesOpen);
-  const [open, setOpen] = useState<'photo' | 'id' | 'devices' | 'privacy' | 'password' | 'logout' | null>(null);
+  const [open, setOpen] = useState<'photo' | 'id' | 'devices' | 'privacy' | 'permissions' | 'password' | 'logout' | null>(null);
+  const permissions = usePermissions((s) => s.state);
   const { sessions } = useSessions(open !== 'devices');
   const [leaving, setLeaving] = useState(false);
   if (!user) return null;
@@ -87,6 +90,8 @@ export function SettingsList() {
           />
           <Row icon={<EyeOff size={19} />} title="Privacy" hint="Last seen, read receipts and blocked people" onClick={() => setOpen('privacy')} />
           <Row icon={<Settings2 size={19} />} title="Microphone, speaker and camera" hint="For calls, voice and video" onClick={() => openDevices(true)} />
+          {/* The app (1.10.0 on): what it may use on this phone. */}
+          {permissions && <Row icon={<ShieldCheck size={19} />} title="App permissions" hint={permissionsSummary(permissions)} onClick={() => setOpen('permissions')} />}
           <Row
             icon={<Moon size={19} />}
             title="Dark theme"
@@ -108,6 +113,7 @@ export function SettingsList() {
       <MyIdDialog open={open === 'id'} onClose={close} />
       <DevicesDialog open={open === 'devices'} onClose={close} />
       <PrivacyDialog open={open === 'privacy'} onClose={close} />
+      <PermissionsDialog open={open === 'permissions'} onClose={close} />
       <ChangePasswordDialog open={open === 'password'} onClose={close} />
       <ConfirmDialog
         open={open === 'logout'}

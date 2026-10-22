@@ -77,10 +77,10 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
               key={p.userId}
               className="absolute flex flex-col items-center transition-[left,top] duration-300"
               style={{ left: x, top: y, width: seat }}
-              title={`${user?.name ?? 'Someone'}${p.muted ? ' (muted)' : ''}${p.camera ? ' (camera on)' : ''}`}
+              title={`${user?.name ?? 'Someone'}${p.away ? ' (reconnecting)' : ''}${p.muted ? ' (muted)' : ''}${p.camera ? ' (camera on)' : ''}`}
             >
               <span className="relative">
-                <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} photo={user?.photo} size={seat} speaking={lit} muted={p.muted} className={linking ? 'opacity-50' : ''} />
+                <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} photo={user?.photo} size={seat} speaking={lit} muted={p.muted} className={linking || p.away ? 'opacity-50' : ''} />
                 {p.camera && (
                   <span className="absolute -top-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-surface bg-brand text-white" aria-hidden>
                     <Video size={10} strokeWidth={2.5} />

@@ -65,8 +65,8 @@ final class Notifications {
     // ── New messages ───────────────────────────────────────────────────
 
     static synchronized void showMessage(Context c, Map<String, String> d) {
-        // The open app shows new messages itself.
-        if (AddaApp.visible) return;
+        // The open app shows new messages itself (not while it's only a call floating over other apps).
+        if (AddaApp.visible && !MainActivity.inPip) return;
         String scope = d.get("scope");
         String chatId = d.get("chatId");
         if (chatId == null || !("dm".equals(scope) || "room".equals(scope))) return;
