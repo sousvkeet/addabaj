@@ -146,6 +146,8 @@ export type WatchSource = {
   relay?: boolean;
   /** The server is joining picture and sound; playback starts when ready. */
   preparing?: boolean;
+  /** Up next's video is being found again (its link had expired); it plays when found. */
+  finding?: boolean;
   /** Why the video couldn't be prepared. */
   error?: string;
   /** Set when kind is 'device'. */
@@ -173,16 +175,38 @@ export type FoundVideo = {
   options: FoundOption[];
 };
 
-export type FindResult = { scanId: string; videos: FoundVideo[]; notes: string[] };
+export type FindResult = {
+  scanId: string;
+  videos: FoundVideo[];
+  notes: string[];
+  /** The link is a playlist: all its videos (up to `count` of its `total`) can go into Up next. */
+  playlist?: { title: string; count: number; total: number } | null;
+};
+
+/** A video waiting in the room's Up next. */
+export type QueueItem = {
+  id: string;
+  title: string;
+  site: string | null;
+  thumbnail: string | null;
+  duration: number | null;
+  kind: string;
+  addedBy: { id: string; name: string };
+  addedAt: number;
+};
 
 /** Shared playback: at server time `at`, the video was at `position` seconds. */
 export type WatchState = {
+  /** This video's turn (a new one each time a video starts). */
+  id?: string;
   source: WatchSource;
   playing: boolean;
   position: number;
   at: number;
   by: string;
   byName: string;
+  /** How long it is (seconds), once known: Up next moves on at its end. */
+  duration?: number | null;
 };
 
 export type RoomSummary = {
@@ -243,6 +267,8 @@ export type RoomDetail = RoomSummary & {
   invites: RoomInviteAdminView[];
   voice: VoiceParticipant[];
   watch: WatchState | null;
+  /** Watch together's Up next. */
+  queue?: QueueItem[];
 };
 
 export type Invite = {

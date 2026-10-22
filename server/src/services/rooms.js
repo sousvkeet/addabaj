@@ -6,7 +6,7 @@ import { photoUrl, publicUser, roomPhotoUrl, USER_COLUMNS } from './users.js';
 import { forgetRoomPhoto } from './photos.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
-import { getWatch, publicWatch } from './watch.js';
+import { getWatch, publicQueue, publicWatch } from './watch.js';
 import { cancelMerge } from '../stream/merge.js';
 import { forgetStream } from '../stream/cache.js';
 import { enrich } from './messages.js';
@@ -222,7 +222,10 @@ export async function roomDetail(roomId, userId) {
     })),
     invites,
     voice: voice.participants(roomId),
-    watch: publicWatch((await one('SELECT watch FROM rooms WHERE id = $1', [roomId]))?.watch ?? null),
+    ...(await one('SELECT watch, watch_queue FROM rooms WHERE id = $1', [roomId]).then((r) => ({
+      watch: publicWatch(r?.watch ?? null),
+      queue: publicQueue(r?.watch_queue),
+    }))),
   };
 }
 

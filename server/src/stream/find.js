@@ -4,7 +4,7 @@
 // hidden browser. Results stay on the server; people only see option ids.
 import { randomUUID } from 'node:crypto';
 import { badRequest } from '../errors.js';
-import { fileTitle, youtubeInfo, youtubeLink } from '../services/watch.js';
+import { fileTitle, youtubeInfo, youtubeLink, youtubePlaylistId } from '../services/watch.js';
 import { finishOptions, playlistHasDrm } from './formats.js';
 import { adBlocker, isAd } from './adblock.js';
 import { assertPublicHost } from './guard.js';
@@ -12,11 +12,13 @@ import { probeDuration } from './probe.js';
 import { guardedRequest, isMediaType, isPlaylistType, readText } from './http.js';
 import { scanPage } from './scan.js';
 import { deepScan } from './sniff.js';
-import { youtubeFiles, ytdlpFind, ytdlpPath } from './ytdlp.js';
+import { youtubeFiles, ytdlpFind, ytdlpPath, ytdlpPlaylist } from './ytdlp.js';
 
 const DIRECT = /\.(mp4|m4v|webm|mov|m3u8)$/i;
 const SCAN_TTL_MS = 20 * 60 * 1000;
-const scans = new Map(); // scanId -> { userId, at, videos }
+const scans = new Map(); // scanId -> { userId, at, videos, link, playlist }
+/** At most this many of a playlist's videos go into Up next at once. */
+const PLAYLIST_MAX = 50;
 
 function parseLink(raw) {
   const text = typeof raw === 'string' ? raw.trim() : '';
@@ -206,6 +208,20 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
 
   const extraNotes = [];
   const yt = youtubeLink(url);
+  // A YouTube playlist (its page, or a video played from it): all its videos can go into Up next.
+  const listId = youtubePlaylistId(url);
+  let playlist = null;
+  if (listId) {
+    progress('Reading the playlist…');
+    playlist = await ytdlpPlaylist(`https://www.youtube.com/playlist?list=${listId}`, { max: PLAYLIST_MAX });
+  }
+  if (!yt && playlist) {
+    // The playlist's page: its first videos to pick one from.
+    videos = playlist.entries
+      .filter((e) => e.videoId)
+      .slice(0, 8)
+      .map((e) => ({ title: e.title, site: 'YouTube', thumbnail: e.thumbnail, duration: e.duration, options: finishOptions([{ kind: 'youtube', videoId: e.videoId }]) }));
+  }
   if (yt) {
     // YouTube's own player when it's allowed (instant, no load on the server),
     // and, like IDM-CLI, the video's own files fetched through the server: they
@@ -228,7 +244,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
       options: finishOptions(options),
     }];
   }
-  const direct = !yt && DIRECT.test(url.pathname) ? await directKind(url) : null;
+  const direct = !yt && !playlist && DIRECT.test(url.pathname) ? await directKind(url) : null;
   if (direct) {
     // A direct video link: everyone's browser plays it directly, and the
     // server relays it only if a browser can't (cross-site blocks, http on https).
@@ -237,7 +253,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
       site: url.hostname.replace(/^www\./, ''),
       options: finishOptions([{ ...direct, url: url.href, headers: {}, direct: true }]),
     }];
-  } else if (!yt) {
+  } else if (!yt && !videos.length) {
     await assertPublicHost(url.hostname); // clear error up front for local links
     await adBlocker(); // the filter lists, to tell ad videos apart from the real one
 
@@ -325,7 +341,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
     v.options.forEach((o, j) => (o.id = `${i}.${j}`));
   });
   const scanId = randomUUID();
-  scans.set(scanId, { userId, at: Date.now(), videos });
+  scans.set(scanId, { userId, at: Date.now(), videos, link: url.href, playlist: playlist?.entries ?? null, playlistTitle: playlist?.title ?? null });
   for (const [id, s] of scans) if (Date.now() - s.at > SCAN_TTL_MS) scans.delete(id);
 
   return {
@@ -347,6 +363,7 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
         relay: o.kind !== 'youtube' && !o.direct,
       })),
     })),
+    playlist: playlist ? { title: playlist.title, count: playlist.entries.length, total: playlist.count } : null,
     notes: [
       ...extraNotes,
       ...(adsBlocked ? [`Blocked ${adsBlocked} ${adsBlocked === 1 ? 'ad or tracker' : 'ads and trackers'} while searching.`] : []),
@@ -355,17 +372,41 @@ export async function findVideos(raw, { userId, onProgress } = {}) {
   };
 }
 
-/** The full (server-side) choice behind an option id from an earlier search. */
-export function takeOption(scanId, optionId, userId) {
+function scanOf(scanId, userId) {
   const scan = scans.get(scanId);
   if (!scan || scan.userId !== userId || Date.now() - scan.at > SCAN_TTL_MS) {
     throw badRequest('That search has expired. Find the videos again.');
   }
+  return scan;
+}
+
+/** The full (server-side) choice behind an option id from an earlier search, and the link it was found on. */
+export function takeOption(scanId, optionId, userId) {
+  const scan = scanOf(scanId, userId);
   for (const video of scan.videos) {
     const option = video.options.find((o) => o.id === optionId);
-    if (option) return { video, option };
+    if (option) return { video, option, link: scan.link };
   }
   throw badRequest('Pick one of the videos that were found.');
+}
+
+/** The playlist found by an earlier search: { title, entries }. */
+export function takePlaylist(scanId, userId) {
+  const scan = scanOf(scanId, userId);
+  if (!scan.playlist?.length) throw badRequest('That link isn’t a playlist.');
+  return { title: scan.playlistTitle, entries: scan.playlist };
+}
+
+/**
+ * Finds a queued video again just before it plays, as the links sites give
+ * out expire: the same video and quality if they're still there, else the best.
+ */
+export async function refind(link, pick, userId) {
+  const found = await findVideos(link, { userId });
+  const video = found.videos.find((v) => v.title === pick?.title) ?? found.videos[0];
+  const option =
+    video.options.find((o) => o.kind === pick?.kind && o.label === pick?.label) ?? video.options.find((o) => o.recommended) ?? video.options[0];
+  return takeOption(found.scanId, option.id, userId);
 }
 
 /** The best option for a link, for callers that skip the choosing step. */

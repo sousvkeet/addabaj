@@ -260,3 +260,7 @@ ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS client_id text;
 CREATE UNIQUE INDEX IF NOT EXISTS dm_messages_client_idx ON dm_messages (sender_id, client_id) WHERE client_id IS NOT NULL;
 ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS client_id text;
 CREATE UNIQUE INDEX IF NOT EXISTS room_messages_client_idx ON room_messages (sender_id, client_id) WHERE client_id IS NOT NULL;
+
+-- Watch together's Up next: videos an admin queued to play after the current
+-- one; the server moves on by itself when a video ends (see socket/queue.js).
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS watch_queue jsonb NOT NULL DEFAULT '[]'::jsonb;

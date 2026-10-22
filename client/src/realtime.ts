@@ -3,7 +3,7 @@ import { syncClock } from './lib/clock';
 import { useSite } from './lib/site';
 import { watchConnection } from './lib/liveness';
 import { socket } from './lib/socket';
-import type { DmMessage, Invite, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
+import type { DmMessage, Invite, QueueItem, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
 import { useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
@@ -188,6 +188,9 @@ export function bindRealtime() {
 
   // Watch together
   socket.on('watch:preparing', ({ roomId, ...p }: Preparing & { roomId: string }) => setPreparing(roomId, p));
+  socket.on('watch:queue', ({ roomId, queue }: { roomId: string; queue: QueueItem[] }) => {
+    useChat.setState((s) => (s.roomDetails[roomId] ? { roomDetails: { ...s.roomDetails, [roomId]: { ...s.roomDetails[roomId], queue } } } : s));
+  });
   socket.on('watch:state', ({ roomId, watch }: { roomId: string; watch: WatchState | null }) => {
     useChat.setState((s) => ({
       roomDetails: s.roomDetails[roomId] ? { ...s.roomDetails, [roomId]: { ...s.roomDetails[roomId], watch } } : s.roomDetails,

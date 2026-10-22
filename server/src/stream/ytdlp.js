@@ -240,3 +240,60 @@ async function ytdlpRun(url, extra, { keepYouTubeFiles = false } = {}) {
     release();
   }
 }
+
+/** yt-dlp's answer as JSON (null when it fails), with its traffic through the guard proxy. */
+async function ytdlpJson(args, { timeout = 60_000 } = {}) {
+  const bin = ytdlpPath();
+  if (!bin) return null;
+  const proxy = await guardProxy();
+  const release = await slot();
+  try {
+    const stdout = await new Promise((resolve) => {
+      execFile(bin, [...args.slice(0, -1), '--socket-timeout', '15', '--proxy', proxy.url, '--', args.at(-1)], { timeout, maxBuffer: 16 * 1024 * 1024 }, (_err, out) =>
+        resolve(String(out ?? '')),
+      );
+    });
+    return stdout.trim() ? JSON.parse(stdout) : null;
+  } catch {
+    return null;
+  } finally {
+    release();
+  }
+}
+
+const GONE = /^\[(private|deleted) video\]$/i;
+
+/**
+ * A playlist's videos, which is quick (no formats, just ids, titles and
+ * lengths): { title, count, entries: [{ url, videoId, title, duration,
+ * thumbnail }] } (videoId for YouTube's own player), or null.
+ */
+export async function ytdlpPlaylist(url, { max = 50 } = {}) {
+  const info = await ytdlpJson(['-J', '--flat-playlist', '--ignore-config', '--no-warnings', '--playlist-items', `1:${max}`, url]);
+  if (info?._type !== 'playlist') return null;
+  const entries = [];
+  for (const e of info.entries ?? []) {
+    if (!e || GONE.test(e.title ?? '')) continue; // private or deleted videos stay listed
+    const youtube = /^youtube$/i.test(e.ie_key ?? '') && /^[\w-]{11}$/.test(e.id ?? '');
+    const link = youtube ? `https://www.youtube.com/watch?v=${e.id}` : e.url;
+    if (!/^https?:\/\//.test(link ?? '')) continue;
+    entries.push({
+      url: link,
+      videoId: youtube ? e.id : null,
+      title: String(e.title || 'Video').slice(0, 200),
+      duration: Number.isFinite(e.duration) && e.duration > 0 ? e.duration : null,
+      thumbnail: youtube ? `https://i.ytimg.com/vi/${e.id}/mqdefault.jpg` : null,
+    });
+  }
+  if (!entries.length) return null;
+  return { title: String(info.title || 'Playlist').slice(0, 200), count: Number(info.playlist_count) || entries.length, entries };
+}
+
+/** How long a YouTube video is (seconds), or null. */
+export async function youtubeDuration(videoId) {
+  const info = await ytdlpJson([
+    '-J', '--ignore-config', '--no-warnings', '--skip-download', '--no-playlist',
+    '--js-runtimes', `node:${process.execPath}`, `https://www.youtube.com/watch?v=${videoId}`,
+  ]);
+  return Number.isFinite(info?.duration) && info.duration > 0 ? info.duration : null;
+}

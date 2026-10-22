@@ -13,6 +13,9 @@ const BASE = process.env.BASE_URL ?? `http://localhost:${process.env.CLIENT_PORT
 const API = process.env.API_URL ?? `http://localhost:${process.env.PORT ?? 4080}`;
 const MEDIA_PORT = Number(process.env.MEDIA_PORT ?? 4099);
 const CLIP = `http://localhost:${MEDIA_PORT}/count-40s.webm`;
+const CLIP2 = `http://localhost:${MEDIA_PORT}/tone-60s.webm`;
+// A public playlist from 2010 (29 videos).
+const PLAYLIST = 'https://www.youtube.com/playlist?list=PLBB231211A4F62143';
 const SHOTS = new URL('./screenshots/', import.meta.url).pathname;
 mkdirSync(SHOTS, { recursive: true });
 const stamp = Date.now().toString(36);
@@ -272,11 +275,22 @@ await check('stop for everyone removes the video for all', async () => {
   await B.page.getByRole('log').getByText('Asha Host stopped the video').waitFor();
 });
 
-/** Asha plays the test clip from the start (through the Watch dialog), and everyone in the room watches. */
+/** Someone's own live connection, as their browser has. */
+async function socketOf(who) {
+  const cookie = (await who.ctx.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+  const s = io(API, { extraHeaders: { cookie }, transports: ['websocket'] });
+  await new Promise((r, j) => {
+    s.on('connect', r);
+    s.on('connect_error', j);
+  });
+  return s;
+}
+/** Asha plays the test clip from the start, and everyone in the room watches. */
 async function playClip(watchers) {
-  const found = await find(A.page, CLIP);
-  if (found.outcome !== 'choose') throw new Error(found.error);
-  await play(found.dlg);
+  const s = await socketOf(A);
+  const res = await s.timeout(30000).emitWithAck('watch:set', { roomId, url: CLIP });
+  s.close();
+  if (!res.ok) throw new Error(res.error);
   for (const p of watchers) await watchAlong(p);
   await waitFor(async () => {
     const all = await Promise.all(watchers.map(vid));
@@ -379,6 +393,70 @@ await check('in the app the sound goes on out of sight (the phone pauses the pic
   } finally {
     await ctx.close();
   }
+});
+
+const playingSrc = (p) => p.evaluate(() => document.querySelector('video[data-watch-video]')?.currentSrc ?? '');
+
+await check('Up next: an admin queues a video, everyone sees it, and it plays by itself when the current one ends', async () => {
+  await playClip([A.page, B.page]);
+  const found = await find(A.page, CLIP2);
+  if (found.outcome !== 'choose') throw new Error(found.error);
+  await found.dlg.getByRole('button', { name: 'Add to Up next' }).click();
+  await found.dlg.waitFor({ state: 'hidden' });
+  const upNext = B.page.getByRole('region', { name: 'Up next' });
+  await upNext.getByText(/tone-60s\.webm/).waitFor({ timeout: 5000 });
+  if (!(await playingSrc(B.page)).includes('count-40s')) throw new Error('adding replaced what was playing');
+  // Near its end: then the next one plays for everyone, with nobody pressing anything.
+  await A.page.evaluate(() => {
+    const v = document.querySelector('video[data-watch-video]');
+    v.currentTime = 36;
+    void v.play();
+  });
+  await waitFor(async () => {
+    const src = await playingSrc(B.page), b = await vid(B.page);
+    return { ok: src.includes('tone-60s') && b && !b.paused && b.t > 0.5, src, b };
+  }, 20000, 'the next video did not start by itself');
+  await B.page.getByRole('log').getByText(/Up next: “tone-60s.webm” is playing for everyone/).waitFor({ timeout: 5000 });
+  await upNext.waitFor({ state: 'hidden', timeout: 5000 });
+});
+
+await check('members can’t change Up next or skip', async () => {
+  const s = await socketOf(B);
+  const found = await s.timeout(90000).emitWithAck('watch:scan', { roomId, url: CLIP, requestId: 'm' });
+  const tries = await Promise.all([
+    s.timeout(5000).emitWithAck('watch:queue-add', { roomId, scanId: found.scanId, optionId: '0.0' }),
+    s.timeout(5000).emitWithAck('watch:queue-clear', { roomId }),
+    s.timeout(5000).emitWithAck('watch:next', { roomId }),
+    s.timeout(5000).emitWithAck('watch:duration', { roomId, watchId: 'x', duration: 1 }),
+  ]);
+  s.close();
+  if (found.ok !== false || tries.some((r) => r.ok !== false)) throw new Error(JSON.stringify([found, ...tries]));
+});
+
+await check('a YouTube playlist goes into Up next with one tap, in order, and Next moves on to it', async () => {
+  const found = await find(A.page, PLAYLIST);
+  if (found.outcome !== 'choose') throw new Error(found.error);
+  await found.dlg.getByText(/A playlist:/).waitFor();
+  await found.dlg.getByRole('button', { name: 'Add all to Up next' }).click();
+  await found.dlg.waitFor({ state: 'hidden' });
+  const upNext = B.page.getByRole('region', { name: 'Up next' });
+  await upNext.getByRole('button', { name: /^Up next/ }).click();
+  const first = await upNext.getByRole('listitem').first().innerText();
+  const count = await upNext.getByRole('listitem').count();
+  if (count < 20 || !/Team Fortress 2/.test(first)) throw new Error(`Up next has ${count}: ${first}`);
+  // What members get of it: titles and such, never the links or choices behind them.
+  const cookie = (await B.ctx.cookies()).map((c) => `${c.name}=${c.value}`).join('; ');
+  const { room } = await (await fetch(`${API}/api/rooms/${roomId}`, { headers: { cookie } })).json();
+  const leaked = room.queue.flatMap((i) => Object.keys(i)).filter((k) => !['id', 'title', 'site', 'thumbnail', 'duration', 'kind', 'addedBy', 'addedAt'].includes(k));
+  if (room.queue.length !== count || leaked.length) throw new Error(`members see ${room.queue.length} items with ${[...new Set(leaked)]}`);
+  await B.page.screenshot({ path: `${SHOTS}watch-6-up-next.png` });
+  await A.page.getByRole('region', { name: 'Up next' }).getByRole('button', { name: 'Next', exact: true }).click();
+  await B.page.locator('iframe[src*="youtube"]').waitFor({ timeout: 15000 });
+  if ((await upNext.getByRole('listitem').count()) !== count - 1) throw new Error('the played video stayed in Up next');
+  // Done with it: an empty Up next for what follows.
+  await A.page.getByRole('region', { name: 'Up next' }).getByRole('button', { name: /^Up next/ }).click();
+  await A.page.getByRole('button', { name: 'Clear Up next' }).click();
+  await upNext.waitFor({ state: 'hidden', timeout: 5000 });
 });
 
 await check('YouTube plays for everyone (and appears live on a phone already in the room)', async () => {

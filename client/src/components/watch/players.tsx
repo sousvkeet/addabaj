@@ -19,10 +19,12 @@ export type PlayerAdapter = {
   setRate?: (rate: number) => void;
   /** Whether its sound can go on out of sight (files; not YouTube, which stops). */
   background?: () => boolean;
+  /** How long the video is (seconds), once the player knows. */
+  duration: () => number | null;
 };
 
-/** A play/pause/seek made by the person at this player (admins only). */
-export type UserAction = { playing: boolean; position: number };
+/** A play/pause/seek made by the person at this player (admins only); `ended`: it played to its end. */
+export type UserAction = { playing: boolean; position: number; ended?: boolean };
 
 type ViewProps = {
   source: WatchSource;
@@ -149,13 +151,17 @@ export function YouTubeView({ source, controls, startAt, onReady, onUserAction, 
                 setMuted: (m) => (m ? p.mute() : p.unMute()),
                 volume: () => p.getVolume() / 100,
                 setVolume: (v) => p.setVolume(Math.round(v * 100)),
+                duration: () => {
+                  const d = p.getDuration();
+                  return Number.isFinite(d) && d > 0 ? d : null;
+                },
               });
             },
             onStateChange: (e: { data: number }) => {
               const p = player!;
               if (e.data === 1) callbacks.current.onUserAction({ playing: true, position: p.getCurrentTime() });
               else if (e.data === 2) callbacks.current.onUserAction({ playing: false, position: p.getCurrentTime() });
-              else if (e.data === 0) callbacks.current.onUserAction({ playing: false, position: p.getDuration() });
+              else if (e.data === 0) callbacks.current.onUserAction({ playing: false, position: p.getDuration(), ended: true });
             },
             onError: (e: { data: number }) => callbacks.current.onError(YT_ERRORS[e.data] ?? "YouTube couldn't play this video."),
           },
@@ -322,10 +328,11 @@ export function FileView({ source, controls, startAt, onReady, onUserAction, onE
           if (Math.abs(m.playbackRate - r) > 0.001) m.playbackRate = r;
         },
         background: canMove,
+        duration: () => (Number.isFinite(video.duration) && video.duration > 0 ? video.duration : null),
       });
     };
 
-    const action = () => callbacks.current.onUserAction({ playing: !video.paused && !video.ended, position: video.currentTime });
+    const action = () => callbacks.current.onUserAction({ playing: !video.paused && !video.ended, position: video.currentTime, ended: video.ended });
     video.addEventListener('loadedmetadata', announce);
     video.addEventListener('error', failed);
     video.addEventListener('play', action);

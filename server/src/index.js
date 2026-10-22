@@ -37,6 +37,7 @@ import { ffmpegPath } from './stream/ffmpeg.js';
 import { resumeMerges } from './stream/merge.js';
 import { live } from './socket/live.js';
 import { loadSessions } from './services/sessions.js';
+import { armQueues } from './socket/queue.js';
 
 await migrate();
 await ensureHostAdmin();
@@ -44,6 +45,7 @@ await loadSite();
 await loadPrivacy();
 await ensureRoomCodes();
 await loadSessions();
+await armQueues();
 // Logins older than a cookie's life are dropped now and then.
 setInterval(() => void loadSessions().catch((err) => console.error('Could not tidy sessions', err)), 12 * 60 * 60 * 1000).unref();
 

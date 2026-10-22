@@ -27,6 +27,13 @@ export function youtubeLink(url) {
   return { videoId: id, start: parseStart(url.searchParams.get('t') ?? url.searchParams.get('start')) };
 }
 
+/** A YouTube playlist's id in a link (the playlist's page, or a video played from it), or null. */
+export function youtubePlaylistId(url) {
+  if (!YT_HOSTS.has(url.hostname)) return null;
+  const list = url.searchParams.get('list');
+  return list && /^[\w-]{10,80}$/.test(list) ? list : null;
+}
+
 /**
  * Asks YouTube whether the video exists and may be shown in its player on
  * other sites, and for its title: { title, embeddable } (title may be null).
@@ -113,11 +120,32 @@ export function publicWatch(watch) {
   return rest;
 }
 
+/** Up next as members may see it (not the links or choices behind each video). */
+export function publicQueue(queue) {
+  return (queue ?? []).map(({ id, title, site, thumbnail, duration, kind, addedBy, addedAt }) => ({
+    id,
+    title,
+    site: site ?? null,
+    thumbnail: thumbnail ?? null,
+    duration: duration ?? null,
+    kind,
+    addedBy,
+    addedAt,
+  }));
+}
+
 export async function getWatch(roomId) {
   return (await one('SELECT watch FROM rooms WHERE id = $1', [roomId]))?.watch ?? null;
+}
+
+// Told about every change (see socket/queue.js: Up next moves on when a video ends).
+let saved = () => {};
+export function onWatchSaved(fn) {
+  saved = fn;
 }
 
 export async function saveWatch(roomId, watch) {
   await one('UPDATE rooms SET watch = $2 WHERE id = $1 RETURNING id', [roomId, watch]);
   getIO()?.to(roomChannel(roomId)).emit('watch:state', { roomId, watch: publicWatch(watch) });
+  saved(roomId, watch);
 }

@@ -14,6 +14,7 @@ import { live } from './live.js';
 import { guardSocket, handle, rateLimiter } from './util.js';
 import { voice } from './voice.js';
 import { registerWatch } from './watch.js';
+import { registerQueue } from './queue.js';
 
 // Stops reaction and delete floods: 30 per 10 s per person.
 const canReact = rateLimiter(30, 10_000);
@@ -47,6 +48,7 @@ export function initSocket(io) {
     calls.register(io, socket);
     voice.register(io, socket);
     registerWatch(socket);
+    registerQueue(socket);
     live.register(socket);
 
     // Whether this app or tab is on screen and in use. Phones only get a push

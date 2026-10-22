@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { FileVideo, Link2, LoaderCircle, Maximize, MonitorPlay, MonitorUp, Play, Search, Smartphone, Volume2, VolumeX } from 'lucide-react';
+import { FileVideo, Link2, ListPlus, ListVideo, LoaderCircle, Maximize, MonitorPlay, MonitorUp, Play, Search, Smartphone, Volume2, VolumeX } from 'lucide-react';
 import { errorMessage } from '../../lib/api';
 import { inApp } from '../../lib/native';
 import { serverNow } from '../../lib/clock';
@@ -80,12 +80,26 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
     setNeedsTap(false);
   }, [sourceKey]);
 
+  /** When (server time) this player last sent a change. */
+  const sentAt = useRef(0);
   const control = useCallback(
-    (playing: boolean, position: number) => {
-      emitAck('watch:control', { roomId: room.id, playing, position }).catch((err) => toast(errorMessage(err), 'error'));
+    (playing: boolean, position: number, ended = false) => {
+      sentAt.current = serverNow() - 1000;
+      emitAck('watch:control', { roomId: room.id, playing, position, ended }).catch((err) => toast(errorMessage(err), 'error'));
     },
     [room.id],
   );
+
+  // An admin's player tells the room how long the video is when nothing else
+  // did (a link the server couldn't check): Up next moves on at its end.
+  const toldLength = useRef('');
+  const tellLength = useCallback(() => {
+    const w = watchRef.current;
+    const length = adapterRef.current?.duration();
+    if (!isAdmin || !w.id || w.duration || !length || toldLength.current === w.id) return;
+    toldLength.current = w.id;
+    socket.emit('watch:duration', { roomId: room.id, watchId: w.id, duration: length });
+  }, [isAdmin, room.id]);
 
   /** Bring this player in line with the shared state. */
   const apply = useCallback(
@@ -93,20 +107,30 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
       const a = adapter;
       const w = watchRef.current;
       if (!a || (pausing.current && !force)) return;
-      // A change I just made already matches my player.
-      if (!force && w.by === meId && serverNow() - w.at < 1500) return;
-      suppressUntil.current = Date.now() + 1500;
+      // A change I just made already matches my player; and a room state older
+      // than my last change (an update crossing it on the way) mustn't undo it.
+      if (!force && w.by === meId && (serverNow() - w.at < 1500 || w.at < sentAt.current)) return;
+      // What this does to the player looks like clicks for a moment, and isn't
+      // anyone's control. (Only then: a room update that changes nothing here,
+      // such as its length becoming known, mustn't swallow a real click.)
+      const quiet = () => (suppressUntil.current = Math.max(suppressUntil.current, Date.now() + 1500));
       if (!a.live()) {
         const drift = a.time() - expected(w);
         if (Math.abs(drift) > (!w.playing ? PAUSED_SECONDS : a.setRate ? SEEK_SECONDS : DRIFT_SECONDS)) {
+          quiet();
           a.seek(expected(w));
           a.setRate?.(1);
         } else {
           a.setRate?.(w.playing ? catchUpRate(drift) : 1);
         }
       }
-      if (w.playing && !a.playing()) setNeedsTap(!(await a.play()));
-      else if (!w.playing && a.playing()) a.pause();
+      if (w.playing && !a.playing()) {
+        quiet();
+        setNeedsTap(!(await a.play()));
+      } else if (!w.playing && a.playing()) {
+        quiet();
+        a.pause();
+      }
       if (!w.playing) setNeedsTap(false);
     },
     [adapter, meId],
@@ -128,6 +152,7 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
     if (!adapter) return;
     const id = window.setInterval(() => {
       const w = watchRef.current;
+      tellLength();
       if (hidden()) {
         if (adapter.background?.()) void apply();
         return;
@@ -149,7 +174,7 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
       }
     }, 2000);
     return () => window.clearInterval(id);
-  }, [adapter, apply, control, isAdmin, meId, needsTap]);
+  }, [adapter, apply, control, isAdmin, meId, needsTap, tellLength]);
 
   // Back in sight: the player may have stopped, or run on, by itself meanwhile.
   // It lines up with the room again; what the browser does as it resumes
@@ -165,7 +190,7 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
   }, [apply]);
 
   const onUserAction = useCallback(
-    ({ playing, position }: UserAction) => {
+    ({ playing, position, ended }: UserAction) => {
       // Only what an admin does at their player drives the room, never what a
       // phone or browser does on its own out of sight.
       if (!isAdmin || Date.now() < suppressUntil.current || hidden()) return;
@@ -173,7 +198,7 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
         const w = watchRef.current;
         // Our own sync moves look like clicks; only real changes go out.
         if (w.playing === playing && Math.abs(position - expected(w)) < DRIFT_SECONDS) return;
-        control(playing, position);
+        control(playing, position, ended);
       };
       if (playing) return send();
       // A pause made as the page goes out of sight can arrive just before it's
@@ -212,7 +237,7 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
     <section aria-label="Watch together" className={docked ? 'size-full bg-black' : 'shrink-0 border-b border-line bg-black'}>
       <div ref={frame} className={docked ? 'relative size-full bg-black' : 'relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black'}>
         {watch.source.preparing || watch.source.error ? (
-          <Preparing roomId={room.id} failed={watch.source.error} />
+          <Preparing roomId={room.id} failed={watch.source.error} finding={watch.source.finding ? watch.source.title : undefined} />
         ) : (
           <View
             key={sourceKey}
@@ -317,8 +342,16 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
  * While the server downloads the separate picture and sound files and joins
  * them, everyone sees the progress; playback then starts for the whole room.
  */
-function Preparing({ roomId, failed }: { roomId: string; failed?: string }) {
+function Preparing({ roomId, failed, finding }: { roomId: string; failed?: string; finding?: string }) {
   const p = useWatchProgress((s) => s.rooms[roomId]);
+  if (finding) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-deep px-8 text-center text-on-brand" role="status">
+        <LoaderCircle size={26} className="animate-spin text-live" />
+        <p className="text-[15px] font-semibold">Up next: getting “{finding}” ready…</p>
+      </div>
+    );
+  }
   if (failed) {
     return (
       <div role="alert" className="absolute inset-0 flex items-center justify-center bg-deep p-6 text-center text-[14.5px] text-on-brand">
@@ -360,7 +393,7 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
   const [result, setResult] = useState<FindResult | null>(null);
   const [selected, setSelected] = useState('');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<'' | 'play' | 'queue' | 'all'>('');
   const [tab, setTab] = useState<'link' | 'device'>('link');
   const request = useRef(0);
 
@@ -407,7 +440,7 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
 
   async function play() {
     if (!result || !selected) return;
-    setBusy(true);
+    setBusy('play');
     setError('');
     try {
       await emitAck('watch:set', { roomId, scanId: result.scanId, optionId: selected }, 30_000);
@@ -415,7 +448,27 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
     } catch (err) {
       setError(errorMessage(err));
     } finally {
-      setBusy(false);
+      setBusy('');
+    }
+  }
+
+  /** Into Up next: the chosen video, or (`all`) every video of the playlist. It starts at once if nothing is on. */
+  async function queue(all: boolean) {
+    if (!result || (!all && !selected)) return;
+    setBusy(all ? 'all' : 'queue');
+    setError('');
+    try {
+      const { added } = await emitAck<{ added: number }>(
+        'watch:queue-add',
+        all ? { roomId, scanId: result.scanId, playlist: true } : { roomId, scanId: result.scanId, optionId: selected },
+        60_000,
+      );
+      onClose();
+      toast(added === 1 ? 'Added to Up next.' : `Added ${added} videos to Up next.`);
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setBusy('');
     }
   }
 
@@ -466,7 +519,7 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
         <form onSubmit={find} className="space-y-4" noValidate>
           <Field
             label="Link"
-            hint="Works with YouTube, Facebook, Instagram, X, Dailymotion, news and video sites, and direct .mp4 or .m3u8 links."
+            hint="Works with YouTube (videos and playlists), Facebook, Instagram, X, Dailymotion, news and video sites, and direct .mp4 or .m3u8 links."
           >
             <input
               className={inputClass}
@@ -515,6 +568,25 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
 
       {step === 'choose' && result && (
         <div>
+          {result.playlist && (
+            <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-2xl border border-line bg-subtle/60 p-3">
+              <ListVideo size={20} className="shrink-0 text-brand dark:text-live" aria-hidden />
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-semibold">{result.playlist.title}</p>
+                <p className="text-[13px] text-ink-soft">
+                  A playlist:{' '}
+                  {result.playlist.total > result.playlist.count
+                    ? `its first ${result.playlist.count} of ${result.playlist.total} videos`
+                    : `${result.playlist.count} ${result.playlist.count === 1 ? 'video' : 'videos'}`}
+                  , one after another
+                </p>
+              </div>
+              <Button size="sm" onClick={() => void queue(true)} busy={busy === 'all'} disabled={!!busy}>
+                <ListPlus size={15} />
+                Add all to Up next
+              </Button>
+            </div>
+          )}
           <ul className="space-y-3">
             {result.videos.map((v) => (
               <li key={v.id} className="rounded-2xl border border-line p-3">
@@ -575,13 +647,19 @@ export function WatchDialog({ roomId, open, onClose, replacing }: { roomId: stri
               {error}
             </p>
           )}
-          <div className="mt-4 flex justify-between gap-2">
+          <div className="mt-4 flex flex-wrap justify-between gap-2">
             <Button variant="ghost" onClick={() => setStep('link')}>
               Try another link
             </Button>
-            <Button onClick={() => void play()} busy={busy} disabled={!selected}>
-              Play for everyone
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="soft" onClick={() => void queue(false)} busy={busy === 'queue'} disabled={!selected || !!busy} title="Plays after what's on now">
+                <ListPlus size={16} />
+                Add to Up next
+              </Button>
+              <Button onClick={() => void play()} busy={busy === 'play'} disabled={!selected || !!busy}>
+                Play for everyone
+              </Button>
+            </div>
           </div>
         </div>
       )}
