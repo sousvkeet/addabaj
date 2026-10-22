@@ -25,6 +25,8 @@ function expected(w: WatchState) {
 const DRIFT_SECONDS = 1.25;
 /** Players with fine speed control (files, streams) only seek past this; smaller drifts are eased out. */
 const SEEK_SECONDS = 2.5;
+/** Paused, everyone shows the same moment. */
+const PAUSED_SECONDS = 0.25;
 
 /**
  * Speed that closes a small gap smoothly: up to 15% faster when behind,
@@ -34,7 +36,14 @@ const catchUpRate = (drift: number) => (Math.abs(drift) < 0.2 ? 1 : 1 - Math.max
 /** The host re-anchors the timeline to its real position past this (e.g. after buffering). */
 const HOST_DRIFT_SECONDS = 1;
 
-type StageProps = { room: RoomDetail; onChange: () => void };
+/**
+ * Out of sight: the app in the background, the screen locked, another tab.
+ * Phones then pause videos by themselves, which is nobody's choice.
+ */
+const hidden = () => document.visibilityState === 'hidden';
+
+/** `docked`: shown small, away from the room's page (just the picture). */
+export type StageProps = { room: RoomDetail; onChange: () => void; docked?: boolean };
 
 /** The room's video: a link everyone plays in sync, or a live stream from an admin's device. */
 export function WatchStage(props: StageProps) {
@@ -46,11 +55,13 @@ export function WatchStage(props: StageProps) {
  * admin who last pressed play, pause or seek is the host, and their player
  * is the reference the others follow.
  */
-function SyncedStage({ room, onChange }: StageProps) {
+function SyncedStage({ room, onChange, docked = false }: StageProps) {
   const watch = room.watch!;
   const meId = useAuth((s) => s.user?.id);
   const isAdmin = room.myRole === 'admin';
   const [adapter, setAdapter] = useState<PlayerAdapter | null>(null);
+  const adapterRef = useRef(adapter);
+  adapterRef.current = adapter;
   const [error, setError] = useState('');
   const [needsTap, setNeedsTap] = useState(false);
   const [muted, setMuted] = useState(false);
@@ -59,6 +70,8 @@ function SyncedStage({ room, onChange }: StageProps) {
   const watchRef = useRef(watch);
   watchRef.current = watch;
   const suppressUntil = useRef(0);
+  /** An admin's pause on its way to the room (see onUserAction): nothing plays the video meanwhile. */
+  const pausing = useRef(false);
   const sourceKey = `${watch.source.kind}:${watch.source.url}`;
 
   useEffect(() => {
@@ -79,13 +92,13 @@ function SyncedStage({ room, onChange }: StageProps) {
     async (force = false) => {
       const a = adapter;
       const w = watchRef.current;
-      if (!a) return;
+      if (!a || (pausing.current && !force)) return;
       // A change I just made already matches my player.
       if (!force && w.by === meId && serverNow() - w.at < 1500) return;
       suppressUntil.current = Date.now() + 1500;
       if (!a.live()) {
         const drift = a.time() - expected(w);
-        if (Math.abs(drift) > (a.setRate ? SEEK_SECONDS : DRIFT_SECONDS)) {
+        if (Math.abs(drift) > (!w.playing ? PAUSED_SECONDS : a.setRate ? SEEK_SECONDS : DRIFT_SECONDS)) {
           a.seek(expected(w));
           a.setRate?.(1);
         } else {
@@ -108,11 +121,17 @@ function SyncedStage({ room, onChange }: StageProps) {
   }, [adapter, apply]);
 
   // Every 2 s: the host reports where it really is (seeks inside YouTube's own
-  // controls fire no event); everyone else corrects any drift.
+  // controls fire no event); everyone else corrects any drift. Out of sight a
+  // player only follows the room (as far as it can play there at all), so a
+  // phone in someone's pocket never pulls everyone back.
   useEffect(() => {
     if (!adapter) return;
     const id = window.setInterval(() => {
       const w = watchRef.current;
+      if (hidden()) {
+        if (adapter.background?.()) void apply();
+        return;
+      }
       if (isAdmin && w.by === meId) {
         adapter.setRate?.(1); // the host is the reference and always plays at normal speed
         if (Date.now() < suppressUntil.current || needsTap) return;
@@ -120,7 +139,7 @@ function SyncedStage({ room, onChange }: StageProps) {
         // the timeline (e.g. after buffering, or a seek in YouTube's controls),
         // and only while the host's video is really playing.
         if (w.playing && !adapter.playing()) {
-          void adapter.play();
+          if (!pausing.current) void adapter.play();
           return;
         }
         const t = adapter.time();
@@ -132,13 +151,39 @@ function SyncedStage({ room, onChange }: StageProps) {
     return () => window.clearInterval(id);
   }, [adapter, apply, control, isAdmin, meId, needsTap]);
 
+  // Back in sight: the player may have stopped, or run on, by itself meanwhile.
+  // It lines up with the room again; what the browser does as it resumes
+  // (playing on from where it froze) isn't anyone's choice.
+  useEffect(() => {
+    const back = () => {
+      if (hidden()) return;
+      void apply(true);
+      suppressUntil.current = Date.now() + 2500;
+    };
+    document.addEventListener('visibilitychange', back);
+    return () => document.removeEventListener('visibilitychange', back);
+  }, [apply]);
+
   const onUserAction = useCallback(
     ({ playing, position }: UserAction) => {
-      if (!isAdmin || Date.now() < suppressUntil.current) return;
-      const w = watchRef.current;
-      // Our own sync moves look like clicks; only real changes go out.
-      if (w.playing === playing && Math.abs(position - expected(w)) < DRIFT_SECONDS) return;
-      control(playing, position);
+      // Only what an admin does at their player drives the room, never what a
+      // phone or browser does on its own out of sight.
+      if (!isAdmin || Date.now() < suppressUntil.current || hidden()) return;
+      const send = () => {
+        const w = watchRef.current;
+        // Our own sync moves look like clicks; only real changes go out.
+        if (w.playing === playing && Math.abs(position - expected(w)) < DRIFT_SECONDS) return;
+        control(playing, position);
+      };
+      if (playing) return send();
+      // A pause made as the page goes out of sight can arrive just before it's
+      // hidden: only one that holds, with the page still in sight, goes out.
+      pausing.current = true;
+      window.setTimeout(() => {
+        pausing.current = false;
+        const a = adapterRef.current;
+        if (!hidden() && Date.now() >= suppressUntil.current && a && !a.playing()) send();
+      }, 600);
     },
     [control, isAdmin],
   );
@@ -164,8 +209,8 @@ function SyncedStage({ room, onChange }: StageProps) {
   const startAt = expected(watch);
 
   return (
-    <section aria-label="Watch together" className="shrink-0 border-b border-line bg-black">
-      <div ref={frame} className="relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black">
+    <section aria-label="Watch together" className={docked ? 'size-full bg-black' : 'shrink-0 border-b border-line bg-black'}>
+      <div ref={frame} className={docked ? 'relative size-full bg-black' : 'relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black'}>
         {watch.source.preparing || watch.source.error ? (
           <Preparing roomId={room.id} failed={watch.source.error} />
         ) : (
@@ -202,7 +247,7 @@ function SyncedStage({ room, onChange }: StageProps) {
           </div>
         )}
 
-        {!isAdmin && adapter && !error && (
+        {!isAdmin && adapter && !error && !docked && (
           <div className="absolute right-2 bottom-2 flex items-center gap-1.5 rounded-full bg-black/55 p-1 pr-2 text-white backdrop-blur-sm">
             <IconButton
               label={muted ? 'Unmute video' : 'Mute video'}
@@ -238,7 +283,7 @@ function SyncedStage({ room, onChange }: StageProps) {
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
+      <div hidden={docked} className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
         <MonitorPlay size={18} className="shrink-0 text-live" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14.5px]">

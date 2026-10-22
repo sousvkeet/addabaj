@@ -17,6 +17,8 @@ export type PlayerAdapter = {
   setVolume: (volume: number) => void;
   /** Fine speed control for gentle catch-up (not available for YouTube). */
   setRate?: (rate: number) => void;
+  /** Whether its sound can go on out of sight (files; not YouTube, which stops). */
+  background?: () => boolean;
 };
 
 /** A play/pause/seek made by the person at this player (admins only). */
@@ -198,6 +200,56 @@ export function FileView({ source, controls, startAt, onReady, onUserAction, onE
     let retryTimer = 0;
     let watchdog = 0;
 
+    // Out of sight (the app in the background, the screen locked), phones
+    // pause videos but let sound play on: the sound moves to an audio element
+    // until the page is back in sight, so the room's video can still be heard.
+    let sound: HTMLAudioElement | null = null;
+    /** A pause of ours (not the browser's). */
+    let pausing = false;
+    const media = (): HTMLMediaElement => sound ?? video;
+    const canMove = () => !hls && !liveStream && !!video.currentSrc && video.duration !== Infinity;
+    const hiddenNow = () => document.visibilityState === 'hidden';
+    const toSound = () => {
+      if (sound || disposed || !canMove()) return;
+      const a = new Audio();
+      a.preload = 'auto';
+      a.src = video.currentSrc;
+      a.currentTime = video.currentTime;
+      a.muted = video.muted;
+      a.volume = video.volume;
+      a.playbackRate = video.playbackRate;
+      sound = a;
+      void a.play().catch(() => {});
+    };
+    const toVideo = () => {
+      const a = sound;
+      if (!a) return;
+      sound = null;
+      const playing = !a.paused && !a.ended;
+      video.currentTime = a.currentTime;
+      a.pause();
+      a.removeAttribute('src');
+      a.load();
+      if (playing) void video.play().catch(() => {});
+      else if (!video.paused) {
+        pausing = true;
+        video.pause();
+      }
+    };
+    // The browser pausing the video out of sight (not the room, nor the end).
+    const paused = () => {
+      if (pausing) {
+        pausing = false;
+        return;
+      }
+      if (hiddenNow() && !video.ended) toSound();
+    };
+    const sight = () => {
+      if (!hiddenNow()) toVideo();
+    };
+    video.addEventListener('pause', paused);
+    document.addEventListener('visibilitychange', sight);
+
     const report = () => {
       const insecure = location.protocol === 'https:' && source.url.startsWith('http:');
       callbacks.current.onError(
@@ -239,28 +291,37 @@ export function FileView({ source, controls, startAt, onReady, onUserAction, onE
         // (a load or seek got in the way) is retried by the next sync tick, and
         // real failures arrive as the element's error event.
         play: () =>
-          video.play().then(
-            () => true,
-            (err: DOMException) => err.name !== 'NotAllowedError',
-          ),
-        pause: () => video.pause(),
-        seek: (s) => {
-          video.currentTime = s;
+          media()
+            .play()
+            .then(
+              () => true,
+              (err: DOMException) => err.name !== 'NotAllowedError',
+            ),
+        pause: () => {
+          if (!sound && !video.paused) pausing = true;
+          media().pause();
         },
-        time: () => video.currentTime,
-        playing: () => !video.paused && !video.ended,
+        seek: (s) => {
+          media().currentTime = s;
+        },
+        time: () => media().currentTime,
+        playing: () => !media().paused && !media().ended,
         live: () => liveStream || video.duration === Infinity,
         muted: () => video.muted,
         setMuted: (m) => {
           video.muted = m;
+          if (sound) sound.muted = m;
         },
         volume: () => video.volume,
         setVolume: (v) => {
           video.volume = v;
+          if (sound) sound.volume = v;
         },
         setRate: (r) => {
-          if (Math.abs(video.playbackRate - r) > 0.001) video.playbackRate = r;
+          const m = media();
+          if (Math.abs(m.playbackRate - r) > 0.001) m.playbackRate = r;
         },
+        background: canMove,
       });
     };
 
@@ -306,6 +367,14 @@ export function FileView({ source, controls, startAt, onReady, onUserAction, onE
       disposed = true;
       window.clearTimeout(retryTimer);
       window.clearTimeout(watchdog);
+      video.removeEventListener('pause', paused);
+      document.removeEventListener('visibilitychange', sight);
+      if (sound) {
+        sound.pause();
+        sound.removeAttribute('src');
+        sound.load();
+        sound = null;
+      }
       video.removeEventListener('loadedmetadata', announce);
       video.removeEventListener('error', failed);
       video.removeEventListener('play', action);

@@ -203,13 +203,17 @@ How linked videos play:
 - The stream's sound plays on the speaker chosen in settings, like calls.
 - **Share your screen or a tab** from a computer. To include sound, share a tab and turn on "Share tab audio".
 - Nothing is uploaded: picture and sound go straight from the host's browser to each viewer (through the TURN relay when a direct route is blocked). It starts at once, in HD with stereo sound, and up to `LIVE_MAX_VIEWERS` (default 10) people can watch.
-- The stream keeps going while the host looks at other pages, with a "Live in…" bar to get back. It survives a short connection drop, ends when the host closes the tab, and ends after 15 seconds if their connection doesn't come back. Any admin can stop it.
+- The stream keeps going while the host looks at other pages, with a "Live in…" bar to get back. It survives a short connection drop, ends when the host closes the tab (the browser asks first), and ends after 15 seconds if their connection doesn't come back. Any admin can stop it.
+- **From the Android app it keeps streaming when the host leaves the app** (home, another app, the screen off), with a notification to stop it (app 1.6.3 on).
 
 **Sync and control:**
 
 - Only admins can find, play, pause, seek, change or stop, and the server enforces this.
 - The admin who last controlled playback is the host. Every member's player compares itself with the shared timeline every 2 seconds and catches up if it drifts. Late joiners start at the current point.
+- **It runs on in the room whoever leaves.** Only what an admin does at their player counts: a phone or browser pausing the video by itself (leaving the app, locking the screen, switching tabs) doesn't pause it for anyone, and coming back catches up with the room instead of pulling everyone back. Closing the app or the tab doesn't stop it either.
 - Members get volume, mute and full screen. If their browser blocks autoplay, they see **Click to watch along**.
+- **Leaving the room keeps it playing** in a small player in the corner while you look at other chats: tap it to go back to the room, or close it to stop watching (just for you).
+- **In the Android app it plays on in the background** (sound, with a "Watching together" notification to stop it) when you leave the app or lock the screen, and the picture picks up in step when you come back (app 1.6.3 on). This works for video files, videos from web pages and live streams. YouTube's own player stops in the background (YouTube's rule), so it catches up when you return.
 - It won't play DRM-protected video (Netflix, Prime Video and similar), get past logins or bot checks, or fetch anything on the server's own machine or network. Each of these is explained when it happens.
 
 ### Design
@@ -390,6 +394,7 @@ server {
   - The phone's own font, Android's press ripples, no zooming or selecting words by accident.
 - **Opens at once, even offline:**
   - The app keeps your recent chats on the phone, so it opens straight onto them while it catches up. With no connection it still opens, showing them with "Waiting for network…".
+  - Watching together keeps playing (its sound) when you leave the app or lock the screen, and a live stream from the phone keeps streaming.
   - A message written offline waits with a clock and sends itself when the connection is back, even if the app was closed and opened again meanwhile. Several messages (or photos) sent together arrive in the order you wrote them, and a message is never saved twice, even when its answer was lost on a bad connection and it's sent again.
   - After you update the server, an app left open picks up the new version by itself: it reloads the next time it's out of sight (never during a call, room voice, a live stream, or while a message is sending).
 
@@ -441,7 +446,7 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 |---|---|
 | `npm run test:e2e` | Sign-up and login errors; chat with typing and read ticks; voice calls with mute, hang-up and decline; a video call with real frames both ways, camera off/on and switching microphone mid-call; rooms with add, invite and the member limit; three-way room voice; removing a member; the themes. It also checks the TURN relay with a relay-only connection. |
 | `npm run test:attachments` | A large photo shrunk and delivered live; a file that only downloads; video in the chat; paste and drag; voice messages; replies and reactions; retrying a failed upload; the size limit; history after reload; files private to their chat or room; the phone's press-and-hold menu. |
-| `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube in its player and through the server; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses. Needs internet. |
+| `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube in its player and through the server; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses; an admin's phone pausing the video out of sight not stopping the room (nor pulling it back after); the small player that keeps it going away from the room; and in the app the sound going on out of sight and the picture picking up after. Needs internet. |
 | `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. Ad blocking: an ad-heavy page with a pre-roll ad and a click-hijacking layer still finds the movie, the filter lists tell ads from videos, and ad breaks are cut from finished streams. |
 | `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; a movie with Dolby Digital 5.1 sound converted in the host's browser and heard by viewers, in sync after a jump; pause and seek for viewers; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
 | `npm run test:receipts` | One tick to someone offline, two ticks the moment they come back (for every waiting message), two at once when they're online, coloured when they open the chat; message info times; "Last seen just now" and back to "Online"; read receipts off (the sender only sees delivered, both ways, even after a reload); last seen hidden (no status either way, and the API doesn't reveal it); room ticks and "Seen by", room message info and member status; a faked read-ahead and someone else's message info refused. |

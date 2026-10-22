@@ -15,7 +15,8 @@ import { FileDrop } from '../components/FileDrop';
 import { MessageList, TypingLine, recentEnoughToDelete, replyRefFor, type ThreadItem } from '../components/MessageList';
 import { MessageInfo, type InfoTarget } from '../components/MessageInfo';
 import { RoomPanel } from '../components/RoomPanel';
-import { WatchDialog, WatchStage } from '../components/watch/WatchStage';
+import { WatchDialog } from '../components/watch/WatchStage';
+import { WatchSlot } from '../components/watch/WatchDock';
 import { goBack } from '../lib/screens';
 import { StatusLine } from '../components/ConnectionNotice';
 
@@ -220,7 +221,7 @@ export function RoomView() {
           )}
         </header>
 
-        {detail?.watch && <WatchStage room={detail} onChange={() => setWatchOpen(true)} />}
+        {detail?.watch && <WatchSlot roomId={detail.id} onChange={() => setWatchOpen(true)} />}
 
         <FileDrop className="flex min-h-0 flex-1 flex-col" onFiles={(files) => composer.current?.addFiles(files)}>
           <MessageList

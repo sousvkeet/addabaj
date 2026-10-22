@@ -41,8 +41,8 @@ final class IncomingCall {
         // so this only guards against stragglers; the margin allows for a phone whose clock is off.
         long sentAt = parse(d.get("sentAt"), System.currentTimeMillis());
         if (System.currentTimeMillis() - sentAt > RING_MS + CLOCK_SLACK_MS) return;
-        // The open app rings itself; and nobody takes a second call mid-call.
-        if (AddaApp.visible || CallService.running) return;
+        // The open app rings itself; and nobody takes a second call mid-call (watching a video isn't one).
+        if (AddaApp.visible || (CallService.running && !"watch".equals(CallService.kind))) return;
 
         String name = d.get("callerName") == null ? "Someone" : d.get("callerName");
         int hue = Avatars.hue(d.get("callerHue"));

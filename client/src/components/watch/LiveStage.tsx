@@ -19,7 +19,7 @@ const positionOf = (w: WatchState) => (w.playing ? w.position + Math.max(0, serv
  * A live stream from an admin's device. The host sees a preview with their
  * player controls; everyone else gets the live picture and sound.
  */
-export function LiveStage({ room, onChange }: { room: RoomDetail; onChange: () => void }) {
+export function LiveStage({ room, onChange, docked = false }: { room: RoomDetail; onChange: () => void; docked?: boolean }) {
   const watch = room.watch!;
   const device = watch.source.device!;
   const meId = useAuth((s) => s.user?.id);
@@ -42,9 +42,9 @@ export function LiveStage({ room, onChange }: { room: RoomDetail; onChange: () =
   }
 
   return (
-    <section aria-label="Live stream" className="shrink-0 border-b border-line bg-black">
-      <div ref={frame} className="relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black">
-        {mine ? <HostView host={host} frame={frame} /> : <ViewerView key={device.sessionId} room={room} watch={watch} frame={frame} />}
+    <section aria-label="Live stream" className={docked ? 'size-full bg-black' : 'shrink-0 border-b border-line bg-black'}>
+      <div ref={frame} className={docked ? 'relative size-full bg-black' : 'relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black'}>
+        {mine ? <HostView host={host} frame={frame} /> : <ViewerView key={device.sessionId} room={room} watch={watch} frame={frame} docked={docked} />}
         <span className="pointer-events-none absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[12px] font-bold tracking-wide text-white">
           <span className="rec-dot size-2 rounded-full bg-danger" aria-hidden />
           LIVE
@@ -52,7 +52,7 @@ export function LiveStage({ room, onChange }: { room: RoomDetail; onChange: () =
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
+      <div hidden={docked} className="flex flex-wrap items-center gap-x-3 gap-y-2 bg-deep px-4 py-2.5 text-on-brand">
         <Radio size={18} className="shrink-0 text-live" aria-hidden />
         <div className="min-w-0 flex-1">
           <p className="truncate text-[14.5px]">
@@ -185,7 +185,7 @@ function HostView({ host, frame }: { host: HostSession; frame: RefObject<HTMLDiv
 
 // ── Everyone else ────────────────────────────────────────────────────
 
-function ViewerView({ room, watch, frame }: { room: RoomDetail; watch: WatchState; frame: RefObject<HTMLDivElement | null> }) {
+function ViewerView({ room, watch, frame, docked }: { room: RoomDetail; watch: WatchState; frame: RefObject<HTMLDivElement | null>; docked: boolean }) {
   const device = watch.source.device!;
   const viewer = useLiveStream((s) => (s.viewer?.sessionId === device.sessionId ? s.viewer : null));
   const video = useRef<HTMLVideoElement>(null);
@@ -288,7 +288,7 @@ function ViewerView({ room, watch, frame }: { room: RoomDetail; watch: WatchStat
         </button>
       )}
 
-      {stream && (
+      {stream && !docked && (
         <div className="absolute inset-x-0 bottom-0 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent px-2 pt-6 pb-2 text-white">
           {showProgress ? (
             <>

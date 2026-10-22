@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
 import { CandidateQueue, createPeer, loadIceServers, stopStream } from '../lib/rtc';
+import { inApp } from '../lib/native';
 import { emitAck, socket } from '../lib/socket';
 import { probeSound, SoundFix, type LocalOutput } from '../lib/soundFix';
 import { onLogout, useAuth } from './auth';
@@ -610,6 +611,13 @@ export const useLiveStream = create<LiveState>()((set, get) => {
       }
     },
   };
+});
+
+// In a browser, closing the tab ends your stream (it comes from this tab): the browser asks first.
+window.addEventListener('beforeunload', (e) => {
+  if (inApp || !useLiveStream.getState().host) return;
+  e.preventDefault();
+  e.returnValue = '';
 });
 
 // Closing or reloading the tab ends the stream right away instead of after the grace period.

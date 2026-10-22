@@ -1,7 +1,7 @@
 // Wires the page to the Android app (see lib/native.ts): registers the phone
 // for notifications, keeps the app told what's running (call, room voice,
-// live stream) so it can keep it going in the background, and acts on what
-// the person did in the app's notifications and call screen.
+// live stream, a room's video) so it can keep it going in the background, and
+// acts on what the person did in the app's notifications and call screen.
 import { api } from './lib/api';
 import { inApp, nativeReady, nativeRinging, nativeSession, nativeUser, onNative, pushToken, setNativeAnswer, type Session } from './lib/native';
 import { startTone } from './lib/sounds';
@@ -11,6 +11,7 @@ import { useCall } from './store/call';
 import { useChat } from './store/chat';
 import { useLiveStream } from './store/liveStream';
 import { useVoice } from './store/voice';
+import { useWatching } from './store/watching';
 
 let voiceSince = 0;
 let liveSince = 0;
@@ -42,6 +43,11 @@ function currentSession(): Session {
     return { kind: 'live', roomId: host.roomId, name: rooms[host.roomId]?.name ?? 'Room', mode: host.mode, startedAt: liveSince };
   }
   liveSince = 0;
+  const roomId = useWatching.getState().roomId;
+  const watch = roomId ? useChat.getState().roomDetails[roomId]?.watch : null;
+  if (roomId && watch && !watch.source.preparing && !watch.source.error && (watch.source.kind === 'file' || watch.source.kind === 'device')) {
+    return { kind: 'watch', roomId, name: rooms[roomId]?.name ?? 'Room', title: watch.source.title, paused: !watch.playing };
+  }
   return { kind: 'none' };
 }
 
@@ -57,6 +63,24 @@ export function setNativeNavigator(fn: ((path: string) => void) | null) {
   }
 }
 
+/**
+ * While this phone streams a video file live, the app keeps the page awake
+ * out of sight (a WebView pauses a hidden page's video, which would stop the
+ * stream) and says when it's really out of sight: the page then counts as
+ * hidden, so everything else acts as it does in the background.
+ */
+function sight(visible: boolean | null) {
+  const was = document.visibilityState;
+  if (visible === false) {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+    Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+  } else {
+    delete (document as { visibilityState?: unknown }).visibilityState;
+    delete (document as { hidden?: unknown }).hidden;
+  }
+  if (document.visibilityState !== was) document.dispatchEvent(new Event('visibilitychange'));
+}
+
 /** Ends whatever is running (the notification's hang-up button). */
 function hangUp() {
   const call = useCall.getState();
@@ -64,6 +88,7 @@ function hangUp() {
   if (call.phase !== 'idle') return call.endCall();
   if (useVoice.getState().roomId) return void useVoice.getState().leave();
   if (useLiveStream.getState().host) return void useLiveStream.getState().stop();
+  if (useWatching.getState().roomId) return useWatching.getState().stop();
 }
 
 export function bindNative() {
@@ -130,6 +155,9 @@ export function bindNative() {
       case 'hangup':
         hangUp();
         break;
+      case 'sight':
+        sight(e.visible);
+        break;
       case 'open':
         // Only this site's own pages.
         if (typeof e.path !== 'string' || !e.path.startsWith('/') || e.path.startsWith('//')) break;
@@ -150,8 +178,9 @@ export function bindNative() {
   useCall.subscribe(sync);
   useVoice.subscribe(sync);
   useLiveStream.subscribe(sync);
+  useWatching.subscribe(sync);
   useChat.subscribe((s, prev) => {
-    if (s.rooms !== prev.rooms) sync();
+    if (s.rooms !== prev.rooms || s.roomDetails !== prev.roomDetails) sync();
   });
 
   nativeReady();

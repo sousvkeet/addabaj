@@ -203,7 +203,7 @@ public class MainActivity extends Activity {
     private static void createPage(Activity activity) {
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         pageContext = new MutableContextWrapper(activity);
-        page = new WebView(pageContext);
+        page = new PageView(pageContext);
         // No white flash before the (dark-first) page paints.
         page.setBackgroundColor(0xFF090C1A);
         WebSettings s = page.getSettings();
@@ -470,6 +470,8 @@ public class MainActivity extends Activity {
         public void callState(String json) {
             main.post(() -> {
                 CallService.update(app, json);
+                // Streaming a file live from this phone: it keeps playing out of sight (see PageView).
+                if (page instanceof PageView) ((PageView) page).keepAwake(json.contains("\"kind\":\"live\"") && json.contains("\"mode\":\"file\""));
                 // Nothing running and nobody looking: the page can go.
                 if (json.contains("\"kind\":\"none\"") && current.get() == null && !ScreenCaptureService.running) destroyPage();
             });

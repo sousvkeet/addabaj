@@ -10,6 +10,7 @@ import { useChat } from './store/chat';
 import { useLiveStream } from './store/liveStream';
 import { toast } from './store/ui';
 import { useVoice } from './store/voice';
+import { useWatching } from './store/watching';
 import { setPreparing, type Preparing } from './store/watchProgress';
 
 const chat = () => useChat.getState();
@@ -29,7 +30,13 @@ const runningBuild = () =>
 function busy() {
   const c = chat();
   const sending = [...Object.values(c.dms), ...Object.values(c.roomMessages)].some((p) => p.items.some((m) => m.pending === 'sending'));
-  return sending || useCall.getState().phase !== 'idle' || !!useVoice.getState().roomId || !!useLiveStream.getState().host;
+  return (
+    sending ||
+    useCall.getState().phase !== 'idle' ||
+    !!useVoice.getState().roomId ||
+    !!useLiveStream.getState().host ||
+    !!useWatching.getState().roomId
+  );
 }
 
 let outdated = false;

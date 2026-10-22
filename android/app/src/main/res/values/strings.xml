@@ -54,6 +54,8 @@
     <string name="live_file">Streaming a video live</string>
     <string name="live_to">To %1$s</string>
     <string name="stop">Stop</string>
+    <string name="watching_in">Watching together in %1$s</string>
+    <string name="watching_paused">Paused in %1$s</string>
 
     <!-- Screen sharing -->
     <string name="screen_sharing">Sharing your screen</string>

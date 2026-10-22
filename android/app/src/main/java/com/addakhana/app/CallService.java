@@ -37,6 +37,8 @@ public class CallService extends Service {
     static final int ID = 5;
 
     static volatile boolean running;
+    /** What's running: "call", "voice", "live" or "watch" (a room's video playing on in the background). */
+    static volatile String kind = "none";
     private static volatile CallService instance;
     /** null: the default for the session (earpiece for voice calls); otherwise what the person chose. */
     private static volatile Boolean speakerChoice;
@@ -124,6 +126,7 @@ public class CallService extends Service {
             return START_NOT_STICKY;
         }
         running = true;
+        kind = session.optString("kind", "none");
         // Answered in the app: the phone's own ringing stops.
         String callId = session.optString("callId");
         if ("call".equals(session.optString("kind")) && ActionReceiver.isId(callId)) IncomingCall.stopRinging(this, callId);
@@ -144,9 +147,10 @@ public class CallService extends Service {
             return true;
         }
         String kind = session.optString("kind");
+        boolean talking = "call".equals(kind) || "voice".equals(kind);
         int types = 0;
         if (Build.VERSION.SDK_INT >= 30) {
-            if (!"live".equals(kind) && granted(Manifest.permission.RECORD_AUDIO)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            if (talking && granted(Manifest.permission.RECORD_AUDIO)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
             if (session.optBoolean("video") && granted(Manifest.permission.CAMERA)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
         }
         int[] attempts = types == 0
@@ -204,6 +208,13 @@ public class CallService extends Service {
                     .setContentTitle(getString(R.string.room_voice))
                     .setContentText(name)
                     .addAction(R.drawable.ic_call_end, getString(R.string.leave), hangup);
+        } else if ("watch".equals(kind)) {
+            // A room's video playing on (its sound) while the app is out of sight.
+            b.setSmallIcon(R.drawable.ic_play)
+                    .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+                    .setContentTitle(session.optString("title", getString(R.string.app_name)))
+                    .setContentText(getString(session.optBoolean("paused") ? R.string.watching_paused : R.string.watching_in, name))
+                    .addAction(R.drawable.ic_stop, getString(R.string.stop), hangup);
         } else {
             boolean screen = "screen".equals(session.optString("mode"));
             b.setSmallIcon(R.drawable.ic_radio)
@@ -224,8 +235,8 @@ public class CallService extends Service {
         String kind = session.optString("kind");
         boolean oneToOne = "call".equals(kind);
         boolean voiceCall = oneToOne && !session.optBoolean("video");
-        // Headphones or a headset take the sound wherever they are.
-        if (hasHeadset(am) || "live".equals(kind)) {
+        // Headphones or a headset take the sound wherever they are; a video's sound plays as media.
+        if (hasHeadset(am) || "live".equals(kind) || "watch".equals(kind)) {
             releaseProximity();
             return;
         }
@@ -294,6 +305,7 @@ public class CallService extends Service {
 
     private void tearDown() {
         running = false;
+        kind = "none";
         speakerChoice = null;
         main.removeCallbacksAndMessages(null);
         releaseProximity();

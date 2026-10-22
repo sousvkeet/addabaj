@@ -49,8 +49,30 @@ const check = async (label, fn) => {
   }
 };
 
+/**
+ * Lets a test take a page out of sight (as leaving the app or locking the
+ * phone does) with window.__sight('hidden' | 'visible'), and notes every
+ * media element that plays (an <audio> made by script isn't in the page).
+ */
+const sightHooks = () => {
+  window.__vis = 'visible';
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => window.__vis });
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => window.__vis === 'hidden' });
+  window.__sight = (v) => {
+    window.__vis = v;
+    document.dispatchEvent(new Event('visibilitychange'));
+  };
+  window.__media = new Set();
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    window.__media.add(this);
+    return play.call(this);
+  };
+};
+
 async function user(name, viewport = { width: 1440, height: 900 }) {
   const ctx = await browser.newContext({ viewport });
+  await ctx.addInitScript(sightHooks);
   // Track YouTube player status messages (position, state) from the iframe.
   await ctx.addInitScript(() => {
     window.__yt = {};
@@ -248,6 +270,115 @@ await check('stop for everyone removes the video for all', async () => {
   await B.page.getByRole('region', { name: 'Watch together' }).waitFor({ state: 'detached', timeout: 5000 });
   await C.page.getByRole('region', { name: 'Watch together' }).waitFor({ state: 'detached', timeout: 5000 });
   await B.page.getByRole('log').getByText('Asha Host stopped the video').waitFor();
+});
+
+/** Asha plays the test clip from the start (through the Watch dialog), and everyone in the room watches. */
+async function playClip(watchers) {
+  const found = await find(A.page, CLIP);
+  if (found.outcome !== 'choose') throw new Error(found.error);
+  await play(found.dlg);
+  for (const p of watchers) await watchAlong(p);
+  await waitFor(async () => {
+    const all = await Promise.all(watchers.map(vid));
+    return { ok: all.every((v) => v && !v.paused && v.t > 1.5), all };
+  }, 15000, 'the clip did not start for everyone');
+}
+
+await check('someone’s phone pausing the video out of sight (leaving the app, locking it) doesn’t stop the room, nor pull it back after', async () => {
+  await playClip([A.page, B.page]);
+  // Asha leaves the app: her phone pauses her video by itself.
+  await A.page.evaluate(() => {
+    window.__sight('hidden');
+    document.querySelector('video[data-watch-video]').pause();
+  });
+  await A.page.waitForTimeout(3500);
+  const b = await vid(B.page);
+  if (b.paused) throw new Error('the room was paused for everyone');
+  // She comes back: the browser plays on from where it froze; she catches up instead.
+  await A.page.evaluate(() => {
+    window.__sight('visible');
+    void document.querySelector('video[data-watch-video]').play();
+  });
+  await A.page.waitForTimeout(4000);
+  const a2 = await vid(A.page), b2 = await vid(B.page);
+  if (b2.t < b.t + 3) throw new Error(`the room was pulled back: ${b.t.toFixed(1)}s, then ${b2.t.toFixed(1)}s`);
+  if (a2.paused || Math.abs(a2.t - b2.t) > 1.5) throw new Error(`she didn't catch up: ${JSON.stringify({ a2, b2 })}`);
+});
+
+await check('leaving the room keeps its video playing in a small player; tapping it goes back; closing it stops it just for you', async () => {
+  await playClip([A.page, B.page]);
+  await B.page.getByRole('link', { name: 'Chats' }).first().click();
+  await B.page.waitForURL('**/chats');
+  const dock = B.page.getByRole('region', { name: 'Watching in Movie night' });
+  await dock.waitFor({ timeout: 5000 });
+  const t1 = (await vid(B.page)).t;
+  await B.page.waitForTimeout(2000);
+  const t2 = await vid(B.page);
+  if (t2.paused || t2.t < t1 + 1.5) throw new Error(`not playing on: ${t1} then ${JSON.stringify(t2)}`);
+  await B.page.screenshot({ path: `${SHOTS}watch-5-small-player.png` });
+  await dock.getByRole('button', { name: 'Open Movie night' }).click();
+  await B.page.waitForURL(roomUrl);
+  const t3 = await vid(B.page);
+  if (t3.paused || t3.t < t2.t) throw new Error(`started over or stopped on the way back: ${JSON.stringify({ t2, t3 })}`);
+  await dock.waitFor({ state: 'hidden', timeout: 4000 }).catch(() => {
+    throw new Error('the small player stayed on the room page');
+  });
+  await B.page.getByRole('region', { name: 'Watch together' }).waitFor();
+  await B.page.getByRole('link', { name: 'Chats' }).first().click();
+  await dock.getByRole('button', { name: 'Stop watching' }).click();
+  await dock.waitFor({ state: 'hidden' });
+  if (await B.page.locator('video[data-watch-video]').count()) throw new Error('still playing after closing');
+  if ((await vid(A.page)).paused) throw new Error('closing it stopped it for the room');
+  await B.page.goto(roomUrl);
+  await B.page.locator('video[data-watch-video]').waitFor();
+});
+
+await check('in the app the sound goes on out of sight (the phone pauses the picture), and the picture picks up after', async () => {
+  await playClip([A.page, B.page]);
+  const ctx = await browser.newContext({
+    viewport: { width: 412, height: 915 },
+    isMobile: true,
+    hasTouch: true,
+    userAgent: 'Mozilla/5.0 (Linux; Android 16; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/140.0.0.0 Mobile Safari/537.36 AddaKhanaApp/1.6.2',
+  });
+  await ctx.addCookies(await B.ctx.cookies());
+  await ctx.addInitScript(sightHooks);
+  await ctx.addInitScript(() => {
+    window.__sessions = [];
+    const json = (j) => window.__sessions.push(JSON.parse(j));
+    window.AddaNative = { setTheme() {}, retry() {}, ready() {}, ack() {}, setUser() {}, haptic() {}, setBackHandled() {}, pushToken: () => '', callState: json };
+  });
+  const p = await ctx.newPage();
+  try {
+    await p.goto(roomUrl);
+    await waitFor(async () => {
+      const v = await vid(p);
+      return { ok: v && !v.paused && v.t > 1, v };
+    }, 15000, 'not playing in the app');
+    const sessions = await p.evaluate(() => window.__sessions);
+    if (!sessions.some((s) => s.kind === 'watch' && s.title === 'count-40s.webm')) throw new Error(`the app wasn't told: ${JSON.stringify(sessions.at(-1))}`);
+    const sound = () =>
+      p.evaluate(() => {
+        const a = [...window.__media].find((m) => m.tagName === 'AUDIO' && m.getAttribute('src'));
+        const v = document.querySelector('video[data-watch-video]');
+        return { a: a && { t: a.currentTime, paused: a.paused }, v: { t: v.currentTime, paused: v.paused } };
+      });
+    await p.evaluate(() => {
+      window.__sight('hidden');
+      document.querySelector('video[data-watch-video]').pause();
+    });
+    await p.waitForTimeout(3500);
+    const out = await sound();
+    const room = await vid(A.page);
+    if (!out.a || out.a.paused || Math.abs(out.a.t - room.t) > 2.5) throw new Error(`no sound out of sight: ${JSON.stringify({ out, room })}`);
+    await p.evaluate(() => window.__sight('visible'));
+    await p.waitForTimeout(2500);
+    const back = await sound();
+    const room2 = await vid(A.page);
+    if (back.a || back.v.paused || Math.abs(back.v.t - room2.t) > 2.5) throw new Error(`the picture didn't pick up: ${JSON.stringify({ back, room2 })}`);
+  } finally {
+    await ctx.close();
+  }
 });
 
 await check('YouTube plays for everyone (and appears live on a phone already in the room)', async () => {

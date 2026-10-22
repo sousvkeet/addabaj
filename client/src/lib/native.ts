@@ -32,6 +32,8 @@ export type NativeEvent =
   | { type: 'open'; path: string }
   | { type: 'speaker'; on: boolean }
   | { type: 'screen'; state: 'denied' | 'ended' | 'failed' }
+  /** The app is out of sight (false) or back (true) while it keeps the page awake; null: as the page sees it. */
+  | { type: 'sight'; visible: boolean | null }
   | {
       type: 'update';
       state: 'downloading' | 'downloaded' | 'permission' | 'permission-needed' | 'installing' | 'cancelled' | 'failed';
@@ -98,7 +100,9 @@ export type Session =
   | { kind: 'none' }
   | { kind: 'call'; phase: string; callId: string | null; name: string; hue: number; photo?: string | null; video: boolean; startedAt: number | null }
   | { kind: 'voice'; roomId: string; name: string; startedAt: number }
-  | { kind: 'live'; roomId: string; name: string; mode: string; startedAt: number };
+  | { kind: 'live'; roomId: string; name: string; mode: string; startedAt: number }
+  /** Watching a room's video that can play on out of sight (a file or a live stream; YouTube can't). */
+  | { kind: 'watch'; roomId: string; name: string; title: string; paused: boolean };
 
 let lastSession = '';
 export function nativeSession(session: Session) {
