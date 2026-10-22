@@ -210,6 +210,23 @@ await check('No push while looking at the app; a push once it goes to the backgr
   expect(p, 'no push while in the background');
 });
 
+await check('An app frozen before it could say it left still gets what came meanwhile, once its connection goes, if unread', async () => {
+  // Bo's app looks on, then goes without a word (some phones freeze an app as soon as you leave it).
+  const looking = await connect(bo, true);
+  const before = pushesFor(TOKEN_BO, 'message').length;
+  await emit(anaSock, 'dm:send', { to: bo.id, body: 'Read on the spot' });
+  expect((await emit(looking, 'dm:read', { partnerId: ana.id })).ok, 'read');
+  await emit(anaSock, 'dm:send', { to: bo.id, body: 'Sent as the app froze' });
+  await sleep(500);
+  expect(pushesFor(TOKEN_BO, 'message').length === before, 'pushed while Bo’s app was looking');
+  // What the server sees when a frozen app's connection times out.
+  looking.disconnect();
+  const p = await waitFor(() => pushesFor(TOKEN_BO, 'message').find((x) => x.data.text === 'Sent as the app froze'));
+  expect(p && p.data.scope === 'dm' && p.data.chatId === ana.id, 'what arrived just before the app went was never pushed');
+  await sleep(400);
+  expect(!pushesFor(TOKEN_BO, 'message').some((x) => x.data.text === 'Read on the spot'), 'a message read in the app was pushed after all');
+});
+
 await check('Photos, voice messages and files say what they are', async () => {
   const { preview } = await import('../server/src/services/push.js');
   expect(preview({ body: '', attachment: { kind: 'image' } }) === '📷 Photo', 'photo');
@@ -220,9 +237,10 @@ await check('Photos, voice messages and files say what they are', async () => {
 });
 
 await check('Reading on one device clears the notification on the phone', async () => {
+  const reads = pushesFor(TOKEN_BO, 'read').length;
   const res = await emit(boSock, 'dm:read', { partnerId: ana.id });
   expect(res.ok, 'read failed');
-  const p = await waitFor(() => pushesFor(TOKEN_BO, 'read')[0]);
+  const p = await waitFor(() => pushesFor(TOKEN_BO, 'read')[reads]);
   expect(p && p.data.scope === 'dm' && p.data.chatId === ana.id, `no read push: ${JSON.stringify(p?.data)}`);
   // Nothing new was notified since, so reading again sends nothing.
   const n = pushesFor(TOKEN_BO, 'read').length;

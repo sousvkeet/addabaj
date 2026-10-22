@@ -5,6 +5,7 @@ import { AppError, isUuid } from '../errors.js';
 import { presence, roomChannel, userChannel } from '../realtime.js';
 import { findUser } from '../services/users.js';
 import { hidesPresence } from '../services/privacy.js';
+import { pushHeldBack } from '../services/push.js';
 import { onlineContacts, tellContacts } from '../services/presence.js';
 import { asId, deleteMessage, editMessage, forwardMessage, readDm, readRoom, sendDm, sendRoomMessage } from '../services/chat.js';
 import { blockedEitherWay } from '../services/blocks.js';
@@ -66,10 +67,14 @@ export function initSocket(io) {
     // when none of the person's apps or tabs is.
     socket.on('client:state', ({ active } = {}) => {
       socket.data.active = active !== false;
+      // Off screen now: what was held back while it looked on gets pushed, if still unread.
+      if (!socket.data.active) pushHeldBack(userId).catch(() => {});
     });
 
     socket.on('disconnect', async () => {
       const offline = presence.remove(userId, socket.id);
+      // An app that went before it could say it's off screen (a phone froze or closed it).
+      pushHeldBack(userId).catch(() => {});
       calls.handleDisconnect(socket);
       voice.handleDisconnect(socket);
       live.handleDisconnect(socket);

@@ -13,7 +13,22 @@ const menuBox = 'pop-in z-[60] min-w-[200px] rounded-2xl border border-line bg-s
  * page next to the button (above it when there's no room below), for buttons
  * inside a scrolling list such as a chat's messages.
  */
-export function Menu({ label, items, icon, size = 32, floating }: { label: string; items: MenuItem[]; icon?: ReactNode; size?: number; floating?: boolean }) {
+export function Menu({
+  label,
+  items,
+  icon,
+  size = 32,
+  floating,
+  variant,
+}: {
+  label: string;
+  items: MenuItem[];
+  icon?: ReactNode;
+  size?: number;
+  floating?: boolean;
+  /** Its button over a picture (a call's video). */
+  variant?: 'on-dark';
+}) {
   const [open, setOpen] = useState(false);
   const [place, setPlace] = useState<CSSProperties>({});
   const ref = useRef<HTMLDivElement>(null);
@@ -69,7 +84,7 @@ export function Menu({ label, items, icon, size = 32, floating }: { label: strin
   );
   return (
     <div ref={ref} className="relative">
-      <IconButton label={label} size={size} aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
+      <IconButton label={label} size={size} variant={variant} aria-haspopup="menu" aria-expanded={open} onClick={toggle}>
         {icon ?? <EllipsisVertical size={16} />}
       </IconButton>
       {floating ? menu && createPortal(menu, document.body) : menu}

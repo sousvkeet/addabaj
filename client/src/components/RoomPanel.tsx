@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { leaveGone } from '../lib/back';
-import { ArrowLeft, Camera, Crown, LogOut, MessageCircle, Settings, ShieldCheck, UserMinus, UserPlus, X } from 'lucide-react';
+import { ArrowLeft, Camera, Crown, History, LogOut, MessageCircle, Mic, MicOff, Settings, ShieldCheck, UserMinus, UserPlus, Video, VideoOff, X } from 'lucide-react';
 import { errorMessage } from '../lib/api';
 import { lastSeen } from '../lib/format';
+import { clearAfterLabel } from '../lib/history';
 import { useNow } from '../lib/useMedia';
 import type { RoomDetail, RoomMember } from '../lib/types';
 import { useAuth } from '../store/auth';
@@ -40,6 +41,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
   };
   const removeMember = useChat((s) => s.removeMember);
   const setRole = useChat((s) => s.setRole);
+  const moderateVoice = useChat((s) => s.moderateVoice);
   const cancelInvite = useChat((s) => s.cancelInvite);
   const leaveRoom = useChat((s) => s.leaveRoom);
   const navigate = useNavigate();
@@ -50,6 +52,11 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
 
   const isAdmin = room.myRole === 'admin';
   const isOwner = room.ownerId === me?.id;
+  // The site's host can do in any room what its admins can.
+  const isHost = !!me?.siteAdmin;
+  /** Who I can mute in voice or stop the camera of (as the server allows). */
+  const canModerate = (m: RoomMember) =>
+    (isAdmin || isHost) && m.id !== me?.id && (m.id !== room.ownerId || isHost) && (m.role !== 'admin' || isOwner || isHost);
   const full = room.memberCount >= room.maxMembers;
 
   async function run(fn: () => Promise<void>, done?: string) {
@@ -75,6 +82,33 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
         m.role === 'admin'
           ? { label: 'Remove as admin', icon: <ShieldCheck size={16} />, onSelect: () => void run(() => setRole(room.id, m.id, 'member')) }
           : { label: 'Make admin', icon: <ShieldCheck size={16} />, onSelect: () => void run(() => setRole(room.id, m.id, 'admin')) },
+      );
+    }
+    if (canModerate(m)) {
+      const first = m.name.split(' ')[0];
+      items.push(
+        m.voiceMuted
+          ? {
+              label: `Let ${first} talk in voice`,
+              icon: <Mic size={16} />,
+              onSelect: () => void run(() => moderateVoice(room.id, m.id, { voiceMuted: false }), `${first} can talk in voice again.`),
+            }
+          : {
+              label: `Mute ${first} in voice`,
+              icon: <MicOff size={16} />,
+              onSelect: () => void run(() => moderateVoice(room.id, m.id, { voiceMuted: true }), `${first} is muted in voice until you let them talk.`),
+            },
+        m.cameraBlocked
+          ? {
+              label: `Let ${first} turn their camera on`,
+              icon: <Video size={16} />,
+              onSelect: () => void run(() => moderateVoice(room.id, m.id, { cameraBlocked: false }), `${first} can turn their camera on again.`),
+            }
+          : {
+              label: `Stop ${first}’s camera`,
+              icon: <VideoOff size={16} />,
+              onSelect: () => void run(() => moderateVoice(room.id, m.id, { cameraBlocked: true }), `${first}’s camera is off until you let them turn it on.`),
+            },
       );
     }
     const canRemove = isAdmin && m.id !== room.ownerId && (m.role !== 'admin' || isOwner);
@@ -123,6 +157,12 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
             Room · {room.memberCount} {room.memberCount === 1 ? 'member' : 'members'}
           </p>
           {room.description && <p className="mt-1.5 text-[14px] break-words text-ink-soft">{room.description}</p>}
+          {room.clearAfter && (
+            <p className="mt-2.5 inline-flex items-center gap-1.5 rounded-full bg-subtle px-3 py-1 text-[12.5px] font-medium text-ink-soft">
+              <History size={13} aria-hidden />
+              Messages clear after {clearAfterLabel(room.clearAfter)}
+            </p>
+          )}
         </div>
         <VoiceTable roomId={room.id} members={room.members} />
         <RoomNotifications room={room} />
@@ -158,6 +198,14 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
                       {m.name}
                       {m.id === me?.id && <span className="font-normal text-ink-soft"> (you)</span>}
                     </span>
+                    {(m.voiceMuted || m.cameraBlocked) && (
+                      <span className="flex items-center gap-1 text-[12.5px] font-medium text-danger">
+                        {m.voiceMuted ? <MicOff size={12} className="shrink-0" aria-hidden /> : <VideoOff size={12} className="shrink-0" aria-hidden />}
+                        <span className="truncate">
+                          {m.voiceMuted && m.cameraBlocked ? 'Muted and camera stopped by an admin' : m.voiceMuted ? 'Muted in voice by an admin' : 'Camera stopped by an admin'}
+                        </span>
+                      </span>
+                    )}
                     {(m.id === room.ownerId || m.role === 'admin' || status(m)) && (
                       <span className="flex min-w-0 items-center gap-1 text-[12.5px] text-ink-soft">
                         {(m.id === room.ownerId || m.role === 'admin') && (

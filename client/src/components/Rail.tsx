@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router';
 import { goTab } from '../lib/back';
 import { inApp } from '../lib/native';
-import { AtSign, Camera, EyeOff, KeyRound, LogOut, Mail, MessageCircle, MonitorSmartphone, Moon, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
+import { AtSign, Camera, EyeOff, KeyRound, LogOut, Mail, MessageCircle, MonitorSmartphone, Moon, PenLine, Settings2, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useAuth } from '../store/auth';
 import { countedDmUnread, countedUnread, useChat } from '../store/chat';
 import { useUi } from '../store/ui';
@@ -11,6 +11,7 @@ import { Logo } from './ui/Logo';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { PrivacyDialog } from './PrivacyDialog';
 import { MyIdDialog } from './MyIdDialog';
+import { NameDialog } from './NameDialog';
 import { PhotoEditor } from './PhotoEditor';
 import { DevicesDialog } from './DevicesDialog';
 
@@ -118,6 +119,7 @@ function AccountMenu() {
   const [changing, setChanging] = useState(false);
   const [privacyOpen, setPrivacyOpen] = useState(false);
   const [idOpen, setIdOpen] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
   const [photoOpen, setPhotoOpen] = useState(false);
   const [devicesOpen, setDevicesOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -174,6 +176,18 @@ function AccountMenu() {
           >
             <Camera size={17} className="text-ink-soft" />
             Profile photo
+          </button>
+          <button
+            role="menuitem"
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              setNameOpen(true);
+            }}
+            className={item}
+          >
+            <PenLine size={17} className="text-ink-soft" />
+            Your name
           </button>
           <button
             role="menuitem"
@@ -248,6 +262,7 @@ function AccountMenu() {
       <ChangePasswordDialog open={changing} onClose={() => setChanging(false)} />
       <PrivacyDialog open={privacyOpen} onClose={() => setPrivacyOpen(false)} />
       <MyIdDialog open={idOpen} onClose={() => setIdOpen(false)} />
+      <NameDialog open={nameOpen} onClose={() => setNameOpen(false)} />
       <PhotoEditor open={photoOpen} onClose={() => setPhotoOpen(false)} />
       <DevicesDialog open={devicesOpen} onClose={() => setDevicesOpen(false)} />
     </div>

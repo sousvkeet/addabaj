@@ -384,3 +384,24 @@ CREATE TABLE IF NOT EXISTS preview_images (
   bytes        bytea NOT NULL,
   created_at   timestamptz NOT NULL DEFAULT now()
 );
+
+-- A room's chat history, cleared by its admins: on a schedule (messages older
+-- than "30 days", "12 hours", "1 month"... go by themselves) and all at once.
+-- history_cleared_at: the last time it was cleared at once, so apps drop what
+-- they kept from before (also when they were offline then).
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS clear_after text;
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS history_cleared_at timestamptz;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'rooms_clear_after_check') THEN
+    ALTER TABLE rooms ADD CONSTRAINT rooms_clear_after_check
+      CHECK (clear_after IS NULL OR clear_after ~ '^[1-9][0-9]{0,3} (minute|hour|day|month)s?$');
+  END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS room_messages_room_time_idx ON room_messages (room_id, created_at);
+
+-- Room voice, kept in order by its admins: someone muted by an admin can't
+-- unmute, and someone whose camera an admin stopped can't turn it back on,
+-- until an admin lets them (also after leaving voice and coming back).
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS voice_muted boolean NOT NULL DEFAULT false;
+ALTER TABLE room_members ADD COLUMN IF NOT EXISTS camera_blocked boolean NOT NULL DEFAULT false;

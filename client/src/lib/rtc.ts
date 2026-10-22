@@ -29,6 +29,42 @@ export function createPeer() {
   });
 }
 
+/** Video starts from this (kbps), not WebRTC's cautious default: a sharp picture in the first seconds (it still adapts at once). */
+const START_KBPS = 1200;
+
+/**
+ * The other side's description (for setRemoteDescription), asking this
+ * browser to start sending video at a usable quality. Chrome takes it from
+ * the video codecs' parameters; VP8 has none, so it gets a line of its own.
+ */
+export function startSharp(desc: RTCSessionDescriptionInit): RTCSessionDescriptionInit {
+  if (!desc.sdp?.includes('m=video')) return desc;
+  const sections = desc.sdp.split(/\r\n(?=m=)/).map((section) => {
+    if (!section.startsWith('m=video')) return section;
+    const lines = section.split('\r\n');
+    const video = new Set(lines.map((l) => /^a=rtpmap:(\d+) (?:VP8|VP9|H264|AV1)\//i.exec(l)?.[1]).filter(Boolean));
+    const tuned = new Set<string>();
+    const out: string[] = [];
+    for (const line of lines) {
+      const fmtp = /^a=fmtp:(\d+) /.exec(line);
+      if (fmtp && video.has(fmtp[1])) {
+        tuned.add(fmtp[1]);
+        out.push(line.includes('x-google-start-bitrate') ? line : `${line};x-google-start-bitrate=${START_KBPS}`);
+      } else {
+        out.push(line);
+      }
+    }
+    // Codecs without parameters (VP8): a line right after their name.
+    return out
+      .flatMap((line) => {
+        const pt = /^a=rtpmap:(\d+) /.exec(line)?.[1];
+        return pt && video.has(pt) && !tuned.has(pt) ? [line, `a=fmtp:${pt} x-google-start-bitrate=${START_KBPS}`] : [line];
+      })
+      .join('\r\n');
+  });
+  return { type: desc.type, sdp: sections.join('\r\n') };
+}
+
 const AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
 const VIDEO: MediaTrackConstraints = { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, max: 30 } };
 

@@ -26,6 +26,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
   const join = useVoice((s) => s.join);
   const leave = useVoice((s) => s.leave);
   const toggleMute = useVoice((s) => s.toggleMute);
+  const moderation = useVoice((s) => s.moderation);
   const cameraOn = useVoice((s) => s.cameraOn);
   const cameraBusy = useVoice((s) => s.cameraBusy);
   const toggleCamera = useVoice((s) => s.toggleCamera);
@@ -77,7 +78,9 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
               key={p.userId}
               className="absolute flex flex-col items-center transition-[left,top] duration-300"
               style={{ left: x, top: y, width: seat }}
-              title={`${user?.name ?? 'Someone'}${p.away ? ' (reconnecting)' : ''}${p.muted ? ' (muted)' : ''}${p.camera ? ' (camera on)' : ''}`}
+              title={`${user?.name ?? 'Someone'}${p.away ? ' (reconnecting)' : ''}${p.silenced ? ' (muted by an admin)' : p.muted ? ' (muted)' : ''}${
+                p.cameraBlocked ? ' (camera stopped by an admin)' : p.camera ? ' (camera on)' : ''
+              }`}
             >
               <span className="relative">
                 <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} photo={user?.photo} size={seat} speaking={lit} muted={p.muted} className={linking || p.away ? 'opacity-50' : ''} />
@@ -117,9 +120,15 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
           </Button>
         ) : (
           <>
-            <Button variant={muted ? 'live' : 'soft'} className="flex-1" onClick={toggleMute} aria-pressed={muted}>
+            <Button
+              variant={muted ? 'live' : 'soft'}
+              className="flex-1"
+              onClick={toggleMute}
+              aria-pressed={muted}
+              aria-label={moderation.voiceMuted ? 'Muted by an admin' : undefined}
+            >
               {muted ? <MicOff size={17} /> : <Mic size={17} />}
-              {muted ? 'Unmute' : 'Mute'}
+              {moderation.voiceMuted ? 'Muted' : muted ? 'Unmute' : 'Mute'}
             </Button>
             <Button
               variant={cameraOn ? 'live' : 'soft'}
@@ -127,7 +136,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
               onClick={() => void toggleCamera()}
               disabled={cameraBusy}
               aria-pressed={cameraOn}
-              aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'}
+              aria-label={moderation.cameraBlocked ? 'Camera stopped by an admin' : cameraOn ? 'Turn camera off' : 'Turn camera on'}
             >
               {cameraOn ? <Video size={17} /> : <VideoOff size={17} />}
               Camera
@@ -146,7 +155,11 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
         </Button>
       )}
       <p className="mt-2 text-center text-[12.5px] text-ink-soft">
-        {inCall && !here ? 'End your call to join voice.' : `Up to ${VOICE_SEATS} people can talk at once, cameras on or off.`}
+        {here && (moderation.voiceMuted || moderation.cameraBlocked)
+          ? `An admin ${moderation.voiceMuted && moderation.cameraBlocked ? 'muted you and stopped your camera' : moderation.voiceMuted ? 'muted you' : 'stopped your camera'} until they let you.`
+          : inCall && !here
+            ? 'End your call to join voice.'
+            : `Up to ${VOICE_SEATS} people can talk at once, cameras on or off.`}
       </p>
       <DevicePickers onMore={() => openDevices(true)} />
     </section>

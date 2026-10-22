@@ -5,6 +5,9 @@ A native app that shows the Adda Khana site full screen in Android's WebView and
 What the app adds:
 
 - **Asks for what it needs, on first start** (1.10.0 on). The page's **Before you start** screen (client/src/components/Permissions.tsx) explains each permission and asks through the app (`Permissions.java`): notifications, microphone and camera with Android's own prompts in one go, ringing over the lock screen (Android 14+) on its settings page, and running in the background with Android's "Let app always run in background?" (`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`). Each answer, and anything changed in the phone's settings, reaches the page when the app is back in front. **Settings › App permissions** shows the same list later. Older pages that don't have the screen get the app's previous behaviour: notifications asked after logging in, then the lock screen.
+  - From 1.11.0 the list also has **Background activity** (Android 9+): off when Android restricts the app in the background ("Restricted" battery use, `ActivityManager.isBackgroundRestricted()`, or the restricted standby group on Android 11+); it opens the app's page in the phone's settings.
+  - And on Samsung phones, **Never sleeping**: One UI puts apps to sleep (they get no messages and their calls stop) unless they're in *Never sleeping apps*. Nothing can check or set that list, so the row opens Samsung's battery page (`com.samsung.android.lool`, then app info where that's missing) and counts as done once opened.
+  - Someone who saw the screen in 1.10.0 sees it once more after updating, if either is off (`permissions_seen_2`).
 - **Notifications while the app is closed.**
   - New messages arrive as one notification per chat or room, with the latest messages and each sender's picture: their profile photo (kept on the phone after the first download), or their initials.
   - On Android 11 and newer each chat is a conversation (a shortcut the app keeps for it), so it shows with the person's or the room's photo in Android's conversations section, as in other messengers. Logging out removes them.
@@ -12,11 +15,12 @@ What the app adds:
   - Several waiting chats are bundled together.
   - Reading a chat anywhere (phone, computer) clears its notification.
   - A room you muted (Room info › Notifications) stays quiet, except for messages that mention you or reply to you. A chat you muted stays quiet too (calls still ring), and someone you blocked can't reach you at all. This is decided on the server, so it works in every version of the app.
-  - The phone stays quiet while you're using Adda Khana on it or on a computer.
+  - The phone stays quiet while you're using Adda Khana on it or on a computer. Leaving the app tells the server; when a phone freezes the app before it can (some do, the moment it's left), the server pushes what it held back once the app's connection times out, if it's still unread (server/src/services/push.js).
 - **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with the caller's photo (once it's on the phone; ringing never waits for it), Answer and Decline. Calls you didn't answer leave a missed-call notification.
 - **Calls survive switching networks.** Mobile data to Wi-Fi (or back) shows "Reconnecting…" and the call or room voice carries on: the page reconnects by itself and the call finds its new path (see the README's calls and room voice).
 - **Calls keep going in the background.**
   - Calls, room voice (and room video calls, camera included) and live streams keep running with the screen off or another app open. A notification shows the call, its length and a hang-up button.
+  - While something runs, `CallService` keeps the processor awake (a partial wake lock, renewed with each update) and Wi-Fi as far as Android lets it (out of power saving before Android 10; low latency since, in front), 1.11.0 on: with the screen off, battery saving would otherwise stall the page and its connection, and the server would let the seat go.
   - **Video calls float over other apps** (1.10.0 on, Android 8+), as in WhatsApp. Leaving the app during a one-to-one video call, or a room's call with a camera on, shrinks it into Android's picture-in-picture window:
     - Leaving means Home, recents, opening another app, or Back from the chats. The page says when a call can float, and in what shape, in its call state (`pip`): the other person's picture as it's decoded, so the window turns with their phone.
     - Android 12+ enters it with the Home gesture's own animation (`setAutoEnterEnabled`); Android 8 to 11 enters from `onUserLeaveHint`, but not for the app's own prompts (permissions, the file picker, screen sharing).

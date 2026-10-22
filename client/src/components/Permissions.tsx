@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { BatteryCharging, Bell, Check, Mic, PhoneCall, Video } from 'lucide-react';
+import { Activity, BatteryCharging, Bell, Check, Mic, MoonStar, PhoneCall, Video } from 'lucide-react';
 import { useBackClose } from '../lib/back';
 import type { AppPermissions, PermissionName } from '../lib/native';
-import { ORDER, missing, usePermissions } from '../store/permissions';
+import { LATER, ORDER, missing, usePermissions } from '../store/permissions';
 import { Button } from './ui/Button';
 import { Dialog } from './ui/Dialog';
 import { Logo } from './ui/Logo';
@@ -13,6 +13,16 @@ const ABOUT: Record<PermissionName, { title: string; hint: string; icon: ReactNo
   camera: { title: 'Camera', hint: 'Video calls and room video.', icon: <Video size={20} /> },
   fullScreen: { title: 'Calls on the lock screen', hint: 'Calls ring full screen, like a phone call.', icon: <PhoneCall size={20} /> },
   battery: { title: 'Run in the background', hint: 'Calls still ring when the phone saves battery.', icon: <BatteryCharging size={20} /> },
+  background: {
+    title: 'Background activity',
+    hint: 'Not restricted, so messages, calls and room voice go on when you leave the app.',
+    icon: <Activity size={20} />,
+  },
+  samsung: {
+    title: 'Never sleeping (Samsung)',
+    hint: 'In Battery › Background usage limits, add Adda Khana to Never sleeping apps.',
+    icon: <MoonStar size={20} />,
+  },
 };
 
 /** "All allowed", or what's still off. */
@@ -32,8 +42,9 @@ function PermissionRows({ state }: { state: AppPermissions }) {
       {ORDER.filter((p) => state[p]).map((p) => {
         const status = state[p];
         // Refused for good: only the phone's settings can allow it now. (Calls on the lock
-        // screen are always allowed from there, so that's just "Allow".)
+        // screen are always allowed from there, so that's just "Allow"; Samsung's page is opened.)
         const settings = status === 'settings' && p !== 'fullScreen';
+        const verb = p === 'samsung' ? 'Open' : settings ? 'Settings' : 'Allow';
         return (
           <li key={p} className="flex items-center gap-3 rounded-2xl border border-line/70 bg-surface/70 px-3 py-2.5">
             <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-brand/12 text-brand dark:bg-live/15 dark:text-live">{ABOUT[p].icon}</span>
@@ -41,8 +52,12 @@ function PermissionRows({ state }: { state: AppPermissions }) {
               <span className="block font-semibold">{ABOUT[p].title}</span>
               <span className="block text-[13px] leading-snug text-ink-soft">{ABOUT[p].hint}</span>
             </span>
-            {status === 'granted' ? (
-              <span role="img" aria-label="Allowed" className="flex size-8 shrink-0 items-center justify-center rounded-full bg-live/15 text-live-ink">
+            {status === 'granted' || status === 'opened' ? (
+              <span
+                role="img"
+                aria-label={status === 'opened' ? 'Done' : 'Allowed'}
+                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-live/15 text-live-ink"
+              >
                 <Check size={17} strokeWidth={3} />
               </span>
             ) : (
@@ -51,10 +66,10 @@ function PermissionRows({ state }: { state: AppPermissions }) {
                 variant="soft"
                 busy={asking === p}
                 disabled={!!asking}
-                aria-label={`${settings ? 'Open settings for' : 'Allow'} ${ABOUT[p].title.toLowerCase()}`}
+                aria-label={`${p === 'samsung' ? 'Open battery settings for' : settings ? 'Open settings for' : 'Allow'} ${ABOUT[p].title.toLowerCase()}`}
                 onClick={() => ask(p)}
               >
-                {settings ? 'Settings' : 'Allow'}
+                {verb}
               </Button>
             )}
           </li>
@@ -78,7 +93,10 @@ export function FirstRunPermissions() {
   const markSeen = usePermissions((s) => s.markSeen);
   // Steps tried on this screen: refused ones aren't offered again by the main button (their rows still are).
   const [tried, setTried] = useState<string[]>([]);
-  const [open, setOpen] = useState(() => !!state && !state.seen && missing(state).length > 0);
+  // The first start; or, once, after 1.11.0 brought background activity and Samsung's sleeping apps, if one's off.
+  const [open, setOpen] = useState(
+    () => !!state && missing(state).length > 0 && (!state.seen || (state.seenExtra === false && missing(state).some((p) => LATER.includes(p)))),
+  );
   const main = useRef<HTMLButtonElement>(null);
   useBackClose(open, () => finish());
 
@@ -100,6 +118,8 @@ export function FirstRunPermissions() {
     ...(prompts.length ? [{ id: 'prompts', label: 'Allow', run: () => ask('all') }] : []),
     ...(state.fullScreen && state.fullScreen !== 'granted' ? [{ id: 'fullScreen', label: 'Next: calls on the lock screen', run: () => ask('fullScreen') }] : []),
     ...(state.battery && state.battery !== 'granted' ? [{ id: 'battery', label: 'Next: run in the background', run: () => ask('battery') }] : []),
+    ...(state.background === 'settings' ? [{ id: 'background', label: 'Next: background activity', run: () => ask('background') }] : []),
+    ...(state.samsung === 'ask' ? [{ id: 'samsung', label: 'Next: never sleeping on Samsung', run: () => ask('samsung') }] : []),
   ];
   const next = steps.find((s) => !tried.includes(s.id));
 

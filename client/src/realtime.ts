@@ -192,6 +192,15 @@ export function bindRealtime() {
   socket.on('room:changed', ({ roomId }: { roomId: string }) => {
     if (chat().rooms[roomId]) void chat().loadRoom(roomId);
   });
+  // A room's chat history was cleared (by an admin, or on its schedule): its older messages go.
+  socket.on('room:cleared', (e: { roomId: string; before: string; all?: boolean }) => {
+    const room = chat().rooms[e.roomId];
+    chat().applyCleared(e);
+    // Unread ones may have gone with them: the count comes from the server again.
+    if (room?.unread && !e.all) void chat().loadRoom(e.roomId);
+  });
+  // An admin muted me in a room's voice, or stopped my camera (or let me again).
+  socket.on('voice:moderated', (e: { roomId: string; voiceMuted: boolean; cameraBlocked: boolean }) => useVoice.getState().applyModeration(e));
   socket.on('room:added', (room: RoomSummary | null) => {
     if (!room) return;
     const isNew = !chat().rooms[room.id];

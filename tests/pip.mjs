@@ -185,6 +185,24 @@ try {
     await pa.screenshot({ path: `${SHOTS}pip-1-floating.png` });
   });
 
+  await check('the call’s picture starts sharp (1.2 Mbps) and may go up to 3 Mbps at 30 frames a second, both ways', async () => {
+    for (const [p, who] of [
+      [pa, 'Asha'],
+      [pb, 'Bikram'],
+    ]) {
+      const got = await p.waitForFunction(
+        () => {
+          const pc = window.__pcs.filter((x) => x.connectionState === 'connected').at(-1);
+          const e = pc?.getSenders().find((s) => s.track?.kind === 'video')?.getParameters().encodings?.[0];
+          return e?.maxBitrate === 3_000_000 && e.maxFramerate === 30 && pc.remoteDescription?.sdp.includes('x-google-start-bitrate=1200') && { max: e.maxBitrate };
+        },
+        null,
+        { timeout: 8000 },
+      );
+      expect(await got.jsonValue(), `${who}’s camera isn’t tuned`);
+    }
+  });
+
   await check('drag it anywhere: let go and it settles at the nearest side, where it was dropped', async () => {
     let b = await boxOf(pip(pa));
     await drag(pa, center(b), { x: 120, y: 420 });

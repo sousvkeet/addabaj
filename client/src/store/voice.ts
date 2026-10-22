@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
-import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, stopStream, watchSpeaking } from '../lib/rtc';
+import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, startSharp, stopStream, watchSpeaking } from '../lib/rtc';
 import { inApp } from '../lib/native';
 import { droppedSocketId, emitAck, socket } from '../lib/socket';
 import { blip, unlockAudio } from '../lib/sounds';
@@ -35,12 +35,12 @@ const VIEWS: readonly string[] = ['hidden', 'small', 'medium', 'large'];
 
 /** What each view gets: the picture's short side, bits and frames per second. */
 const QUALITY = {
-  small: { side: 180, bitrate: 200_000, fps: 15 },
-  medium: { side: 360, bitrate: 600_000, fps: 24 },
-  large: { side: 720, bitrate: 1_500_000, fps: 30 },
+  small: { side: 240, bitrate: 300_000, fps: 15 },
+  medium: { side: 480, bitrate: 900_000, fps: 24 },
+  large: { side: 720, bitrate: 2_000_000, fps: 30 },
 } as const;
 /** All the copies of my camera together stay within this, so many viewers don't choke my upload. */
-const UPLOAD_BUDGET = 3_000_000;
+const UPLOAD_BUDGET = 4_000_000;
 
 type Signal = { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; view?: View; restart?: boolean };
 
@@ -71,6 +71,8 @@ type VoiceState = {
   minimized: boolean;
   /** My connection to the server dropped (a network change): the call carries on once it's back. */
   reconnecting: boolean;
+  /** An admin muted me here (I can't unmute), or stopped my camera (I can't turn it on), until they let me. */
+  moderation: Moderation;
 
   join: (roomId: string, options?: { video?: boolean }) => Promise<void>;
   leave: () => Promise<void>;
@@ -91,7 +93,12 @@ type VoiceState = {
   onConnectionLost: () => void;
   /** Connected again: take my seat back, and make again whatever broke. */
   onReconnected: () => Promise<void>;
+  /** An admin muted me or stopped my camera in a room (or let me again). */
+  applyModeration: (e: Moderation & { roomId: string }) => void;
 };
+
+type Moderation = { voiceMuted: boolean; cameraBlocked: boolean };
+const FREE: Moderation = { voiceMuted: false, cameraBlocked: false };
 
 type Peer = {
   pc: RTCPeerConnection;
@@ -120,6 +127,7 @@ const idle = {
   localVideo: null,
   minimized: false,
   reconnecting: false,
+  moderation: FREE,
 };
 
 let localStream: MediaStream | null = null;
@@ -316,6 +324,32 @@ export const useVoice = create<VoiceState>()((set, get) => {
     if (roomId && status === 'live') socket.emit('voice:camera', { roomId, on: false });
   }
 
+  /**
+   * What a room's admins decided about me: muted (my microphone goes off and
+   * stays off), my camera stopped. `joining`: just in, so say what holds.
+   */
+  function moderate(next: Moderation, joining: boolean) {
+    const before = get().moderation;
+    set({ moderation: next });
+    if (next.voiceMuted && !get().muted) {
+      localStream?.getAudioTracks().forEach((t) => (t.enabled = false));
+      set((s) => ({ muted: true, speaking: { ...s.speaking, [myId()]: false } }));
+    }
+    if (next.cameraBlocked && cameraTrack) stopCamera();
+    if (joining) {
+      if (next.voiceMuted || next.cameraBlocked) {
+        toast(`An admin ${next.voiceMuted && next.cameraBlocked ? 'muted you and stopped your camera' : next.voiceMuted ? 'muted you' : 'stopped your camera'} here, until they let you.`);
+      }
+      return;
+    }
+    if (next.voiceMuted !== before.voiceMuted) {
+      toast(next.voiceMuted ? 'An admin muted you.' : 'An admin let you talk again. Unmute when you’re ready.', next.voiceMuted ? 'error' : 'live');
+    }
+    if (next.cameraBlocked !== before.cameraBlocked) {
+      toast(next.cameraBlocked ? 'An admin stopped your camera.' : 'An admin let you turn your camera on again.', next.cameraBlocked ? 'error' : 'live');
+    }
+  }
+
   // A microphone chosen in settings takes effect for everyone in the room at once.
   async function switchMic() {
     if (!localStream || get().status !== 'live') return;
@@ -414,13 +448,18 @@ export const useVoice = create<VoiceState>()((set, get) => {
           }
         }
         if (get().roomId !== roomId) return cleanup();
-        const { peers: others } = await emitAck<{ peers: VoiceParticipant[] }>('voice:join', { roomId, muted: false, camera: !!cameraTrack });
+        const { peers: others, moderation } = await emitAck<{ peers: VoiceParticipant[]; moderation?: Moderation }>('voice:join', {
+          roomId,
+          muted: false,
+          camera: !!cameraTrack,
+        });
         // Left while joining: the leave reached the server first, so say it again.
         if (get().roomId !== roomId) {
           socket.emit('voice:leave', { roomId });
           return;
         }
         set({ status: 'live' });
+        if (moderation) moderate(moderation, true);
         blip('join');
         watchLocalMic();
         await Promise.all(others.map((p) => offerTo(p.userId, roomId).catch((err) => console.warn('Voice offer failed', err))));
@@ -438,7 +477,11 @@ export const useVoice = create<VoiceState>()((set, get) => {
     },
 
     toggleMute: () => {
-      const { roomId, muted } = get();
+      const { roomId, muted, moderation } = get();
+      if (muted && moderation.voiceMuted) {
+        toast('An admin muted you here. You can talk again when an admin lets you.');
+        return;
+      }
       const next = !muted;
       localStream?.getAudioTracks().forEach((t) => (t.enabled = !next));
       set((s) => ({ muted: next, speaking: { ...s.speaking, [myId()]: false } }));
@@ -446,9 +489,13 @@ export const useVoice = create<VoiceState>()((set, get) => {
     },
 
     toggleCamera: async () => {
-      const { status, cameraOn, cameraBusy } = get();
+      const { status, cameraOn, cameraBusy, moderation } = get();
       if (status !== 'live' || cameraBusy) return;
       if (cameraOn) return stopCamera();
+      if (moderation.cameraBlocked) {
+        toast('An admin stopped your camera here. You can turn it on again when an admin lets you.');
+        return;
+      }
       set({ cameraBusy: true });
       try {
         if (await startCamera()) {
@@ -505,7 +552,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
           if (mine?.pc.signalingState === 'have-local-offer' && myId() > from && Date.now() - (mine.offeredAt ?? 0) < COLLISION_MS) return;
           const peer = connect(from, roomId, false);
           const { pc, queue } = peer;
-          await pc.setRemoteDescription(data.sdp);
+          await pc.setRemoteDescription(startSharp(data.sdp));
           await queue.flush();
           // Adopt their video slot and open it for sending, so my camera can
           // join any time with a track swap.
@@ -521,7 +568,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
         } else if (data.sdp?.type === 'answer') {
           const peer = peers.get(from);
           if (!peer) return;
-          await peer.pc.setRemoteDescription(data.sdp);
+          await peer.pc.setRemoteDescription(startSharp(data.sdp));
           await peer.queue.flush();
         } else if (data.candidate) {
           await peers.get(from)?.queue.add(data.candidate);
@@ -563,7 +610,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
       const { roomId, status, muted, cameraOn } = get();
       if (!roomId || status !== 'live') return;
       try {
-        const res = await emitAck<{ peers: VoiceParticipant[]; resumed: boolean }>('voice:join', {
+        const res = await emitAck<{ peers: VoiceParticipant[]; resumed: boolean; moderation?: Moderation }>('voice:join', {
           roomId,
           resume: true,
           from: droppedSocketId(),
@@ -572,6 +619,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
         });
         if (get().roomId !== roomId) return;
         set({ reconnecting: false });
+        if (res.moderation) moderate(res.moderation, false);
         const here = new Set(res.peers.map((p) => p.userId));
         // Gone while I was away.
         for (const id of [...peers.keys()]) if (!here.has(id)) closePeer(id);
@@ -587,6 +635,12 @@ export const useVoice = create<VoiceState>()((set, get) => {
         cleanup();
         toast(errorMessage(err), 'error');
       }
+    },
+
+    applyModeration: ({ roomId, voiceMuted, cameraBlocked }) => {
+      const { roomId: here, status } = get();
+      if (here !== roomId || status === 'idle') return;
+      moderate({ voiceMuted, cameraBlocked }, false);
     },
   };
 });

@@ -10,6 +10,7 @@ import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
@@ -48,6 +49,9 @@ public class CallService extends Service {
     private final Handler main = new Handler(Looper.getMainLooper());
     private JSONObject session = new JSONObject();
     private PowerManager.WakeLock proximity;
+    /** The processor and Wi-Fi stay awake while something runs: with the screen off, some phones would stop it otherwise. */
+    private PowerManager.WakeLock awake;
+    private WifiManager.WifiLock wifi;
     private boolean routed;
 
     // ── Called from the page bridge ─────────────────────────────────────
@@ -138,6 +142,7 @@ public class CallService extends Service {
             return START_NOT_STICKY;
         }
         running = true;
+        stayAwake();
         kind = session.optString("kind", "none");
         // Answered in the app: the phone's own ringing stops.
         String callId = session.optString("callId");
@@ -238,6 +243,41 @@ public class CallService extends Service {
         return b.build();
     }
 
+    // ── Awake with the screen off ──────────────────────────────────────
+
+    /**
+     * A call, room voice or live stream keeps going with the screen off: the
+     * processor stays awake (the page, its connection and the call's sound go
+     * on), and so does Wi-Fi as far as Android lets it (out of power saving
+     * before Android 10; with low latency since, while the app is in front).
+     * Renewed with each update, so a lock left behind lets go by itself.
+     */
+    private void stayAwake() {
+        if (awake == null) {
+            PowerManager pm = getSystemService(PowerManager.class);
+            if (pm != null) {
+                awake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "AddaKhana:running");
+                awake.setReferenceCounted(false);
+            }
+        }
+        if (awake != null) awake.acquire(6 * 60 * 60 * 1000L);
+        if (wifi == null) {
+            WifiManager wm = getApplicationContext().getSystemService(WifiManager.class);
+            if (wm != null) {
+                @SuppressWarnings("deprecation")
+                int mode = Build.VERSION.SDK_INT >= 29 ? WifiManager.WIFI_MODE_FULL_LOW_LATENCY : WifiManager.WIFI_MODE_FULL_HIGH_PERF;
+                wifi = wm.createWifiLock(mode, "AddaKhana:running");
+                wifi.setReferenceCounted(false);
+            }
+        }
+        if (wifi != null && !wifi.isHeld()) wifi.acquire();
+    }
+
+    private void letSleep() {
+        if (awake != null && awake.isHeld()) awake.release();
+        if (wifi != null && wifi.isHeld()) wifi.release();
+    }
+
     // ── Sound: earpiece or loudspeaker, and the proximity sensor ─────────
 
     private void applyAudio() {
@@ -321,6 +361,7 @@ public class CallService extends Service {
         speakerChoice = null;
         main.removeCallbacksAndMessages(null);
         releaseProximity();
+        letSleep();
         AudioManager am = getSystemService(AudioManager.class);
         if (routed && am != null) {
             if (Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice();

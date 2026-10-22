@@ -3,6 +3,7 @@
 // them as soon as it arrives. Browsers keep nothing, as a shared computer
 // shouldn't hold someone's messages. Logging out (or the session ending)
 // wipes it.
+import { clearedUpTo, withoutCleared } from './history';
 import { inApp } from './native';
 import type { Conversation, DmMessage, Draft, Invite, Paged, RoomDetail, RoomMessage, RoomSummary, User } from './types';
 
@@ -52,7 +53,11 @@ export function cachedChats(userId: string): { chats: ChatSnapshot; outbox: Outg
   const stale = <T,>(pages: Record<string, Paged<T>>) =>
     Object.fromEntries(Object.entries(pages ?? {}).map(([id, p]) => [id, { ...p, loadingMore: false, stale: true }]));
   const { outbox = [], v: _v, ...chats } = snap;
-  return { chats: { ...chats, dms: stale(snap.dms), roomMessages: stale(snap.roomMessages) }, outbox };
+  // Rooms whose history has cleared since (on their schedule) show none of it.
+  const roomMessages = Object.fromEntries(
+    Object.entries(stale(snap.roomMessages)).map(([id, page]) => [id, withoutCleared(page, clearedUpTo(snap.rooms?.[id], { schedule: true }))]),
+  );
+  return { chats: { ...chats, dms: stale(snap.dms), roomMessages }, outbox };
 }
 
 /** Text messages still waiting for the connection (each keeps its send's name, so it can't arrive twice). */

@@ -167,15 +167,19 @@ export const nativeAnswering = (callId: string) => answering === callId;
 // ── Permissions ───────────────────────────────────────────────────────
 
 /** What the app needs from the phone (app 1.10.0 on; see components/Permissions.tsx). */
-export type PermissionName = 'notifications' | 'microphone' | 'camera' | 'fullScreen' | 'battery';
+export type PermissionName = 'notifications' | 'microphone' | 'camera' | 'fullScreen' | 'battery' | 'background' | 'samsung';
 /**
  * granted; ask (Android's own prompt can show); settings (only the phone's
- * settings can change it now). Missing: not on this version of Android.
+ * settings can change it now); opened (a page nothing can check was shown:
+ * Samsung's sleeping apps). Missing: not on this phone (1.11.0 added
+ * background and samsung).
  */
-export type PermissionStatus = 'granted' | 'ask' | 'settings';
+export type PermissionStatus = 'granted' | 'ask' | 'settings' | 'opened';
 export type AppPermissions = Partial<Record<PermissionName, PermissionStatus>> & {
   /** The first-run screen was seen already. */
   seen?: boolean;
+  /** Seen since background activity and Samsung's sleeping apps were on it (false: not yet; missing: an older app). */
+  seenExtra?: boolean;
 };
 
 /** Where they stand (null: an app without the screen, or a browser). Asking tells the app the page shows its own screen. */

@@ -399,9 +399,14 @@ function StreamBar() {
 
 type SinkElement = HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
 
-function Sink({ stream }: { stream: MediaStream }) {
+function Sink({ stream, silenced = false }: { stream: MediaStream; silenced?: boolean }) {
   const ref = useRef<SinkElement>(null);
   const setBlocked = useUi((s) => s.setSoundBlocked);
+
+  // Muted by a room's admin: not heard here, whatever their app still sends.
+  useEffect(() => {
+    if (ref.current) ref.current.muted = silenced;
+  }, [silenced]);
   const speaker = useDevices((s) => s.choice.audiooutput);
 
   useEffect(() => {
@@ -429,11 +434,14 @@ function Sink({ stream }: { stream: MediaStream }) {
 export function AudioSinks() {
   const remote = useCall((s) => s.remoteStream);
   const streams = useVoice((s) => s.streams);
+  const roomId = useVoice((s) => s.roomId);
+  // Those a room's admin muted (a string, so this only renders again when it changes).
+  const silenced = useChat((s) => (roomId ? (s.voice[roomId] ?? []).filter((p) => p.silenced).map((p) => p.userId).join(' ') : ''));
   return (
     <div hidden>
       {remote && <Sink stream={remote} />}
       {Object.entries(streams).map(([id, s]) => (
-        <Sink key={id} stream={s} />
+        <Sink key={id} stream={s} silenced={silenced.split(' ').includes(id)} />
       ))}
     </div>
   );

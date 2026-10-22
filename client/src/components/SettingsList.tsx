@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { AtSign, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, Settings2, ShieldCheck } from 'lucide-react';
+import { AtSign, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, PenLine, Settings2, ShieldCheck } from 'lucide-react';
 import { inApp, nativeAppVersion } from '../lib/native';
 import { useAuth } from '../store/auth';
 import { useUi } from '../store/ui';
@@ -9,6 +9,7 @@ import { ListHeader } from './ListHeader';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { PrivacyDialog } from './PrivacyDialog';
 import { MyIdDialog } from './MyIdDialog';
+import { NameDialog } from './NameDialog';
 import { PhotoEditor } from './PhotoEditor';
 import { DevicesDialog, devicesSummary, useSessions } from './DevicesDialog';
 import { PermissionsDialog, permissionsSummary } from './Permissions';
@@ -44,7 +45,7 @@ export function SettingsList() {
   const theme = useUi((s) => s.theme);
   const toggleTheme = useUi((s) => s.toggleTheme);
   const openDevices = useUi((s) => s.setDevicesOpen);
-  const [open, setOpen] = useState<'photo' | 'id' | 'devices' | 'privacy' | 'permissions' | 'password' | 'logout' | null>(null);
+  const [open, setOpen] = useState<'photo' | 'name' | 'id' | 'devices' | 'privacy' | 'permissions' | 'password' | 'logout' | null>(null);
   const permissions = usePermissions((s) => s.state);
   const { sessions } = useSessions(open !== 'devices');
   const [leaving, setLeaving] = useState(false);
@@ -68,7 +69,7 @@ export function SettingsList() {
               <Camera size={14} />
             </span>
           </button>
-          <button type="button" onClick={() => setOpen('id')} className="min-w-0 flex-1 text-left">
+          <button type="button" onClick={() => setOpen('name')} aria-label={`${user.name}: change your name`} className="min-w-0 flex-1 text-left">
             <span className="block truncate text-[19px] font-semibold">{user.name}</span>
             <span className="block truncate text-[14px] text-ink-soft">{user.handle ? `@${user.handle}` : user.email}</span>
           </button>
@@ -81,6 +82,7 @@ export function SettingsList() {
             hint={user.photo ? 'Change or remove your photo' : 'Add a photo so people recognise you'}
             onClick={() => setOpen('photo')}
           />
+          <Row icon={<PenLine size={19} />} title="Your name" hint={`${user.name} · what everyone sees`} onClick={() => setOpen('name')} />
           <Row icon={<AtSign size={19} />} title="Your user ID" hint={user.handle ? `@${user.handle} · how friends find you` : 'How friends find you'} onClick={() => setOpen('id')} />
           <Row
             icon={<MonitorSmartphone size={19} />}
@@ -110,6 +112,7 @@ export function SettingsList() {
         {version && <p className="mt-6 text-center text-[12.5px] text-ink-soft">Adda Khana {version}</p>}
       </div>
       <PhotoEditor open={open === 'photo'} onClose={close} />
+      <NameDialog open={open === 'name'} onClose={close} />
       <MyIdDialog open={open === 'id'} onClose={close} />
       <DevicesDialog open={open === 'devices'} onClose={close} />
       <PrivacyDialog open={open === 'privacy'} onClose={close} />

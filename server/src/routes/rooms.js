@@ -6,7 +6,9 @@ import { one, query, transaction } from '../db.js';
 import { limits } from '../config.js';
 import { AppError, assertUuid, badRequest, conflict, forbidden, notFound } from '../errors.js';
 import { getIO, userChannel } from '../realtime.js';
-import { announceRoomChanged, attachMember, detachMember, inviteForInvitee, listRooms, lockSeat, normalizeRoomCode, postSystemMessage, renewRoomCode, requireAdmin, requireMember, roomDetail, roomMessage, ROOM_MESSAGE_SELECT, deleteRoom } from '../services/rooms.js';
+import { announceRoomChanged, attachMember, detachMember, inviteForInvitee, listRooms, lockSeat, normalizeRoomCode, postSystemMessage, renewRoomCode, requireAdmin, requireMember, requireRoomAdmin, roomDetail, roomMessage, ROOM_MESSAGE_SELECT, deleteRoom } from '../services/rooms.js';
+import { clearAfterText, clearRoomHistory, sweepHistory, UNITS } from '../services/history.js';
+import { voice } from '../socket/voice.js';
 import { findUser, publicUser, roomPhotoUrl } from '../services/users.js';
 import { MAX_PHOTO_BYTES, removeRoomPhoto, roomPhotoFile, saveRoomPhoto } from '../services/photos.js';
 import { enrich } from '../services/messages.js';
@@ -215,6 +217,79 @@ roomsRouter.patch('/:id', async (req, res) => {
   res.json({ room: await roomDetail(roomId, req.userId) });
 });
 
+// ── Chat history (Room settings): cleared on a schedule, or all at once ──
+
+const historySchema = z.object({
+  clearAfter: z
+    .object({ amount: z.coerce.number().int().min(1), unit: z.enum(['minute', 'hour', 'day', 'month']) })
+    .nullable()
+    .superRefine((c, ctx) => {
+      if (c && c.amount > UNITS[c.unit]) ctx.addIssue({ code: 'custom', message: `That’s too long: up to ${UNITS[c.unit]} ${c.unit}s.` });
+    }),
+});
+
+// Messages older than this go by themselves, for everyone (null: kept).
+roomsRouter.put('/:id/history', async (req, res) => {
+  const roomId = req.params.id;
+  await requireRoomAdmin(roomId, req.userId);
+  const text = clearAfterText(historySchema.parse(req.body).clearAfter);
+  const { clear_after: before } = await one('SELECT clear_after FROM rooms WHERE id = $1', [roomId]);
+  if ((before ?? null) !== text) {
+    await query('UPDATE rooms SET clear_after = $2 WHERE id = $1', [roomId, text]);
+    const user = await me(req);
+    await postSystemMessage(roomId, text ? `${user.name} set messages to clear after ${text}` : `${user.name} turned off clearing messages`);
+    if (text) await sweepHistory(roomId);
+    announceRoomChanged(roomId);
+  }
+  res.json({ room: await roomDetail(roomId, req.userId) });
+});
+
+// Every message goes now, for everyone.
+roomsRouter.post('/:id/history/clear', async (req, res) => {
+  const roomId = req.params.id;
+  await requireRoomAdmin(roomId, req.userId);
+  const user = await me(req);
+  await clearRoomHistory(roomId);
+  await postSystemMessage(roomId, `${user.name} cleared the chat history`);
+  announceRoomChanged(roomId);
+  res.json({ room: await roomDetail(roomId, req.userId) });
+});
+
+// ── Voice, kept in order by the room's admins ─────────────────────────
+
+const moderationSchema = z
+  .object({ voiceMuted: z.boolean().optional(), cameraBlocked: z.boolean().optional() })
+  .refine((v) => v.voiceMuted !== undefined || v.cameraBlocked !== undefined, { message: 'Nothing to change.' });
+
+/**
+ * Muted by an admin: they can't unmute. Camera stopped: they can't turn it on.
+ * Until an admin lets them, in voice now or later. Room admins can do it to
+ * members; its starter (or the site's host) to admins too; only the host to its starter.
+ */
+roomsRouter.put('/:id/members/:userId/voice', async (req, res) => {
+  const roomId = req.params.id;
+  const targetId = String(req.params.userId);
+  assertUuid(targetId, 'user');
+  const mine = await requireRoomAdmin(roomId, req.userId);
+  if (targetId === req.userId) throw badRequest('You can’t do that to yourself.');
+  const target = await one('SELECT role FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, targetId]);
+  if (!target) throw notFound('They’re not in this room any more.');
+  if (targetId === mine.ownerId && !mine.host) throw forbidden('Nobody can do that to the person who started the room.');
+  if (target.role === 'admin' && req.userId !== mine.ownerId && !mine.host) throw forbidden('Only the person who started the room can do that to another admin.');
+  const input = moderationSchema.parse(req.body);
+  const row = await one(
+    `UPDATE room_members SET voice_muted = coalesce($3, voice_muted), camera_blocked = coalesce($4, camera_blocked)
+     WHERE room_id = $1 AND user_id = $2 RETURNING voice_muted, camera_blocked`,
+    [roomId, targetId, input.voiceMuted ?? null, input.cameraBlocked ?? null],
+  );
+  const state = { voiceMuted: row.voice_muted, cameraBlocked: row.camera_blocked };
+  voice.moderate(roomId, targetId, state);
+  // They hear it on every device (the one in voice mutes, or stops its camera).
+  getIO()?.to(userChannel(targetId)).emit('voice:moderated', { roomId, ...state });
+  announceRoomChanged(roomId);
+  res.json({ room: await roomDetail(roomId, req.userId) });
+});
+
 // ── Room photo (its admins choose it; members see it in the list, the header and notifications) ──
 
 // For anyone signed in: invitations and invite-code previews show it before joining.
@@ -270,6 +345,8 @@ roomsRouter.get('/:id/messages', async (req, res) => {
     `${ROOM_MESSAGE_SELECT}
      WHERE m.room_id = $1 AND ($2::bigint IS NULL OR m.id < $2)
        AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = $4 AND h.message_id = m.id)
+       -- Nothing from before the history was cleared, or past its schedule (between sweeps).
+       AND m.created_at > coalesce((SELECT greatest(r.history_cleared_at, now() - r.clear_after::interval) FROM rooms r WHERE r.id = $1), '-infinity')
      ORDER BY m.id DESC LIMIT $3`,
     [roomId, before, limit + 1, req.userId],
   );

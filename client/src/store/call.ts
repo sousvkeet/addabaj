@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { errorMessage } from '../lib/api';
-import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, stopStream, watchSpeaking } from '../lib/rtc';
+import { CandidateQueue, createPeer, getCamera, getMicrophone, loadIceServers, startSharp, stopStream, watchSpeaking } from '../lib/rtc';
 import { droppedSocketId, emitAck, socket } from '../lib/socket';
 import { startTone, stopTone, unlockAudio } from '../lib/sounds';
 import { inApp, nativeAnswering, nativeRinging, pushToken } from '../lib/native';
@@ -92,6 +92,8 @@ const idle = {
 
 /** How long a call waits for its connection to come back before giving up (the server waits about as long). */
 const RECONNECT_MS = 50_000;
+/** My camera's most, in a one-to-one call. */
+const CALL_VIDEO = { maxBitrate: 3_000_000, maxFramerate: 30 };
 /** A connection "disconnected" this long gets a new path (it rarely comes back by itself after a network change). */
 const STALL_MS = 2500;
 /** At most one new path this often. */
@@ -172,8 +174,19 @@ export const useCall = create<CallState>()((set, get) => {
       if (cameraTrack === track) stopCamera();
     };
     if (videoTx) await videoTx.sender.replaceTrack(track);
+    void tuneVideo();
     set({ cameraOn: true, localVideo: new MediaStream([track]), minimized: false });
     return true;
+  }
+
+  /** My camera in the call: up to 3 Mbps at 30 frames a second (a sharp 720p), as far as the network allows. */
+  async function tuneVideo() {
+    const sender = videoTx?.sender;
+    const params = sender?.getParameters();
+    const encoding = params?.encodings?.[0];
+    if (!sender || !params || !encoding || (encoding.maxBitrate === CALL_VIDEO.maxBitrate && encoding.maxFramerate === CALL_VIDEO.maxFramerate)) return;
+    Object.assign(encoding, CALL_VIDEO);
+    await sender.setParameters(params).catch(() => {});
   }
 
   function stopCamera() {
@@ -461,7 +474,7 @@ export const useCall = create<CallState>()((set, get) => {
       }
       try {
         if (data.sdp) {
-          await conn.setRemoteDescription(data.sdp);
+          await conn.setRemoteDescription(startSharp(data.sdp));
           await queue?.flush();
           if (data.sdp.type === 'offer') {
             // Adopt the caller's video slot and open it for sending, so our
@@ -476,6 +489,7 @@ export const useCall = create<CallState>()((set, get) => {
             await conn.setLocalDescription(answer);
             socket.emit('call:signal', { callId, data: { sdp: conn.localDescription?.toJSON() } });
           }
+          void tuneVideo();
         } else if (data.candidate) {
           await queue?.add(data.candidate);
         }

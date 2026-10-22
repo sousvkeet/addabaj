@@ -11,6 +11,7 @@ import { Button } from './ui/Button';
 import { Dialog, Field, inputClass } from './ui/Dialog';
 import { MemberLimit } from './MemberLimit';
 import { PhotoEditor } from './PhotoEditor';
+import { RoomHistorySettings } from './RoomHistory';
 
 export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: RoomDetail; open: boolean; onClose: () => void; isOwner: boolean }) {
   const updateRoom = useChat((s) => s.updateRoom);
@@ -104,6 +105,8 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
           </Button>
         </div>
       </form>
+
+      <RoomHistorySettings room={room} />
 
       {isOwner && (
         <div className="mt-6 border-t border-line pt-5">

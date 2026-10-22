@@ -2,7 +2,8 @@ import { randomInt } from 'node:crypto';
 import { one, query } from '../db.js';
 import { conflict, forbidden, notFound, assertUuid } from '../errors.js';
 import { getIO, roomChannel, userChannel } from '../realtime.js';
-import { photoUrl, publicUser, roomPhotoUrl, USER_COLUMNS } from './users.js';
+import { isHost, photoUrl, publicUser, roomPhotoUrl, USER_COLUMNS } from './users.js';
+import { parseClearAfter } from './history.js';
 import { forgetRoomPhoto } from './photos.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
@@ -60,6 +61,14 @@ export async function requireAdmin(roomId, userId) {
   const m = await requireMember(roomId, userId);
   if (m.role !== 'admin') throw forbidden('Only room admins can do that.');
   return m;
+}
+
+/** Room admins, and the site's host admin when they're in the room. Returns { role, ownerId, host }. */
+export async function requireRoomAdmin(roomId, userId) {
+  const m = await requireMember(roomId, userId);
+  const host = await isHost(userId);
+  if (m.role !== 'admin' && !host) throw forbidden('Only room admins can do that.');
+  return { ...m, host };
 }
 
 /**
@@ -124,6 +133,7 @@ export async function ensureRoomCodes() {
 
 const SUMMARY_SELECT = `
   SELECT r.id, r.name, r.description, r.photo, r.owner_id, r.max_members, r.created_at, r.watch, rm.role,
+    r.clear_after, r.history_cleared_at,
     r.join_code, (r.join_password_hash IS NOT NULL) AS has_password,
     (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
     (SELECT count(*)::int FROM room_messages m
@@ -170,6 +180,9 @@ function summary(row) {
     archivedAt: row.archived_at ?? null,
     createdAt: row.created_at,
     watching: row.watch?.source?.title ?? null,
+    // Its chat history: cleared by itself after this (null: kept), and when it was last cleared at once.
+    clearAfter: parseClearAfter(row.clear_after),
+    clearedAt: row.history_cleared_at ?? null,
     lastMessage: row.lm_id
       ? roomMessage({
           id: row.lm_id, room_id: row.id, kind: row.lm_kind, body: row.lm_body,
@@ -203,7 +216,8 @@ export async function roomDetail(roomId, userId) {
   const base = await roomSummary(roomId, userId);
   if (!base) throw notFound("That room doesn't exist or you're not a member.");
   const { rows: members } = await query(
-    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id
+    `SELECT u.id, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at, rm.role, rm.joined_at, rm.last_read_id, rm.last_delivered_id,
+            rm.voice_muted, rm.camera_blocked
      FROM room_members rm JOIN users u ON u.id = rm.user_id
      WHERE rm.room_id = $1
      ORDER BY (u.id = $2) DESC, (rm.role = 'admin') DESC, lower(u.name)`,
@@ -238,6 +252,9 @@ export async function roomDetail(roomId, userId) {
       joinedAt: m.joined_at,
       lastReadId: Number(m.last_read_id),
       lastDeliveredId: Math.max(Number(m.last_delivered_id), Number(m.last_read_id)),
+      // An admin muted them in voice, or stopped their camera (until an admin lets them).
+      ...(m.voice_muted ? { voiceMuted: true } : {}),
+      ...(m.camera_blocked ? { cameraBlocked: true } : {}),
     })),
     invites,
     voice: voice.participants(roomId),

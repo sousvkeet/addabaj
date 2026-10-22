@@ -16,7 +16,7 @@ import { introduce } from './presence.js';
 import { pushChatRead, pushDeleted, pushDm, pushRoomMessage } from './push.js';
 import { ROOM_MESSAGE_SELECT, roomMessage } from './rooms.js';
 import { copyAttachment, discardAttachment, linkAttachment, uploadDir } from './uploads.js';
-import { findUser } from './users.js';
+import { findUser, isHost } from './users.js';
 import { blockedEitherWay, blockedMessage } from './blocks.js';
 import { firstLink, schedulePreview } from './previews.js';
 import { messaging } from './site.js';
@@ -35,7 +35,6 @@ export const asId = (v) => {
 };
 
 /** The site's host admins aren't held to the limits they set for everyone. */
-const isHost = async (userId) => !!(await one(`SELECT 1 FROM users WHERE id = $1 AND site_role = 'admin'`, [userId]));
 
 // Plenty for a fast typist, but stops floods: 20 messages per 10 s per person.
 const canSend = rateLimiter(20, 10_000);

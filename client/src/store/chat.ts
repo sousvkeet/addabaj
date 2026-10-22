@@ -2,12 +2,13 @@ import { create } from 'zustand';
 import { api, errorMessage } from '../lib/api';
 import { emitAck, socket, whenOnline } from '../lib/socket';
 import type {
-  Attachment, ChatSettings, Conversation, DmMessage, Draft, Invite, LinkPreview, Mention, Paged, PreparedFile, Reaction, ReplyRef, Role, RoomDetail, RoomMessage,
+  Attachment, ChatSettings, ClearAfter, Conversation, DmMessage, Draft, Invite, LinkPreview, Mention, Paged, PreparedFile, Reaction, ReplyRef, Role, RoomDetail, RoomMessage,
   RoomSummary, User, VoiceParticipant,
 } from '../lib/types';
 import { uploadFile } from '../lib/upload';
 import { nativeClearChat } from '../lib/native';
 import { cachedChats, saveChats } from '../lib/localCache';
+import { clearedUpTo, withoutCleared } from '../lib/history';
 import { myId, onLogout, useAuth } from './auth';
 import { toast } from './ui';
 
@@ -85,6 +86,14 @@ type ChatState = {
   cancelInvite: (roomId: string, inviteId: string) => Promise<void>;
   removeMember: (roomId: string, userId: string) => Promise<void>;
   setRole: (roomId: string, userId: string, role: Role) => Promise<void>;
+  /** Room admins: clear the chat history after this, by itself (null: keep it). */
+  setRoomHistory: (roomId: string, clearAfter: ClearAfter | null) => Promise<void>;
+  /** Room admins: clear the whole chat history now, for everyone. */
+  clearRoomHistory: (roomId: string) => Promise<void>;
+  /** Room admins: mute someone in the room's voice, or stop their camera (or let them again). */
+  moderateVoice: (roomId: string, userId: string, change: { voiceMuted?: boolean; cameraBlocked?: boolean }) => Promise<void>;
+  /** A room's history was cleared (up to `before`): its messages from then and before go. */
+  applyCleared: (e: { roomId: string; before: string }) => void;
   leaveRoom: (roomId: string) => Promise<void>;
 
   acceptInvite: (inviteId: string) => Promise<RoomDetail>;
@@ -327,6 +336,8 @@ export const useChat = create<ChatState>()((set, get) => ({
   applyUser: (user) =>
     set((s) => {
       const id = user.id;
+      // What their messages show of them: their name and photo.
+      const changed = { ...('name' in user ? { name: user.name } : {}), ...('photo' in user ? { photo: user.photo } : {}) };
       const conversation = s.conversations[id];
       const touches = (members: { id: string }[]) => members.some((m) => m.id === id);
       return {
@@ -348,10 +359,19 @@ export const useChat = create<ChatState>()((set, get) => ({
           Object.entries(s.roomMessages).map(([roomId, page]) => [
             roomId,
             page.items.some((m) => m.sender?.id === id)
-              ? { ...page, items: page.items.map((m) => (m.sender?.id === id ? { ...m, sender: { ...m.sender, ...('photo' in user ? { photo: user.photo } : {}) } } : m)) }
+              ? { ...page, items: page.items.map((m) => (m.sender?.id === id ? { ...m, sender: { ...m.sender, ...changed } } : m)) }
               : page,
           ]),
         ),
+        // Rooms whose latest message is theirs show their new name or photo in the list.
+        rooms: Object.values(s.rooms).some((r) => r.lastMessage?.sender?.id === id)
+          ? Object.fromEntries(
+              Object.entries(s.rooms).map(([roomId, r]) => [
+                roomId,
+                r.lastMessage?.sender?.id === id ? { ...r, lastMessage: { ...r.lastMessage, sender: { ...r.lastMessage.sender, ...changed } } } : r,
+              ]),
+            )
+          : s.rooms,
         invites: s.invites.some((i) => i.inviter.id === id) ? s.invites.map((i) => (i.inviter.id === id ? { ...i, inviter: { ...i.inviter, ...user } } : i)) : s.invites,
       };
     }),
@@ -727,16 +747,25 @@ export const useChat = create<ChatState>()((set, get) => ({
   upsertRoom: (room) =>
     set((s) => {
       const { members, invites, voice, ...summary } = room as RoomDetail;
+      // Its history cleared at once: what was kept from before goes (the schedule's
+      // clearing is said by the server as it happens: room:cleared).
+      const upTo = clearedUpTo(summary);
+      const last = summary.lastMessage && Date.parse(summary.lastMessage.createdAt) <= upTo ? null : summary.lastMessage;
       const next: Partial<ChatState> = {
         rooms: {
           ...s.rooms,
           [room.id]: {
             ...s.rooms[room.id],
             ...summary,
+            ...('lastMessage' in summary ? { lastMessage: last } : {}),
             ...(s.activeRoom === room.id ? { unread: 0, unreadMentions: 0 } : {}),
           },
         },
       };
+      if (upTo && s.roomMessages[room.id]) {
+        const page = withoutCleared(s.roomMessages[room.id], upTo);
+        if (page !== s.roomMessages[room.id]) next.roomMessages = { ...s.roomMessages, [room.id]: page };
+      }
       if (members) {
         next.roomDetails = { ...s.roomDetails, [room.id]: room as RoomDetail };
         next.users = { ...s.users, ...Object.fromEntries(members.map((m) => [m.id, { ...s.users[m.id], ...m }])) };
@@ -812,6 +841,32 @@ export const useChat = create<ChatState>()((set, get) => ({
     const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/members/${userId}`, { method: 'PATCH', body: { role } });
     get().upsertRoom(room);
   },
+
+  setRoomHistory: async (roomId, clearAfter) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/history`, { method: 'PUT', body: { clearAfter } });
+    get().upsertRoom(room);
+  },
+
+  clearRoomHistory: async (roomId) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/history/clear`, { method: 'POST' });
+    get().upsertRoom(room);
+  },
+
+  moderateVoice: async (roomId, userId, change) => {
+    const { room } = await api<{ room: RoomDetail }>(`/rooms/${roomId}/members/${userId}/voice`, { method: 'PUT', body: change });
+    get().upsertRoom(room);
+  },
+
+  applyCleared: ({ roomId, before }) =>
+    set((s) => {
+      const upTo = Date.parse(before);
+      const room = s.rooms[roomId];
+      const last = room?.lastMessage;
+      return {
+        roomMessages: s.roomMessages[roomId] ? { ...s.roomMessages, [roomId]: withoutCleared(s.roomMessages[roomId], upTo) } : s.roomMessages,
+        rooms: room && last && Date.parse(last.createdAt) <= upTo ? { ...s.rooms, [roomId]: { ...room, lastMessage: null } } : s.rooms,
+      };
+    }),
 
   leaveRoom: async (roomId) => {
     await api(`/rooms/${roomId}/members/${myId()}`, { method: 'DELETE' });

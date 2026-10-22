@@ -6,7 +6,7 @@ import { config } from '../config.js';
 import { one, query } from '../db.js';
 import { AppError, conflict, forbidden } from '../errors.js';
 import { adoptLogin, clearAuthCookie, COOKIE_NAME, readToken, requireAuth, setAuthCookie } from '../auth.js';
-import { findSessionUser, HANDLE_RULES, normalizeHandle, SESSION_COLUMNS, sessionUser } from '../services/users.js';
+import { announceProfile, findSessionUser, HANDLE_RULES, normalizeHandle, SESSION_COLUMNS, sessionUser } from '../services/users.js';
 import { endSessions, getSettings, retireLogins } from '../services/site.js';
 import { createSession, endOtherSessions, endSession, listSessions, rotateSession, touchSession } from '../services/sessions.js';
 import { checkReset, checkSignup, CODE_MINUTES, dropSignup, findSignup, finishSignups, RESEND_SECONDS, resendSignup, startReset, startSignup } from '../services/codes.js';
@@ -57,8 +57,21 @@ const changes = rateLimit({
 const email = z.string().trim().toLowerCase().email('Enter a valid email address.').max(254);
 export const newPassword = z.string().min(8, 'Use at least 8 characters for your password.').max(200);
 
+/** What everyone sees: on one line, without invisible characters, up to 40 characters. */
+const displayName = z
+  .string()
+  // Joiners stay: Bengali spellings and emoji need them.
+  .transform((s) =>
+    s
+      .replace(/\s/g, ' ')
+      .replace(/(?![\u200C\u200D])[\p{Cc}\p{Cf}]/gu, '')
+      .replace(/ {2,}/g, ' ')
+      .trim(),
+  )
+  .pipe(z.string().min(1, 'Enter your name.').max(40, 'Keep your name under 40 characters.'));
+
 const registerSchema = z.object({
-  name: z.string().trim().min(1, 'Enter your name.').max(40, 'Keep your name under 40 characters.'),
+  name: displayName,
   email,
   password: newPassword,
 });
@@ -271,6 +284,16 @@ authRouter.patch('/privacy', requireAuth, async (req, res) => {
   }
   // Their other devices show the new choices.
   io?.to(userChannel(req.userId)).emit('account:changed');
+  res.json({ user: await findSessionUser(req.userId) });
+});
+
+// Your name: everyone sees the new one at once, everywhere you appear (your
+// messages, calls, rooms), and on your other devices.
+authRouter.patch('/name', requireAuth, changes, async (req, res) => {
+  const { name } = z.object({ name: displayName }).parse(req.body);
+  await query('UPDATE users SET name = $2 WHERE id = $1', [req.userId, name]);
+  await announceProfile(req.userId, { name });
+  getIO()?.to(userChannel(req.userId)).emit('account:changed');
   res.json({ user: await findSessionUser(req.userId) });
 });
 

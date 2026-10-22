@@ -29,6 +29,8 @@ type AuthState = {
   changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   /** A new user ID (what people type to find you). */
   changeHandle: (handle: string) => Promise<void>;
+  /** My name, as everyone sees it (they see the new one at once). */
+  changeName: (name: string) => Promise<void>;
   /** My account as the server now has it (a new photo, say). */
   setUser: (user: User) => void;
 };
@@ -115,6 +117,11 @@ export const useAuth = create<AuthState>()((set) => {
     },
     changeHandle: async (handle) => {
       const { user } = await api<{ user: User }>('/auth/handle', { method: 'PATCH', body: { handle } });
+      set({ user });
+      saveUser(user);
+    },
+    changeName: async (name) => {
+      const { user } = await api<{ user: User }>('/auth/name', { method: 'PATCH', body: { name } });
       set({ user });
       saveUser(user);
     },

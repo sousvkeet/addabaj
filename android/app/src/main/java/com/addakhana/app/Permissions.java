@@ -2,8 +2,11 @@ package com.addakhana.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityManager;
+import android.app.usage.UsageStatsManager;
 import android.app.NotificationManager;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
@@ -23,13 +26,19 @@ import java.util.List;
  * What the app needs from Android, for the page's first-run screen and its
  * Settings › App permissions (client/src/components/Permissions.tsx):
  * notifications, the microphone and the camera, ringing over the lock screen
- * (Android 14+) and running in the background. Each is "granted", "ask"
- * (Android's own prompt can still show) or "settings" (only the phone's
- * settings can change it now). One this Android version doesn't have isn't listed.
+ * (Android 14+) and running in the background; whether Android restricts
+ * the app in the background (Android 9+), and on Samsung phones, keeping it
+ * out of One UI's sleeping apps (which nothing can check: "opened" once its
+ * page was shown). Each is "granted", "ask" (Android's own prompt can still
+ * show) or "settings" (only the phone's settings can change it now). One this
+ * phone doesn't have isn't listed.
  */
 final class Permissions {
     static final int REQUEST = 6;
     private static final String SEEN = "permissions_seen";
+    /** Seen since background activity and Samsung's sleeping apps were on it (1.11.0). */
+    private static final String SEEN_2 = "permissions_seen_2";
+    private static final String SAMSUNG_OPENED = "opened:samsung";
 
     /** The page shows its own screen for these, so the app doesn't ask by itself as well (1.10.0 on). */
     static volatile boolean pageAsks;
@@ -42,14 +51,36 @@ final class Permissions {
                 .put("microphone", runtime(c, Manifest.permission.RECORD_AUDIO))
                 .put("camera", runtime(c, Manifest.permission.CAMERA))
                 .put("battery", inBackground(c) ? "granted" : "ask")
-                .put("seen", AddaApp.prefs(c).getBoolean(SEEN, false));
+                .put("seen", AddaApp.prefs(c).getBoolean(SEEN, false))
+                .put("seenExtra", AddaApp.prefs(c).getBoolean(SEEN_2, false));
         if (Build.VERSION.SDK_INT >= 34) s.put("fullScreen", IncomingCall.canRingFullScreen(c) ? "granted" : "settings");
+        if (Build.VERSION.SDK_INT >= 28) s.put("background", restricted(c) ? "settings" : "granted");
+        if (isSamsung()) s.put("samsung", AddaApp.prefs(c).getBoolean(SAMSUNG_OPENED, false) ? "opened" : "ask");
         return s.o;
+    }
+
+    private static boolean isSamsung() {
+        return "samsung".equalsIgnoreCase(Build.MANUFACTURER);
+    }
+
+    /**
+     * Android holds the app back in the background: "Restricted" battery
+     * use, or its strictest standby group. Messages and calls may not arrive.
+     */
+    private static boolean restricted(Context c) {
+        if (Build.VERSION.SDK_INT < 28) return false;
+        ActivityManager am = c.getSystemService(ActivityManager.class);
+        if (am != null && am.isBackgroundRestricted()) return true;
+        if (Build.VERSION.SDK_INT >= 30) {
+            UsageStatsManager usm = c.getSystemService(UsageStatsManager.class);
+            return usm != null && usm.getAppStandbyBucket() == UsageStatsManager.STANDBY_BUCKET_RESTRICTED;
+        }
+        return false;
     }
 
     /** The first-run screen was seen (continued from, or put off): it doesn't come back by itself. */
     static void seen(Context c) {
-        AddaApp.prefs(c).edit().putBoolean(SEEN, true).apply();
+        AddaApp.prefs(c).edit().putBoolean(SEEN, true).putBoolean(SEEN_2, true).apply();
     }
 
     static boolean wasSeen(Context c) {
@@ -122,6 +153,18 @@ final class Permissions {
             case "battery":
                 // Android's "Let the app always run in the background?"; or, where that's missing, the list of apps.
                 open(a, new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, app), new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+                break;
+            case "background":
+                // App info, where its battery use can go from "Restricted" to "Unrestricted".
+                open(a, new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, app));
+                break;
+            case "samsung":
+                // One UI's battery page (Background usage limits › Never sleeping apps), older One UI's, or app info.
+                AddaApp.prefs(a).edit().putBoolean(SAMSUNG_OPENED, true).apply();
+                open(a,
+                        new Intent().setComponent(new ComponentName("com.samsung.android.lool", "com.samsung.android.sm.battery.ui.BatteryActivity")),
+                        new Intent().setComponent(new ComponentName("com.samsung.android.lool", "com.samsung.android.sm.ui.battery.BatteryActivity")),
+                        new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, app));
                 break;
             default:
                 break;

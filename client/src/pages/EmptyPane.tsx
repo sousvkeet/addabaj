@@ -23,7 +23,7 @@ const copy = {
   },
   settings: {
     title: 'Settings',
-    body: 'Your user ID, privacy, devices, theme and password are on the left.',
+    body: 'Your name, user ID, privacy, devices, theme and password are on the left.',
     action: null,
   },
 } as const;

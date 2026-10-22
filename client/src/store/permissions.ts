@@ -29,7 +29,10 @@ export const usePermissions = create<PermissionsState>()((set, get) => ({
 }));
 
 /** The permissions this phone has, in the order they're asked for. */
-export const ORDER: PermissionName[] = ['notifications', 'microphone', 'camera', 'fullScreen', 'battery'];
+export const ORDER: PermissionName[] = ['notifications', 'microphone', 'camera', 'fullScreen', 'battery', 'background', 'samsung'];
 
-/** Those not allowed yet (and which this Android version has). */
-export const missing = (state: AppPermissions | null) => (state ? ORDER.filter((p) => state[p] && state[p] !== 'granted') : []);
+/** Those not allowed yet (and which this phone has). */
+export const missing = (state: AppPermissions | null) => (state ? ORDER.filter((p) => state[p] && state[p] !== 'granted' && state[p] !== 'opened') : []);
+
+/** Added in 1.11.0: the first-run screen opens once more for them, if one is off. */
+export const LATER: PermissionName[] = ['background', 'samsung'];

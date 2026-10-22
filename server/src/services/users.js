@@ -78,6 +78,11 @@ export function normalizeHandle(value) {
   return HANDLE_RE.test(h) ? h : null;
 }
 
+/** The site's host admin, who can do in any room what its admins can. */
+export async function isHost(userId) {
+  return !!(await one(`SELECT 1 FROM users WHERE id = $1 AND site_role = 'admin'`, [userId]));
+}
+
 // ── Contacts: the people someone has a chat with or shares a room with ──
 // Only they see each other's online status. Everyone else has to know the
 // exact user ID or email to find someone.

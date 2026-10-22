@@ -122,6 +122,7 @@ await check('every private endpoint refuses someone who isn’t logged in', asyn
     ['GET', `/files/${photo.id}`], ['POST', '/rooms'], ['POST', '/uploads'], ['POST', '/auth/password'],
     ['POST', '/reports'], ['GET', '/users/blocked'], ['POST', `/users/${B.id}/block`], ['PUT', `/dms/${B.id}/settings`],
     ['PUT', `/rooms/${room.id}/settings`], ['GET', `/previews/${'a'.repeat(32)}`], ['GET', '/admin/reports'], ['GET', '/admin/messaging'],
+    ['PATCH', '/auth/name'], ['PUT', `/rooms/${room.id}/history`], ['POST', `/rooms/${room.id}/history/clear`], ['PUT', `/rooms/${room.id}/members/${B.id}/voice`],
   ];
   for (const [m, p] of paths) {
     const r = await call(null, m, p, m === 'POST' ? {} : undefined);

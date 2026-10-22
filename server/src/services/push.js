@@ -11,7 +11,7 @@
 import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import '../config.js'; // loads server/.env
-import { query } from '../db.js';
+import { one, query } from '../db.js';
 import { getIO, userChannel } from '../realtime.js';
 import { isDisabled } from './site.js';
 import { dmMuted } from './chatSettings.js';
@@ -196,15 +196,59 @@ function remember(userId, key) {
 
 const failed = (err) => console.error('Push notification failed:', err.message);
 
+// ── Held back, and pushed after all ────────────────────────────────────
+// A message isn't pushed while the person seems to be looking. An app going
+// off screen says so (client:state), but phones that freeze or close an app
+// as soon as it's left (some brands do) can stop it saying so first: it still
+// counted as looking until its connection timed out, and those messages were
+// never pushed. So what was held back is pushed once nobody's looking any
+// more, if it arrived just before and is still unread.
+
+/** Only what arrived this shortly before (earlier ones were on screen while the app was in use). */
+const HELD_MS = 45_000;
+const heldBack = new Map(); // userId -> [{ at, scope, chatId, messageId, payload }]
+
+function holdBack(userId, item) {
+  const now = Date.now();
+  const items = (heldBack.get(userId) ?? []).filter((i) => now - i.at < HELD_MS);
+  items.push({ ...item, at: now });
+  heldBack.set(userId, items.slice(-50));
+}
+
+async function stillUnread(userId, { scope, messageId }) {
+  if (scope === 'dm') {
+    const m = await one('SELECT read_at, deleted_at FROM dm_messages WHERE id = $1', [messageId]);
+    return !!m && !m.read_at && !m.deleted_at;
+  }
+  const m = await one(
+    `SELECT m.deleted_at, rm.last_read_id FROM room_messages m
+     JOIN room_members rm ON rm.room_id = m.room_id AND rm.user_id = $2 WHERE m.id = $1`,
+    [messageId, userId],
+  );
+  return !!m && !m.deleted_at && Number(m.last_read_id) < Number(messageId);
+}
+
+/** None of the person's apps is looking any more (off screen, or its connection gone): push what was held back. */
+export async function pushHeldBack(userId) {
+  const items = heldBack.get(userId);
+  if (!items || isLooking(userId)) return;
+  heldBack.delete(userId);
+  const now = Date.now();
+  for (const item of items) {
+    if (now - item.at >= HELD_MS || !(await stillUnread(userId, item))) continue;
+    remember(userId, `${item.scope}:${item.chatId}`);
+    await pushToUser(userId, item.payload).catch(failed);
+  }
+}
+
 /** A new chat message: buzz the recipient's phones unless they're looking. */
 export function pushDm(message, sender) {
   const to = message.recipientId;
-  if (!account || isLooking(to)) return;
+  if (!account) return;
   void (async () => {
     // A chat they muted stays quiet (calls still ring).
     if (await dmMuted(to, sender.id)) return;
-    remember(to, `dm:${sender.id}`);
-    await pushToUser(to, {
+    const payload = {
       type: 'message',
       scope: 'dm',
       chatId: sender.id,
@@ -217,7 +261,10 @@ export function pushDm(message, sender) {
       messageId: message.id,
       text: preview(message),
       sentAt: new Date(message.createdAt).getTime(),
-    });
+    };
+    if (isLooking(to)) return holdBack(to, { scope: 'dm', chatId: sender.id, messageId: message.id, payload });
+    remember(to, `dm:${sender.id}`);
+    await pushToUser(to, payload);
   })().catch(failed);
 }
 
@@ -238,9 +285,8 @@ export async function pushRoomMessage(message) {
   if (message.replyTo?.senderId) forThem.add(message.replyTo.senderId);
   for (const { user_id: userId, name, photo, muted } of rows) {
     if (muted && !forThem.has(userId)) continue;
-    if (isLooking(userId) || hasBlocked(userId, message.sender.id)) continue;
-    remember(userId, `room:${message.roomId}`);
-    pushToUser(userId, {
+    if (hasBlocked(userId, message.sender.id)) continue;
+    const payload = {
       type: 'message',
       scope: 'room',
       chatId: message.roomId,
@@ -253,7 +299,13 @@ export async function pushRoomMessage(message) {
       messageId: message.id,
       text: preview(message),
       sentAt: new Date(message.createdAt).getTime(),
-    }).catch(failed);
+    };
+    if (isLooking(userId)) {
+      holdBack(userId, { scope: 'room', chatId: message.roomId, messageId: message.id, payload });
+      continue;
+    }
+    remember(userId, `room:${message.roomId}`);
+    pushToUser(userId, payload).catch(failed);
   }
 }
 

@@ -425,7 +425,7 @@ await check('room video: cameras go on in the call and everyone sees them, each 
       const scales = window.__pcs
         .filter((pc) => pc.connectionState === 'connected')
         .map((pc) => pc.getSenders().find((s) => s.track?.kind === 'video')?.getParameters().encodings?.[0]?.scaleResolutionDownBy);
-      return scales.length === 2 && scales.includes(1) && scales.some((s) => s >= 2);
+      return scales.length === 2 && scales.includes(1) && scales.some((s) => s > 1);
     },
     null,
     { timeout: 10000 },

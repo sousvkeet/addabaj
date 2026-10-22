@@ -271,7 +271,14 @@ export type RoomSummary = ChatSettings & {
   hasPassword?: boolean;
   /** The invite code (admins only). */
   joinCode?: string;
+  /** Its admins clear its chat history after this (messages older go by themselves); null: kept. */
+  clearAfter?: ClearAfter | null;
+  /** When an admin last cleared its chat history at once: nothing from before shows. */
+  clearedAt?: string | null;
 };
+
+export type ClearAfterUnit = 'minute' | 'hour' | 'day' | 'month';
+export type ClearAfter = { amount: number; unit: ClearAfterUnit };
 
 /** What an invite code opens, before joining. */
 export type RoomPreview = {
@@ -291,6 +298,10 @@ export type RoomMember = User & {
   /** The newest message this member has seen, and the newest their app has received. */
   lastReadId: number;
   lastDeliveredId: number;
+  /** An admin muted them in the room's voice: they can't unmute until an admin lets them. */
+  voiceMuted?: boolean;
+  /** An admin stopped their camera: they can't turn it on until an admin lets them. */
+  cameraBlocked?: boolean;
 };
 
 /** Where a message of mine has got to. */
@@ -310,6 +321,10 @@ export type VoiceParticipant = {
   camera?: boolean;
   /** Their connection dropped (a network change): their seat waits for them. */
   away?: boolean;
+  /** Muted by an admin: everyone's app keeps them quiet. */
+  silenced?: boolean;
+  /** Their camera was stopped by an admin. */
+  cameraBlocked?: boolean;
 };
 
 export type RoomDetail = RoomSummary & {

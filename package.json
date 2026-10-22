@@ -38,7 +38,10 @@
     "test:permissions": "node tests/permissions.mjs",
     "test:incall": "node tests/in-call.mjs",
     "test:network": "node tests/network.mjs",
-    "test:pip": "node tests/pip.mjs"
+    "test:pip": "node tests/pip.mjs",
+    "test:profile": "node tests/profile.mjs",
+    "test:history": "node tests/history.mjs",
+    "test:moderation": "node tests/moderation.mjs"
   },
   "devDependencies": {
     "concurrently": "^9.2.5",

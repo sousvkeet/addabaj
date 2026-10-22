@@ -31,6 +31,7 @@ import { loadPrivacy } from './services/privacy.js';
 import { loadBlocks } from './services/blocks.js';
 import { cleanPreviews } from './services/previews.js';
 import { ensureRoomCodes } from './services/rooms.js';
+import { startHistorySweeps } from './services/history.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
 import { ensureYtdlp, ytdlpPath, ytdlpVersion } from './stream/ytdlp.js';
@@ -51,6 +52,8 @@ await loadBlocks();
 await ensureRoomCodes();
 await loadSessions();
 await armQueues();
+// Rooms whose admins chose to clear their chat history after a while.
+startHistorySweeps();
 // Logins older than a cookie's life are dropped now and then.
 setInterval(() => void loadSessions().catch((err) => console.error('Could not tidy sessions', err)), 12 * 60 * 60 * 1000).unref();
 

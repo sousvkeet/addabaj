@@ -1,14 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Maximize, MicOff, Minimize, Minimize2, PhoneOff, Settings2, SwitchCamera, Video, VideoOff } from 'lucide-react';
+import { Maximize, Mic, MicOff, Minimize, Minimize2, PhoneOff, Settings2, SwitchCamera, Video, VideoOff } from 'lucide-react';
 import { useBackClose } from '../lib/back';
+import { errorMessage } from '../lib/api';
 import type { VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
 import { useDevices } from '../store/devices';
-import { useUi } from '../store/ui';
+import { toast, useUi } from '../store/ui';
 import { useVoice, type View } from '../store/voice';
 import { Avatar } from './ui/Avatar';
 import { IconButton } from './ui/Button';
+import { Menu, type MenuItem } from './ui/Menu';
 import { MuteButton, ResizeCorners, SoundBlocked, SpeakerButton, useCallWindow } from './CallControls';
 import { useMedia } from '../lib/useMedia';
 
@@ -136,6 +138,8 @@ type Person = {
   connecting: boolean;
   /** Their connection dropped (a network change): their seat waits for them. */
   away: boolean;
+  /** Muted by an admin (nobody hears them until an admin lets them talk). */
+  silenced: boolean;
 };
 
 /**
@@ -183,6 +187,9 @@ function Stage({ roomId }: { roomId: string }) {
   const setMinimized = useVoice((s) => s.setMinimized);
   const setViews = useVoice((s) => s.setViews);
   const openDevices = useUi((s) => s.setDevicesOpen);
+  const myRole = useChat((s) => s.rooms[roomId]?.myRole);
+  const ownerId = useChat((s) => s.rooms[roomId]?.ownerId);
+  const moderateVoice = useChat((s) => s.moderateVoice);
   const [focus, setFocus] = useState<string | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [full, setFull] = useState(false);
@@ -220,13 +227,15 @@ function Stage({ roomId }: { roomId: string }) {
         name: m?.name ?? 'Someone',
         hue: m?.hue ?? 160,
         photo: m?.photo,
-        muted: p.muted,
-        camera: !!p.camera,
-        speaking: !!speaking[p.userId],
+        muted: p.muted || !!p.silenced,
+        // Stopped by an admin: not shown, whatever their app still sends.
+        camera: !!p.camera && !p.cameraBlocked,
+        speaking: !!speaking[p.userId] && !p.silenced,
         stream: videos[p.userId] ?? null,
         me: false,
         connecting: connection[p.userId] !== 'connected',
         away: !!p.away,
+        silenced: !!p.silenced,
       };
     });
   const others = people.length;
@@ -242,7 +251,32 @@ function Stage({ roomId }: { roomId: string }) {
     me: true,
     connecting: false,
     away: false,
+    silenced: false,
   });
+
+  // Room admins (and the site's host): mute someone, or stop their camera, from their tile.
+  const isHost = !!me?.siteAdmin;
+  const menuFor = (p: Person): MenuItem[] => {
+    const m = byId.get(p.id);
+    if (p.me || !m || (myRole !== 'admin' && !isHost)) return [];
+    if ((p.id === ownerId && !isHost) || (m.role === 'admin' && ownerId !== meId && !isHost)) return [];
+    const first = p.name.split(' ')[0];
+    const act = (change: { voiceMuted?: boolean; cameraBlocked?: boolean }, done: string) => () =>
+      void moderateVoice(roomId, p.id, change).then(
+        () => toast(done),
+        (err) => toast(errorMessage(err), 'error'),
+      );
+    const silenced = m.voiceMuted ?? p.silenced;
+    const blocked = m.cameraBlocked ?? participants.find((x) => x.userId === p.id)?.cameraBlocked;
+    return [
+      silenced
+        ? { label: `Let ${first} talk`, icon: <Mic size={16} />, onSelect: act({ voiceMuted: false }, `${first} can talk again.`) }
+        : { label: `Mute ${first}`, icon: <MicOff size={16} />, onSelect: act({ voiceMuted: true }, `${first} is muted until you let them talk.`) },
+      blocked
+        ? { label: `Let ${first} turn their camera on`, icon: <Video size={16} />, onSelect: act({ cameraBlocked: false }, `${first} can turn their camera on again.`) }
+        : { label: `Stop ${first}’s camera`, icon: <VideoOff size={16} />, onSelect: act({ cameraBlocked: true }, `${first}’s camera is off until you let them turn it on.`) },
+    ];
+  };
   const cameras = people.filter((p) => p.camera).length;
   const focused = focus ? people.find((p) => p.id === focus) : undefined;
   // With one other person: them large, me in the corner (as in a one-to-one call).
@@ -282,7 +316,7 @@ function Stage({ roomId }: { roomId: string }) {
     const [other, self] = people;
     layout = (
       <div className="relative size-full">
-        <Tile person={other} fill contain />
+        <Tile person={other} fill contain menu={menuFor(other)} />
         {self.camera && (
           <div className="absolute right-3 bottom-3 aspect-[3/4] w-[30%] max-w-[170px] min-w-[92px] md:aspect-video md:max-w-[210px]">
             <Tile person={self} fill mirrored={mirrored} small />
@@ -294,13 +328,23 @@ function Stage({ roomId }: { roomId: string }) {
     layout = (
       <div className="flex size-full flex-col" style={{ gap: GAP }}>
         <div className="min-h-0 flex-1">
-          <Tile person={focused} fill contain mirrored={focused.me && mirrored} onClick={() => setFocus(null)} action="Back to everyone" />
+          <Tile person={focused} fill contain mirrored={focused.me && mirrored} onClick={() => setFocus(null)} action="Back to everyone" menu={menuFor(focused)} />
         </div>
         <div className="flex shrink-0 justify-center-safe overflow-x-auto" style={{ gap: GAP, height: strip.height }}>
           {people
             .filter((p) => p.id !== focused.id)
             .map((p) => (
-              <Tile key={p.id} person={p} width={strip.width} height={strip.height} mirrored={p.me && mirrored} small onClick={() => setFocus(p.id)} action={`Show ${p.me ? 'yourself' : p.name} large`} />
+              <Tile
+                key={p.id}
+                person={p}
+                width={strip.width}
+                height={strip.height}
+                mirrored={p.me && mirrored}
+                small
+                onClick={() => setFocus(p.id)}
+                action={`Show ${p.me ? 'yourself' : p.name} large`}
+                menu={menuFor(p)}
+              />
             ))}
         </div>
       </div>
@@ -318,6 +362,7 @@ function Stage({ roomId }: { roomId: string }) {
             small={grid.height < 160}
             onClick={() => setFocus(p.id)}
             action={`Show ${p.me ? 'yourself' : p.name} large`}
+            menu={menuFor(p)}
           />
         ))}
       </div>
@@ -390,9 +435,11 @@ type TileProps = {
   onClick?: () => void;
   /** What a tap does, for screen readers. */
   action?: string;
+  /** Admins: what they can do about this person (in a menu in its corner). */
+  menu?: MenuItem[];
 };
 
-function Tile({ person, width, height, fill, contain, mirrored, small, onClick, action }: TileProps) {
+function Tile({ person, width, height, fill, contain, mirrored, small, onClick, action, menu }: TileProps) {
   const side = fill ? 220 : Math.min(width ?? 220, height ?? 220);
   const avatar = Math.round(Math.max(32, Math.min(104, side * 0.42)));
   const label = person.me ? 'You' : person.name.split(' ')[0];
@@ -410,29 +457,29 @@ function Tile({ person, width, height, fill, contain, mirrored, small, onClick, 
           small ? 'px-1.5 py-px text-[11px]' : 'px-2 py-0.5 text-[12.5px]'
         }`}
       >
-        {person.muted && <MicOff size={small ? 11 : 13} className="shrink-0 text-live" aria-hidden />}
+        {person.muted && <MicOff size={small ? 11 : 13} className={`shrink-0 ${person.silenced ? 'text-danger' : 'text-live'}`} aria-hidden />}
         <span className="truncate">{person.away ? `${label}, reconnecting…` : person.connecting ? `${label}, connecting…` : label}</span>
       </span>
     </>
   );
   const style = fill ? undefined : { width, height };
-  if (!onClick) {
-    return (
-      <div className={className} style={style}>
-        {content}
-      </div>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className={className}
-      style={style}
-      onClick={onClick}
-      aria-label={`${person.me ? 'You' : person.name}${person.muted ? ', muted' : ''}${person.camera ? '' : ', camera off'}. ${action ?? ''}`}
-    >
+  const said = `${person.me ? 'You' : person.name}${person.silenced ? ', muted by an admin' : person.muted ? ', muted' : ''}${person.camera ? '' : ', camera off'}`;
+  const body = onClick ? (
+    <button type="button" className="absolute inset-0 block text-left" onClick={onClick} aria-label={`${said}. ${action ?? ''}`}>
       {content}
     </button>
+  ) : (
+    content
+  );
+  return (
+    <div className={className} style={style}>
+      {body}
+      {!!menu?.length && (
+        <span className={`absolute z-[1] ${small ? 'top-0.5 right-0.5' : 'top-1.5 right-1.5'}`}>
+          <Menu label={`Call options for ${person.name}`} items={menu} size={small ? 28 : 32} floating variant="on-dark" />
+        </span>
+      )}
+    </div>
   );
 }
 
