@@ -23,8 +23,8 @@ android {
         applicationId 'com.addakhana.app'
         minSdk 24
         targetSdk 36
-        versionCode 12
-        versionName '1.8.0'
+        versionCode 13
+        versionName '1.9.0'
         buildConfigField 'String', 'APP_URL', "\"${appUrl}\""
         // Invite links (https://<host>/join/…) open in the app.
         def site = new URI(appUrl)
