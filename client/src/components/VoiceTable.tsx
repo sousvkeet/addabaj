@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AudioLines, Headphones, Mic, MicOff, PhoneOff, Volume2 } from 'lucide-react';
+import { AudioLines, Headphones, Mic, MicOff, PhoneOff, Video, VideoOff, Volume2 } from 'lucide-react';
 import type { RoomMember, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
@@ -10,6 +10,7 @@ import { useVoice } from '../store/voice';
 import { Avatar } from './ui/Avatar';
 import { Button } from './ui/Button';
 import { DeviceSelect } from './DeviceSettings';
+import { useCallCameras, useRoomStageOpen } from './RoomCall';
 
 export const VOICE_SEATS = 12;
 const EMPTY: VoiceParticipant[] = [];
@@ -25,6 +26,12 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
   const join = useVoice((s) => s.join);
   const leave = useVoice((s) => s.leave);
   const toggleMute = useVoice((s) => s.toggleMute);
+  const cameraOn = useVoice((s) => s.cameraOn);
+  const cameraBusy = useVoice((s) => s.cameraBusy);
+  const toggleCamera = useVoice((s) => s.toggleCamera);
+  const setMinimized = useVoice((s) => s.setMinimized);
+  const cameras = useCallCameras();
+  const stageOpen = useRoomStageOpen();
   const inCall = useCall((s) => s.phase !== 'idle');
   const meId = useAuth((s) => s.user?.id);
   const openDevices = useUi((s) => s.setDevicesOpen);
@@ -70,9 +77,16 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
               key={p.userId}
               className="absolute flex flex-col items-center transition-[left,top] duration-300"
               style={{ left: x, top: y, width: seat }}
-              title={`${user?.name ?? 'Someone'}${p.muted ? ' (muted)' : ''}`}
+              title={`${user?.name ?? 'Someone'}${p.muted ? ' (muted)' : ''}${p.camera ? ' (camera on)' : ''}`}
             >
-              <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} photo={user?.photo} size={seat} speaking={lit} muted={p.muted} className={linking ? 'opacity-50' : ''} />
+              <span className="relative">
+                <Avatar name={user?.name ?? '?'} hue={user?.hue ?? 160} photo={user?.photo} size={seat} speaking={lit} muted={p.muted} className={linking ? 'opacity-50' : ''} />
+                {p.camera && (
+                  <span className="absolute -top-0.5 -right-0.5 flex size-5 items-center justify-center rounded-full border-2 border-surface bg-brand text-white" aria-hidden>
+                    <Video size={10} strokeWidth={2.5} />
+                  </span>
+                )}
+              </span>
               {n <= 8 && (
                 <span className="mt-1 w-[72px] truncate text-center text-[11.5px] font-semibold">
                   {isMe ? 'You' : user?.name.split(' ')[0] ?? 'Someone'}
@@ -85,15 +99,18 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
 
       <div className="mt-3 flex gap-2">
         {!here ? (
-          <Button
-            variant="live"
-            className="flex-1"
-            onClick={() => void join(roomId)}
-            disabled={inCall || full}
-          >
-            <Headphones size={17} />
-            {full ? 'Voice is full' : 'Join voice'}
-          </Button>
+          <>
+            <Button variant="live" className="flex-1" onClick={() => void join(roomId)} disabled={inCall || full}>
+              <Headphones size={17} />
+              {full ? 'Voice is full' : 'Join voice'}
+            </Button>
+            {!full && (
+              <Button variant="soft" className="flex-1" onClick={() => void join(roomId, { video: true })} disabled={inCall}>
+                <Video size={17} />
+                Join with video
+              </Button>
+            )}
+          </>
         ) : status === 'joining' ? (
           <Button variant="live" className="flex-1" busy>
             Joining…
@@ -104,6 +121,17 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
               {muted ? <MicOff size={17} /> : <Mic size={17} />}
               {muted ? 'Unmute' : 'Mute'}
             </Button>
+            <Button
+              variant={cameraOn ? 'live' : 'soft'}
+              className="flex-1"
+              onClick={() => void toggleCamera()}
+              disabled={cameraBusy}
+              aria-pressed={cameraOn}
+              aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'}
+            >
+              {cameraOn ? <Video size={17} /> : <VideoOff size={17} />}
+              Camera
+            </Button>
             <Button variant="danger" className="flex-1" onClick={() => void leave()}>
               <PhoneOff size={17} />
               Leave
@@ -111,8 +139,14 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
           </>
         )}
       </div>
+      {here && status === 'live' && cameras > 0 && !stageOpen && (
+        <Button variant="outline" className="mt-2 w-full" onClick={() => setMinimized(false)}>
+          <Video size={17} />
+          Show video ({cameras} on camera)
+        </Button>
+      )}
       <p className="mt-2 text-center text-[12.5px] text-ink-soft">
-        {inCall && !here ? 'End your call to join voice.' : `Up to ${VOICE_SEATS} people can talk at once.`}
+        {inCall && !here ? 'End your call to join voice.' : `Up to ${VOICE_SEATS} people can talk at once, cameras on or off.`}
       </p>
       <DevicePickers onMore={() => openDevices(true)} />
     </section>

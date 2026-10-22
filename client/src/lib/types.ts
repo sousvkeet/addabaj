@@ -262,7 +262,12 @@ export type RoomInviteAdminView = {
   invitee: User;
 };
 
-export type VoiceParticipant = { userId: string; muted: boolean };
+export type VoiceParticipant = {
+  userId: string;
+  muted: boolean;
+  /** Their camera is on (room video). */
+  camera?: boolean;
+};
 
 export type RoomDetail = RoomSummary & {
   members: RoomMember[];

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router';
-import { AudioLines, KeyRound, MonitorPlay, Plus, Users } from 'lucide-react';
+import { AudioLines, KeyRound, MonitorPlay, Plus, Users, Video } from 'lucide-react';
 import { deletedText, listStamp, messagePreview } from '../lib/format';
 import { useAuth } from '../store/auth';
 import { useChat } from '../store/chat';
@@ -61,6 +61,7 @@ export function RoomList() {
         {list.map((room) => {
           const m = room.lastMessage;
           const talking = voice[room.id]?.length ?? 0;
+          const onCamera = voice[room.id]?.some((p) => p.camera) ?? false;
           const sender = m?.kind === 'text' && !m.deletedAt ? (m.sender?.id === me?.id ? 'You' : m.sender?.name.split(' ')[0]) : null;
           return (
             <li key={room.id}>
@@ -98,9 +99,9 @@ export function RoomList() {
                     {talking > 0 && (
                       <span
                         className="inline-flex items-center gap-1 rounded-full bg-live/15 px-1.5 text-[12px] leading-5 font-semibold text-live-ink"
-                        title={`${talking} in voice`}
+                        title={`${talking} in voice${onCamera ? ', cameras on' : ''}`}
                       >
-                        <AudioLines size={12} />
+                        {onCamera ? <Video size={12} /> : <AudioLines size={12} />}
                         {talking}
                       </span>
                     )}

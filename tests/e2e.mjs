@@ -371,6 +371,80 @@ await check('three people join room voice and all mesh links connect', async () 
   await A.page.screenshot({ path: `${SHOTS}06-room-voice.png` });
 });
 
+await check('room video: cameras go on in the call and everyone sees them, each as big as they show it, and a shrunk window gets none', async () => {
+  const stage = (u) => u.page.getByRole('region', { name: /^Video call in/ });
+  const id = (u) => u.page.evaluate(async () => (await (await fetch('/api/auth/me')).json()).user.id);
+  const [a, b] = [await id(A), await id(B)];
+  /** Waits until this page shows moving pictures from these cameras ('me': its own). */
+  const sees = (u, who) =>
+    u.page.waitForFunction(
+      (who) => {
+        const live = [...document.querySelectorAll('video[data-room-video]')]
+          .filter((v) => v.videoWidth > 0 && v.currentTime > 0.5 && getComputedStyle(v).opacity === '1')
+          .map((v) => v.dataset.roomVideo);
+        return who.every((w) => live.includes(w));
+      },
+      who,
+      { timeout: 20000 },
+    );
+  /** Video arriving at this page, all connections together (bytes). */
+  const videoIn = (u) =>
+    u.page.evaluate(async () => {
+      let bytes = 0;
+      for (const pc of window.__pcs) {
+        if (pc.connectionState !== 'connected') continue;
+        (await pc.getStats()).forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') bytes += r.bytesReceived;
+        });
+      }
+      return bytes;
+    });
+
+  // Asha turns her camera on from the room's panel: the call's window opens for everyone.
+  await A.page.getByRole('region', { name: 'Voice', exact: true }).getByRole('button', { name: 'Turn camera on' }).click();
+  for (const u of [A, B, C]) await stage(u).waitFor({ timeout: 10000 });
+  await sees(A, ['me']);
+  await sees(B, [a]);
+  await sees(C, [a]);
+  // Rahul turns his on from the window.
+  await stage(B).getByRole('button', { name: 'Turn camera on' }).click();
+  await sees(A, [b, 'me']);
+  await sees(C, [a, b]);
+  const flags = await store(A.page, () => Object.values(window.adda.chat.getState().voice).flat().filter((p) => p.camera).length);
+  if (flags !== 2) throw new Error(`${flags} cameras on in the room's voice state`);
+  await A.page.waitForTimeout(1000);
+  await A.page.screenshot({ path: `${SHOTS}06b-room-video.png` });
+  await C.page.screenshot({ path: `${SHOTS}06c-room-video-phone.png` });
+
+  // Asha shows Rahul large: his camera goes to her at full size, and stays small for Mitali's phone.
+  await stage(A).getByRole('button', { name: /^Rahul Das.*Show Rahul Das large/ }).click();
+  await B.page.waitForFunction(
+    () => {
+      const scales = window.__pcs
+        .filter((pc) => pc.connectionState === 'connected')
+        .map((pc) => pc.getSenders().find((s) => s.track?.kind === 'video')?.getParameters().encodings?.[0]?.scaleResolutionDownBy);
+      return scales.length === 2 && scales.includes(1) && scales.some((s) => s >= 2);
+    },
+    null,
+    { timeout: 10000 },
+  );
+
+  // Mitali shrinks the window to the voice bar: nobody sends her video then; it comes back with the window.
+  await stage(C).getByRole('button', { name: 'Shrink video' }).click();
+  await C.page.waitForTimeout(2500);
+  const before = await videoIn(C);
+  await C.page.waitForTimeout(3000);
+  const shrunk = (await videoIn(C)) - before;
+  if (shrunk > 0) throw new Error(`${shrunk} bytes of video still arrived with the window shrunk`);
+  await C.page.getByRole('button', { name: /^Show video in/ }).click();
+  await sees(C, [a, b]);
+
+  // Cameras off: the window closes, and it's a voice call again.
+  await stage(A).getByRole('button', { name: 'Turn camera off' }).click();
+  await stage(B).getByRole('button', { name: 'Turn camera off' }).click();
+  for (const u of [A, B, C]) await stage(u).waitFor({ state: 'detached', timeout: 5000 });
+});
+
 await check('voice mute reflects for others; leaving removes the seat', async () => {
   await C.page.getByRole('button', { name: 'Members and voice' }).click();
   await C.page.getByRole('button', { name: 'Mute', exact: true }).click();

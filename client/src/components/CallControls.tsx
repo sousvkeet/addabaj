@@ -1,0 +1,99 @@
+import { useEffect, useRef, useState } from 'react';
+import { Ear, Mic, MicOff, Volume2 } from 'lucide-react';
+import { canToggleSpeaker, nativeSetSpeaker, nativeSpeakerOn, onNative } from '../lib/native';
+import { audioContext } from '../lib/sounds';
+import { useUi } from '../store/ui';
+import { IconButton } from './ui/Button';
+
+// What one-to-one calls and room calls share.
+
+/** Shown when the browser blocked call audio; one tap lets it play. */
+export function SoundBlocked({ className = '' }: { className?: string }) {
+  const blocked = useUi((s) => s.soundBlocked);
+  const setBlocked = useUi((s) => s.setSoundBlocked);
+  if (!blocked) return null;
+  const enable = () => {
+    try {
+      void audioContext().resume();
+    } catch {
+      /* audio unavailable */
+    }
+    const players = [...document.querySelectorAll<HTMLAudioElement>('audio[data-call-audio]')];
+    void Promise.all(players.map((a) => a.play())).then(() => setBlocked(false), () => {});
+  };
+  return (
+    <button
+      type="button"
+      onClick={enable}
+      className={`absolute z-10 flex min-h-10 items-center justify-center gap-2 rounded-xl bg-live px-3 py-2 text-center text-[14px] font-semibold text-on-live shadow-lg ${className}`}
+    >
+      <Volume2 size={17} />
+      Sound is paused. Tap to hear the call.
+    </button>
+  );
+}
+
+/** Glows while your own microphone picks up sound, so you know it's working. */
+export function MuteButton({ muted, speaking, onClick, size = 40 }: { muted: boolean; speaking: boolean; onClick: () => void; size?: number }) {
+  return (
+    <IconButton
+      label={muted ? 'Unmute microphone' : 'Mute microphone'}
+      aria-pressed={muted}
+      variant={muted ? 'live' : 'on-dark'}
+      size={size}
+      onClick={onClick}
+      className={speaking && !muted ? 'speaking-ring' : ''}
+    >
+      {muted ? <MicOff size={size * 0.45} /> : <Mic size={size * 0.45} />}
+    </IconButton>
+  );
+}
+
+/** In the Android app: the call's sound from the loudspeaker or the earpiece (at your ear). */
+export function SpeakerButton({ size = 40 }: { size?: number }) {
+  const [on, setOn] = useState(nativeSpeakerOn);
+  useEffect(
+    () =>
+      onNative((e) => {
+        if (e.type === 'speaker') setOn(e.on);
+      }),
+    [],
+  );
+  if (!canToggleSpeaker()) return null;
+  return (
+    <IconButton
+      label={on ? 'Use the earpiece' : 'Use the loudspeaker'}
+      aria-pressed={on}
+      variant={on ? 'live' : 'on-dark'}
+      size={size}
+      onClick={() => {
+        nativeSetSpeaker(!on);
+        setOn(!on);
+      }}
+    >
+      {on ? <Volume2 size={size * 0.45} /> : <Ear size={size * 0.45} />}
+    </IconButton>
+  );
+}
+
+/** Muted <video>: call audio always plays through the separate audio sink. */
+export function VideoView({ stream, mirrored, remote, className = '' }: { stream: MediaStream; mirrored?: boolean; remote?: boolean; className?: string }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.srcObject !== stream) el.srcObject = stream;
+    void el.play().catch(() => {});
+  }, [stream]);
+  return (
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      muted
+      data-remote-video={remote ? '' : undefined}
+      data-self-video={remote ? undefined : ''}
+      className={`${mirrored ? '-scale-x-100' : ''} ${className}`}
+    />
+  );
+}

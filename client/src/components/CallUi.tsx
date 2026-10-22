@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { AudioLines, Ear, Mic, MicOff, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff, Volume2 } from 'lucide-react';
+import { AudioLines, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff } from 'lucide-react';
 import { useBackClose } from '../lib/back';
 import { duration } from '../lib/format';
-import { canToggleSpeaker, nativeSetSpeaker, nativeSpeakerOn, onNative } from '../lib/native';
-import { audioContext } from '../lib/sounds';
 import { useNow } from '../lib/useMedia';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
@@ -15,6 +13,8 @@ import { useUi } from '../store/ui';
 import { useVoice } from '../store/voice';
 import { Avatar } from './ui/Avatar';
 import { IconButton } from './ui/Button';
+import { MuteButton, SoundBlocked, SpeakerButton, VideoView } from './CallControls';
+import { RoomCameraButton, useCallCameras, useRoomStageOpen } from './RoomCall';
 
 const LIVE_PHASES = ['outgoing', 'connecting', 'active'];
 
@@ -105,9 +105,10 @@ export function LiveBar() {
   const minimized = useCall((s) => s.minimized);
   const videoActive = useVideoActive();
   const voiceStatus = useVoice((s) => s.status);
+  const roomStageOpen = useRoomStageOpen();
   const streaming = useStreamElsewhere();
   if (LIVE_PHASES.includes(phase)) return videoActive && !minimized ? null : <CallBar />;
-  if (voiceStatus !== 'idle') return <VoiceBar />;
+  if (voiceStatus !== 'idle') return roomStageOpen ? null : <VoiceBar />;
   if (streaming) return <StreamBar />;
   return null;
 }
@@ -117,32 +118,6 @@ function useStreamElsewhere() {
   const roomId = useLiveStream((s) => s.host?.roomId);
   const { pathname } = useLocation();
   return !!roomId && pathname !== `/rooms/${roomId}`;
-}
-
-/** Shown when the browser blocked call audio; one tap lets it play. */
-function SoundBlocked({ className = '' }: { className?: string }) {
-  const blocked = useUi((s) => s.soundBlocked);
-  const setBlocked = useUi((s) => s.setSoundBlocked);
-  if (!blocked) return null;
-  const enable = () => {
-    try {
-      void audioContext().resume();
-    } catch {
-      /* audio unavailable */
-    }
-    const players = [...document.querySelectorAll<HTMLAudioElement>('audio[data-call-audio]')];
-    void Promise.all(players.map((a) => a.play())).then(() => setBlocked(false), () => {});
-  };
-  return (
-    <button
-      type="button"
-      onClick={enable}
-      className={`absolute z-10 flex min-h-10 items-center justify-center gap-2 rounded-xl bg-live px-3 py-2 text-center text-[14px] font-semibold text-on-live shadow-lg ${className}`}
-    >
-      <Volume2 size={17} />
-      Sound is paused. Tap to hear the call.
-    </button>
-  );
 }
 
 export const useLive = () => {
@@ -155,49 +130,6 @@ export const useLive = () => {
 const barClass =
   'pop-in glass-deep fixed inset-x-2 top-[max(8px,var(--safe-top))] z-40 flex items-center gap-2 rounded-[22px] border border-white/10 p-2.5 pl-3 text-on-brand shadow-[0_16px_40px_-16px_rgb(4_6_18/0.7)] md:inset-x-auto md:top-auto md:bottom-6 md:left-[120px] md:w-[316px]';
 const barPrompt = 'inset-x-0 top-full mt-2 md:top-auto md:bottom-full md:mt-0 md:mb-2';
-
-/** Glows while your own microphone picks up sound, so you know it's working. */
-function MuteButton({ muted, speaking, onClick, size = 40 }: { muted: boolean; speaking: boolean; onClick: () => void; size?: number }) {
-  return (
-    <IconButton
-      label={muted ? 'Unmute microphone' : 'Mute microphone'}
-      aria-pressed={muted}
-      variant={muted ? 'live' : 'on-dark'}
-      size={size}
-      onClick={onClick}
-      className={speaking && !muted ? 'speaking-ring' : ''}
-    >
-      {muted ? <MicOff size={size * 0.45} /> : <Mic size={size * 0.45} />}
-    </IconButton>
-  );
-}
-
-/** In the Android app: the call's sound from the loudspeaker or the earpiece (at your ear). */
-function SpeakerButton({ size = 40 }: { size?: number }) {
-  const [on, setOn] = useState(nativeSpeakerOn);
-  useEffect(
-    () =>
-      onNative((e) => {
-        if (e.type === 'speaker') setOn(e.on);
-      }),
-    [],
-  );
-  if (!canToggleSpeaker()) return null;
-  return (
-    <IconButton
-      label={on ? 'Use the earpiece' : 'Use the loudspeaker'}
-      aria-pressed={on}
-      variant={on ? 'live' : 'on-dark'}
-      size={size}
-      onClick={() => {
-        nativeSetSpeaker(!on);
-        setOn(!on);
-      }}
-    >
-      {on ? <Volume2 size={size * 0.45} /> : <Ear size={size * 0.45} />}
-    </IconButton>
-  );
-}
 
 function CameraButton({ size = 40 }: { size?: number }) {
   const cameraOn = useCall((s) => s.cameraOn);
@@ -359,28 +291,6 @@ export function CallStage() {
   );
 }
 
-/** Muted <video>: call audio always plays through the separate audio sink. */
-function VideoView({ stream, mirrored, remote, className = '' }: { stream: MediaStream; mirrored?: boolean; remote?: boolean; className?: string }) {
-  const ref = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (el.srcObject !== stream) el.srcObject = stream;
-    void el.play().catch(() => {});
-  }, [stream]);
-  return (
-    <video
-      ref={ref}
-      autoPlay
-      playsInline
-      muted
-      data-remote-video={remote ? '' : undefined}
-      data-self-video={remote ? undefined : ''}
-      className={`${mirrored ? '-scale-x-100' : ''} ${className}`}
-    />
-  );
-}
-
 function VoiceBar() {
   const roomId = useVoice((s) => s.roomId);
   const status = useVoice((s) => s.status);
@@ -390,23 +300,36 @@ function VoiceBar() {
   const meSpeaking = useVoice((s) => !!s.speaking[useAuth.getState().user?.id ?? '']);
   const room = useChat((s) => (roomId ? s.rooms[roomId] : undefined));
   const count = useChat((s) => (roomId ? s.voice[roomId]?.length ?? 0 : 0));
+  const cameras = useCallCameras();
+  const setMinimized = useVoice((s) => s.setMinimized);
   const navigate = useNavigate();
   if (!roomId) return null;
+  const talking = count === 1 ? 'Only you so far' : `Talking with ${count - 1} ${count - 1 === 1 ? 'other' : 'others'}`;
 
   return (
     <div className={barClass} role="region" aria-label="Room voice">
       <SoundBlocked className={barPrompt} />
-      <button type="button" onClick={() => navigate(`/rooms/${roomId}`)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+      <button
+        type="button"
+        onClick={() => {
+          if (window.location.pathname !== `/rooms/${roomId}`) navigate(`/rooms/${roomId}`);
+          // With cameras on, back to the video too.
+          if (cameras) setMinimized(false);
+        }}
+        aria-label={cameras ? `Show video in ${room?.name ?? 'the room'}` : undefined}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-live text-on-live shadow-[0_0_16px_-2px_var(--live)]">
-          <AudioLines size={19} />
+          {cameras ? <Video size={19} /> : <AudioLines size={19} />}
         </span>
         <span className="min-w-0">
           <span className="block truncate font-semibold">{room?.name ?? 'Room voice'}</span>
           <span className="block truncate text-[13px] text-on-brand/70">
-            {status === 'joining' ? 'Joining voice…' : count === 1 ? 'Only you so far' : `Talking with ${count - 1} ${count - 1 === 1 ? 'other' : 'others'}`}
+            {status === 'joining' ? 'Joining voice…' : cameras ? `${cameras} on camera, tap to see` : talking}
           </span>
         </span>
       </button>
+      {status === 'live' && <RoomCameraButton />}
       {status === 'live' && <MuteButton muted={muted} speaking={meSpeaking} onClick={toggleMute} />}
       <IconButton label="Leave voice" variant="danger" size={40} onClick={() => void leave()}>
         <PhoneOff size={18} />

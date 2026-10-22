@@ -13,7 +13,7 @@ What the app adds:
   - The phone stays quiet while you're using Adda Khana on it or on a computer.
 - **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with the caller's photo (once it's on the phone; ringing never waits for it), Answer and Decline. Calls you didn't answer leave a missed-call notification.
 - **Calls keep going in the background.**
-  - Calls, room voice and live streams keep running with the screen off or another app open. A notification shows the call, its length and a hang-up button.
+  - Calls, room voice (and room video calls, camera included) and live streams keep running with the screen off or another app open. A notification shows the call, its length and a hang-up button.
   - Watching together goes on in the background too (1.6.3 on): a room's video keeps its sound when you leave the app or lock the screen, with a "Watching together" notification and a Stop button, and the picture picks up in step when you're back. A video file you stream live from the phone keeps streaming to the room. (YouTube's own player stops in the background, and catches up when you return.)
   - Swiping the app away doesn't end the call.
   - Voice calls play from the earpiece, and the screen turns off at your ear. The speaker button switches to the loudspeaker. Video calls and rooms use the loudspeaker; a headset takes over when plugged in.

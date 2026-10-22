@@ -99,7 +99,8 @@ export function nativeUser(user: { id: string; name: string } | null) {
 export type Session =
   | { kind: 'none' }
   | { kind: 'call'; phase: string; callId: string | null; name: string; hue: number; photo?: string | null; video: boolean; startedAt: number | null }
-  | { kind: 'voice'; roomId: string; name: string; startedAt: number }
+  /** `video`: my camera is on (the app keeps it going in the background). */
+  | { kind: 'voice'; roomId: string; name: string; startedAt: number; video: boolean }
   | { kind: 'live'; roomId: string; name: string; mode: string; startedAt: number }
   /** Watching a room's video that can play on out of sight (a file or a live stream; YouTube can't). */
   | { kind: 'watch'; roomId: string; name: string; title: string; paused: boolean };

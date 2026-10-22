@@ -5,6 +5,7 @@ import { getCamera, getMicrophone, stopStream, watchLevel } from '../lib/rtc';
 import { useCall } from '../store/call';
 import { canPickSpeaker, useDevices, type DeviceKind } from '../store/devices';
 import { useUi } from '../store/ui';
+import { useVoice } from '../store/voice';
 import { Button } from './ui/Button';
 import { Dialog, inputClass } from './ui/Dialog';
 
@@ -60,7 +61,9 @@ function Settings({ onDone }: { onDone: () => void }) {
   const micChoice = useDevices((s) => s.choice.audioinput);
   const speakerChoice = useDevices((s) => s.choice.audiooutput);
   const cameraChoice = useDevices((s) => s.choice.videoinput);
-  const inCallCamera = useCall((s) => (s.cameraOn ? s.localVideo : null));
+  const callCamera = useCall((s) => (s.cameraOn ? s.localVideo : null));
+  const roomCamera = useVoice((s) => (s.cameraOn ? s.localVideo : null));
+  const inCallCamera = callCamera ?? roomCamera;
 
   const [level, setLevel] = useState(0);
   const [micError, setMicError] = useState('');

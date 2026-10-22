@@ -203,9 +203,10 @@ public class CallService extends Service {
                     .setStyle(NotificationCompat.CallStyle.forOngoingCall(p, hangup).setIsVideo(video))
                     .addPerson(p);
         } else if ("voice".equals(kind)) {
-            b.setSmallIcon(R.drawable.ic_mic)
+            // "video": my camera is on in the room's call.
+            b.setSmallIcon(video ? R.drawable.ic_video : R.drawable.ic_mic)
                     .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setContentTitle(getString(R.string.room_voice))
+                    .setContentTitle(getString(video ? R.string.room_video : R.string.room_voice))
                     .setContentText(name)
                     .addAction(R.drawable.ic_call_end, getString(R.string.leave), hangup);
         } else if ("watch".equals(kind)) {

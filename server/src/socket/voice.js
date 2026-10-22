@@ -1,5 +1,6 @@
-// Room voice ("live adda"): a full mesh of WebRTC peer connections. The server
-// only tracks who is in which voice room and relays signalling messages.
+// Room voice ("live adda") and video: a full mesh of WebRTC peer connections.
+// The server only tracks who is in which voice room (muted, camera on) and
+// relays signalling messages.
 import { one } from '../db.js';
 import { limits } from '../config.js';
 import { AppError, isUuid } from '../errors.js';
@@ -7,12 +8,12 @@ import { getIO, roomChannel } from '../realtime.js';
 import { calls } from './calls.js';
 import { handle } from './util.js';
 
-const rooms = new Map(); // roomId -> Map<userId, { socketId, muted }>
+const rooms = new Map(); // roomId -> Map<userId, { socketId, muted, camera }>
 const userRoom = new Map(); // userId -> roomId
 
 function participants(roomId) {
   const room = rooms.get(roomId);
-  return room ? [...room].map(([userId, p]) => ({ userId, muted: p.muted })) : [];
+  return room ? [...room].map(([userId, p]) => ({ userId, muted: p.muted, camera: p.camera })) : [];
 }
 
 function broadcastState(roomId) {
@@ -56,7 +57,7 @@ export const voice = {
   register(io, socket) {
     const userId = socket.data.userId;
 
-    socket.on('voice:join', handle(async ({ roomId, muted }) => {
+    socket.on('voice:join', handle(async ({ roomId, muted, camera }) => {
       if (!isUuid(roomId)) throw new AppError(404, "That room doesn't exist.");
       const member = await one('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, userId]);
       if (!member) throw new AppError(403, "You're not a member of this room.");
@@ -76,7 +77,7 @@ export const voice = {
         throw new AppError(409, `Voice is full (${limits.voiceSeats} people). Try again when someone leaves.`);
       }
       const peers = participants(roomId);
-      room.set(userId, { socketId: socket.id, muted: !!muted });
+      room.set(userId, { socketId: socket.id, muted: !!muted, camera: !!camera });
       userRoom.set(userId, roomId);
       for (const p of room.values()) {
         if (p.socketId !== socket.id) io.to(p.socketId).emit('voice:peer-joined', { roomId, userId });
@@ -95,6 +96,14 @@ export const voice = {
       const p = rooms.get(roomId)?.get(userId);
       if (!p || p.socketId !== socket.id) return;
       p.muted = !!muted;
+      broadcastState(roomId);
+    });
+
+    // Whose camera is on: everyone's call window shows their video (or their photo).
+    socket.on('voice:camera', ({ roomId, on } = {}) => {
+      const p = rooms.get(roomId)?.get(userId);
+      if (!p || p.socketId !== socket.id || p.camera === !!on) return;
+      p.camera = !!on;
       broadcastState(roomId);
     });
 

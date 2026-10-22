@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, AudioLines, Headphones, LoaderCircle, MonitorPlay, Users } from 'lucide-react';
+import { ArrowLeft, AudioLines, Headphones, LoaderCircle, MonitorPlay, Users, Video } from 'lucide-react';
 import { socket } from '../lib/socket';
 import { useMedia } from '../lib/useMedia';
 import type { Receipt, ReplyRef, RoomMember, VoiceParticipant } from '../lib/types';
@@ -186,7 +186,7 @@ export function RoomView() {
                 </span>
                 {voiceList.length > 0 && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-live/15 px-2 leading-5 font-semibold text-live-ink">
-                    <AudioLines size={12} />
+                    {voiceList.some((p) => p.camera) ? <Video size={12} /> : <AudioLines size={12} />}
                     {voiceList.length} in voice
                   </span>
                 )}
@@ -207,6 +207,21 @@ export function RoomView() {
               {/* A word, not just an icon: what it does is clear at a glance. */}
               <span className="sm:hidden">Join</span>
               <span className="hidden sm:inline">Join voice</span>
+            </Button>
+          )}
+          {/* Wider screens join with the camera on in one go (on a phone: Join, then the camera in the bar). */}
+          {!liveHere && (
+            <Button
+              variant="soft"
+              size="sm"
+              onClick={() => void joinVoice(roomId, { video: true })}
+              disabled={inCall}
+              aria-label="Join with video"
+              title={inCall ? 'End your call to join' : 'Join the room’s call with your camera on'}
+              className="hidden md:inline-flex"
+            >
+              <Video size={16} />
+              <span className="hidden lg:inline">Video</span>
             </Button>
           )}
           {room.myRole === 'admin' && (

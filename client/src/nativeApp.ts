@@ -34,7 +34,7 @@ function currentSession(): Session {
   const voice = useVoice.getState();
   if (voice.roomId && voice.status !== 'idle') {
     voiceSince ||= Date.now();
-    return { kind: 'voice', roomId: voice.roomId, name: rooms[voice.roomId]?.name ?? 'Room', startedAt: voiceSince };
+    return { kind: 'voice', roomId: voice.roomId, name: rooms[voice.roomId]?.name ?? 'Room', startedAt: voiceSince, video: voice.cameraOn };
   }
   voiceSince = 0;
   const host = useLiveStream.getState().host;
