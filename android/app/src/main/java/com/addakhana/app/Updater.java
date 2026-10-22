@@ -64,15 +64,20 @@ final class Updater {
             tell("failed", Push.event("update").put("message", "That isn't this app's download address."));
             return;
         }
+        // Only a file matching the release's fingerprint is ever installed.
+        String expected = sha256 == null ? "" : sha256.toLowerCase(Locale.ROOT);
+        if (!expected.matches("[0-9a-f]{64}")) {
+            tell("failed", Push.event("update").put("message", "That update can't be checked, so it wasn't downloaded."));
+            return;
+        }
         if (busy) return;
         busy = true;
         Context app = activity.getApplicationContext();
-        String expected = sha256 == null ? "" : sha256.toLowerCase(Locale.ROOT);
         new Thread(() -> {
             try {
                 // Already downloaded (the installer was cancelled, or the setting wasn't allowed yet)?
                 File ready = new File(new File(app.getCacheDir(), "updates"), "AddaKhana-update.apk");
-                File file = ready.isFile() && !expected.isEmpty() && expected.equals(sha256(ready)) ? ready : download(app, source, expected);
+                File file = ready.isFile() && expected.equals(sha256(ready)) ? ready : download(app, source, expected);
                 MainActivity.runOnPage(() -> install(app, file));
             } catch (Exception e) {
                 tell("failed", Push.event("update").put("message", e.getMessage() == null ? "The download didn't finish." : e.getMessage()));
@@ -116,7 +121,7 @@ final class Updater {
             http.disconnect();
         }
         if (total > 0 && received != total) throw new Exception("The download was cut short. Try again.");
-        if (!sha256.isEmpty() && !sha256.equals(hex(digest))) {
+        if (!sha256.equals(hex(digest))) {
             part.delete();
             throw new Exception("The download didn't match the release, so it wasn't installed. Try again.");
         }

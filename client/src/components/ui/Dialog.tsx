@@ -25,6 +25,10 @@ export function Dialog({ open, onClose, title, description, children, width = 44
   const titleId = useId();
   const descriptionId = useId();
   const drag = useRef<{ y: number; dy: number } | null>(null);
+  // Whether it's meant to be open: closing it from here (open turning false)
+  // fires the dialog's close event too, which mustn't count as closing it twice.
+  const wanted = useRef(open);
+  wanted.current = open;
   // Android's back closes it, as in other apps (one that must be finished stays).
   useBackClose(open && dismissible, onClose);
 
@@ -82,7 +86,9 @@ export function Dialog({ open, onClose, title, description, children, width = 44
       ref={ref}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
-      onClose={onClose}
+      onClose={() => {
+        if (wanted.current) onClose();
+      }}
       onCancel={(e) => {
         if (!dismissible) e.preventDefault();
       }}

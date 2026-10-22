@@ -9,12 +9,16 @@ import { getIO, presence, userChannel } from '../realtime.js';
 import { DM_COLUMNS, dmMessage } from '../services/dms.js';
 import { findUser } from '../services/users.js';
 import { hasDevices, isLooking, pushCall, pushCallEnded } from '../services/push.js';
-import { handle } from './util.js';
+import { handle, rateLimiter } from './util.js';
 import { voice } from './voice.js';
 
 const RING_TIMEOUT_MS = 35_000;
 // A phone woken by a push needs a little longer: unlock, open, connect.
 const PHONE_RING_TIMEOUT_MS = 45_000;
+// Answered, but the caller's app never connected (it hung up as it was placed, or went away).
+const CONNECT_TIMEOUT_MS = 30_000;
+// Ringing someone's phone is loud: 5 calls a minute per caller.
+const canCall = rateLimiter(5, 60_000);
 const active = new Map(); // callId -> call
 const userCall = new Map(); // userId -> callId
 
@@ -34,7 +38,7 @@ async function recordCall(call, outcome) {
     [call.callerId, call.calleeId, body, { outcome, duration, video: call.video }],
   );
   const message = dmMessage(row);
-  const [caller, callee] = await Promise.all([findUser(call.callerId), findUser(call.calleeId)]);
+  const [caller, callee] = await Promise.all([findUser(call.callerId, call.calleeId), findUser(call.calleeId, call.callerId)]);
   const io = getIO();
   io?.to(userChannel(call.callerId)).emit('dm:new', { message, partner: callee });
   io?.to(userChannel(call.calleeId)).emit('dm:new', { message, partner: caller });
@@ -69,6 +73,7 @@ export const calls = {
     socket.on('call:start', handle(async ({ to, video }) => {
       if (!isUuid(to) || to === userId) throw new AppError(400, "You can't call that person.");
       if (userCall.has(userId)) throw new AppError(409, "You're already on a call.");
+      if (!canCall(userId)) throw new AppError(429, "You're calling too often. Wait a minute and try again.");
       const callee = await findUser(to);
       if (!callee) throw new AppError(404, "That person doesn't exist.");
       // Offline is fine when their phone can ring.
@@ -76,6 +81,8 @@ export const calls = {
         throw new AppError(409, `${callee.name} is offline right now. Send a message instead.`);
       }
       if (userCall.has(to)) throw new AppError(409, `${callee.name} is on another call.`);
+      // Gone while those were looked up: there's nobody to ring them for.
+      if (socket.disconnected || userCall.has(userId)) throw new AppError(409, 'The call was cancelled.');
 
       voice.leaveAny(userId);
       const call = {
@@ -112,6 +119,9 @@ export const calls = {
       voice.leaveAny(userId);
       call.calleeSocket = socket.id;
       call.startedAt = Date.now();
+      call.timer = setTimeout(() => {
+        if (!call.callerConnected) finish(call, 'dropped');
+      }, CONNECT_TIMEOUT_MS);
       io.to(call.callerSocket).emit('call:accepted', { callId, video: !!video });
       socket.to(userChannel(userId)).emit('call:dismissed', { callId });
       // Other phones stop ringing.
@@ -135,7 +145,9 @@ export const calls = {
     socket.on('call:signal', ({ callId, data } = {}) => {
       const call = active.get(callId);
       const target = call && otherSocket(call, socket.id);
-      if (target) io.to(target).emit('call:signal', { callId, data });
+      if (!target) return;
+      if (socket.id === call.callerSocket) call.callerConnected = true;
+      io.to(target).emit('call:signal', { callId, data });
     });
 
     socket.on('call:mute', ({ callId, muted } = {}) => {
@@ -146,10 +158,11 @@ export const calls = {
 
     socket.on('call:camera', ({ callId, on } = {}) => {
       const call = active.get(callId);
-      if (!call) return;
+      // Only from someone in the call.
+      const target = call && otherSocket(call, socket.id);
+      if (!target) return;
       if (on) call.video = true;
-      const target = otherSocket(call, socket.id);
-      if (target) io.to(target).emit('call:peer-camera', { callId, on: !!on });
+      io.to(target).emit('call:peer-camera', { callId, on: !!on });
     });
   },
 

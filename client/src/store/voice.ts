@@ -156,7 +156,11 @@ export const useVoice = create<VoiceState>()((set, get) => {
         [localStream] = await Promise.all([getMicrophone(), loadIceServers()]);
         if (get().roomId !== roomId) return cleanup();
         const { peers: others } = await emitAck<{ peers: VoiceParticipant[] }>('voice:join', { roomId, muted: false });
-        if (get().roomId !== roomId) return;
+        // Left while joining: the leave reached the server first, so say it again.
+        if (get().roomId !== roomId) {
+          socket.emit('voice:leave', { roomId });
+          return;
+        }
         set({ status: 'live' });
         blip('join');
         watchLocalMic();

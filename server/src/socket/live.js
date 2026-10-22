@@ -25,6 +25,8 @@ const HOST_GRACE_MS = 15_000;
  * }
  */
 const sessions = new Map();
+/** Starts on their way (`<socket id>:<room id>`), so a stop that overtakes one cancels it. */
+const starting = new Map();
 
 const emitTo = (socketId, event, payload) => getIO()?.to(socketId).emit(event, payload);
 
@@ -91,7 +93,20 @@ export const live = {
     const user = socket.data.user;
 
     socket.on('live:start', handle(async ({ roomId, mode, title, duration, audio }) => {
+      const key = `${socket.id}:${roomId}`;
+      const ticket = {};
+      starting.set(key, ticket);
+      try {
+        return await start({ roomId, mode, title, duration, audio }, () => starting.get(key) === ticket);
+      } finally {
+        if (starting.get(key) === ticket) starting.delete(key);
+      }
+    }));
+
+    const STOPPED = 'The live stream was stopped.';
+    async function start({ roomId, mode, title, duration, audio }, wanted) {
       await requireAdmin(roomId, user.id);
+      if (!wanted()) throw new AppError(409, STOPPED);
       if (mode !== 'file' && mode !== 'screen') throw new AppError(400, 'Choose a video file or your screen to stream.');
       const session = {
         id: randomUUID(),
@@ -131,12 +146,17 @@ export const live = {
         byName: user.name,
       };
       await replaceWatch(roomId, watch, { keepLive: true });
+      // Stopped while the room was being told: it mustn't stay showing a stream that's gone.
+      if (sessions.get(roomId) !== session) {
+        if ((await getWatch(roomId))?.source?.device?.sessionId === session.id) await saveWatch(roomId, null);
+        throw new AppError(409, STOPPED);
+      }
       await postSystemMessage(
         roomId,
         mode === 'screen' ? `${user.name} is sharing their screen live` : `${user.name} is streaming “${name}” live from their device`,
       );
       return { sessionId: session.id, maxViewers: limits.liveViewers };
-    }));
+    }
 
     // The host's file was played, paused or moved: viewers show it on their progress bar.
     socket.on('live:progress', handle(async ({ roomId, playing, position }) => {
@@ -149,6 +169,7 @@ export const live = {
     }));
 
     socket.on('live:stop', handle(async ({ roomId }) => {
+      starting.delete(`${socket.id}:${roomId}`);
       const session = sessions.get(roomId);
       if (!session || session.hostSocket !== socket.id) return {};
       await finish(session, 'stopped', `${user.name} ended the live stream`);

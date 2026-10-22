@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { KeyRound, Lock, Users } from 'lucide-react';
 import { api, errorMessage } from '../lib/api';
@@ -22,20 +22,24 @@ export function JoinRoomDialog({ open, onClose, code: given = '' }: { open: bool
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
+  // Only the latest look-up counts (the dialog may have been reset since).
+  const asked = useRef(0);
   async function lookUp(value: string) {
+    const n = ++asked.current;
     setBusy(true);
     setError('');
     try {
       const { room } = await api<{ room: RoomPreview }>(`/rooms/join/${encodeURIComponent(clean(value))}`);
-      setRoom(room);
+      if (n === asked.current) setRoom(room);
     } catch (err) {
-      setError(errorMessage(err));
+      if (n === asked.current) setError(errorMessage(err));
     } finally {
-      setBusy(false);
+      if (n === asked.current) setBusy(false);
     }
   }
 
   useEffect(() => {
+    asked.current++;
     if (!open) return;
     setCode(given ? formatRoomCode(clean(given)) : '');
     setRoom(null);

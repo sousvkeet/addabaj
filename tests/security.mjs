@@ -348,6 +348,118 @@ await check('every live event survives garbage: the server stays up and answers 
   console.log(`     ${EVENTS.length} events × ${BAD.length} bad payloads, ${answered} answered with an error, server still up`);
 });
 
+await check('nobody can take over someone else’s phone for their notifications', async () => {
+  const token = `phone-${stamp}-${'x'.repeat(40)}`;
+  expect((await call(B, 'POST', '/push/devices', { token })).status === 204, 'registering my own phone failed');
+  const steal = await call(C, 'POST', '/push/devices', { token });
+  expect(steal.status === 409, `claiming someone else’s phone answered ${steal.status}`);
+  expect((await call(B, 'POST', '/push/devices', { token })).status === 204, 'the owner can’t register their phone any more');
+  await call(B, 'DELETE', '/push/devices', { token });
+});
+
+await check('someone outside a call can’t change it', async () => {
+  const start = await emit(sA, 'call:start', { to: B.id, video: false });
+  expect(start.ok, `starting the call: ${start.error}`);
+  sC.emit('call:camera', { callId: start.callId, on: true });
+  await wait(300);
+  await emit(sB, 'call:decline', { callId: start.callId });
+  await wait(300);
+  const record = (await call(A, 'GET', `/dms/${B.id}/messages`)).data.messages.filter((m) => m.kind === 'call').at(-1);
+  expect(record?.meta?.video === false, `the call’s record says ${JSON.stringify(record?.meta)}`);
+});
+
+await check('calls can’t be used to flood someone’s phone', async () => {
+  const answers = [];
+  for (let i = 0; i < 7; i++) {
+    const res = await emit(sC, 'call:start', { to: B.id });
+    answers.push(res.ok ? 'rang' : res.error);
+    if (res.ok) await emit(sC, 'call:end', { callId: res.callId });
+  }
+  expect(answers.filter((a) => a === 'rang').length <= 5 && answers.at(-1) !== 'rang', `calls: ${answers.join(' | ')}`);
+});
+
+await check('message pages from a nonsense starting point answer normally', async () => {
+  for (const before of ['1e30', '9e99', '99999999999999999999', 'Infinity', '-5', 'abc']) {
+    const inRoom = await call(A, 'GET', `/rooms/${room.id}/messages?before=${before}`);
+    const inChat = await call(A, 'GET', `/dms/${B.id}/messages?before=${before}`);
+    expect(inRoom.status === 200 && inChat.status === 200, `before=${before}: ${inRoom.status}, ${inChat.status}`);
+  }
+});
+
+await check('nobody sees someone else’s email address', async () => {
+  const incoming = new Promise((resolve) => sB.once('dm:new', resolve));
+  await emit(sA, 'dm:send', { to: B.id, body: 'who are you' });
+  const seen = [
+    ['a lookup by ID', (await call(C, 'GET', `/users/${A.id}`)).data?.user],
+    ['finding by email', (await call(C, 'GET', `/users/find?q=${encodeURIComponent(A.email)}`)).data?.user],
+    ['the chat list', (await call(B, 'GET', '/dms')).data.conversations.find((c) => c.partner.id === A.id)?.partner],
+    ['room members', (await call(B, 'GET', `/rooms/${room.id}`)).data.room.members.find((m) => m.id === A.id)],
+    ['a live message', (await incoming).partner],
+  ];
+  const leaks = seen.filter(([, u]) => !u || 'email' in u).map(([where, u]) => (u ? where : `${where} (missing)`));
+  expect(!leaks.length, `email shown in: ${leaks.join(', ')}`);
+  expect((await call(A, 'GET', '/auth/me')).data.user.email === A.email, 'my own email is gone from my account');
+});
+
+await check('a message sent again because its answer was lost is saved once', async () => {
+  const clientId = `resend-${stamp}`;
+  let arrived = 0;
+  const count = (p) => p.message?.body === `once ${stamp}` && arrived++;
+  sB.on('dm:new', count);
+  const first = await emit(sA, 'dm:send', { to: B.id, body: `once ${stamp}`, clientId });
+  const again = await emit(sA, 'dm:send', { to: B.id, body: `once ${stamp}`, clientId });
+  const twins = await Promise.all([1, 2].map(() => emit(sA, 'dm:send', { to: B.id, body: 'twins', clientId: `${clientId}-p` })));
+  const inRoom = [];
+  for (let i = 0; i < 2; i++) inRoom.push(await emit(sA, 'room:send', { roomId: room.id, body: `once ${stamp}`, clientId: `${clientId}-r` }));
+  await wait(500);
+  sB.off('dm:new', count);
+  expect(first.message?.id && first.message.id === again.message?.id, `the resend got ${first.message?.id} and ${again.message?.id}`);
+  expect(arrived === 1, `Rahul got it ${arrived} times`);
+  expect(twins[0].message?.id && twins[0].message.id === twins[1].message?.id, `two at once got ${twins.map((t) => t.message?.id ?? t.error)}`);
+  expect(inRoom[0].message?.id && inRoom[0].message.id === inRoom[1].message?.id, `in the room: ${inRoom.map((t) => t.message?.id ?? t.error)}`);
+});
+
+await check('reactions are emoji, not digits or symbols', async () => {
+  for (const emoji of ['1234', '#*#*', '7']) {
+    const res = await emit(sA, 'msg:react', { scope: 'dm', messageId: dmMsg.id, emoji });
+    expect(!res.ok, `"${emoji}" was accepted as a reaction`);
+  }
+  for (const emoji of ['👍', '❤️', '1️⃣', '🇧🇩', '👍🏽']) {
+    const res = await emit(sA, 'msg:react', { scope: 'dm', messageId: dmMsg.id, emoji });
+    expect(res.ok, `"${emoji}" was refused: ${res.error}`);
+  }
+});
+
+await check('doing the same thing twice at once does it once', async () => {
+  const D = await register('Dev');
+  const E = await register('Esha');
+  const own = (await call(A, 'POST', '/rooms', { name: `Busy ${stamp}`, maxMembers: 5 })).data.room;
+  await call(A, 'POST', `/rooms/${own.id}/invites`, { userId: D.id });
+  const invite = (await call(D, 'GET', '/invites')).data.invites.find((i) => i.room.id === own.id);
+  const accepts = await Promise.all([1, 2, 3].map(() => call(D, 'POST', `/invites/${invite.id}/accept`)));
+  const joins = await Promise.all([1, 2, 3].map(() => call(E, 'POST', '/rooms/join', { code: own.joinCode })));
+  const notes = (await call(A, 'GET', `/rooms/${own.id}/messages`)).data.messages.filter((m) => m.kind === 'system').map((m) => m.body);
+  const joined = (name) => notes.filter((n) => n.startsWith(name) && /joined/.test(n)).length;
+  expect([...accepts, ...joins].every((r) => r.status < 500), `answers: ${[...accepts, ...joins].map((r) => r.status)}`);
+  expect(joined('Dev') === 1 && joined('Esha') === 1, `room notes: ${JSON.stringify(notes)}`);
+  expect((await call(A, 'GET', `/rooms/${own.id}`)).data.room.memberCount === 3, 'member count is off');
+});
+
+await check('a removed account’s login stops working at once', async () => {
+  const G = await register('Gone');
+  const host = await fetch(`${API}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'admin', password: 'admin' }) });
+  expect(host.ok, `the host admin login (admin / admin) failed: ${host.status}`);
+  const H = { cookie: host.headers.get('set-cookie').split(';')[0] };
+  const sG = await connect(G);
+  const cut = new Promise((resolve) => sG.once('disconnect', () => resolve(true)));
+  expect((await call(H, 'DELETE', `/admin/users/${G.id}`)).status < 300, 'removing the account failed');
+  const after = [await call(G, 'GET', '/config'), await call(G, 'GET', `/users/find?q=${encodeURIComponent(A.email)}`), await call(G, 'GET', '/auth/me')];
+  expect(after[0].status === 401 && after[1].status === 401, `after removal: ${after.map((r) => r.status)}`);
+  expect(!after[2].data?.user, 'the removed account is still signed in');
+  expect(await Promise.race([cut, wait(3000).then(() => false)]), 'its live connection stayed open');
+  sG.close();
+});
+
 await check('message limits: too long, empty, not text, and flooding are refused', async () => {
   expect((await emit(sA, 'room:send', { roomId: room.id, body: 'x'.repeat(4001) })).ok === false, 'a 4001-character message was sent');
   expect((await emit(sA, 'room:send', { roomId: room.id, body: '   ' })).ok === false, 'an empty message was sent');

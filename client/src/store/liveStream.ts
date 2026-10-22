@@ -240,6 +240,11 @@ export const useLiveStream = create<LiveState>()((set, get) => {
       },
     });
     const { sessionId } = await emitAck<{ sessionId: string }>('live:start', { roomId, mode, title, duration, audio });
+    // Stopped before the server said it started: stop it there too.
+    if (get().host?.roomId !== roomId) {
+      socket.emit('live:stop', { roomId });
+      return;
+    }
     set((s) => (s.host ? { host: { ...s.host, sessionId } } : s));
     if (source) {
       lastReport = { playing: !source.paused, position: source.currentTime, at: performance.now() };

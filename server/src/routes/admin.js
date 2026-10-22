@@ -13,7 +13,7 @@ import { forgetPhoto, removePhoto, removeRoomPhoto } from '../services/photos.js
 import { endOtherSessions } from '../services/sessions.js';
 import { announceRoomChanged, attachMember, deleteRoom, detachMember, lockSeat, postSystemMessage } from '../services/rooms.js';
 import { endSessions, getSettings, markDisabled, saveSettings } from '../services/site.js';
-import { photoUrl, publicUser, roomPhotoUrl } from '../services/users.js';
+import { announceProfile, photoUrl, publicUser, roomPhotoUrl } from '../services/users.js';
 import { calls } from '../socket/calls.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
@@ -97,6 +97,7 @@ adminRouter.get('/overview', async (_req, res) => {
 
 const adminUser = (r) => ({
   ...publicUser(r),
+  email: r.email,
   createdAt: r.created_at,
   siteAdmin: r.site_role === 'admin',
   disabled: !!r.disabled_at,
@@ -185,8 +186,9 @@ adminRouter.patch('/users/:id', async (req, res) => {
       setTimeout(() => disconnect(id), 300);
     }
   }
-  // A new role shows up on their next page load; tell open tabs now.
-  if (input.siteAdmin !== undefined) getIO()?.to(userChannel(id)).emit('account:changed');
+  if (input.name) await announceProfile(id, { name: input.name });
+  // A new role or name shows up on their next page load; tell open tabs now.
+  if (input.siteAdmin !== undefined || input.name) getIO()?.to(userChannel(id)).emit('account:changed');
   res.json({ user: adminUser(await one(`${USER_SELECT} WHERE u.id = $1`, [id])) });
 });
 
@@ -214,10 +216,15 @@ adminRouter.delete('/users/:id', async (req, res) => {
   // Their rooms go with them; members are told first.
   const { rows: owned } = await query('SELECT id FROM rooms WHERE owner_id = $1', [id]);
   for (const r of owned) await deleteRoom(r.id);
+  const { rows: joined } = await query('SELECT room_id FROM room_members WHERE user_id = $1', [id]);
+  // Their logins stop at once: cookies, live connections and phones.
+  markDisabled(id, true);
+  await endOtherSessions(id, null, 'host');
+  await endSessions(id);
   disconnect(id);
   await query('DELETE FROM users WHERE id = $1', [id]);
   await forgetPhoto(id, target.photo);
-  markDisabled(id, false);
+  for (const r of joined) announceRoomChanged(r.room_id);
   res.status(204).end();
 });
 
@@ -297,7 +304,7 @@ async function roomPeople(roomId) {
   );
   return {
     room: { id: room.id, name: room.name, maxMembers: room.max_members, memberCount: rows.length, ownerId: room.owner_id },
-    members: rows.map((r) => ({ ...publicUser(r), role: r.role, owner: r.id === room.owner_id, joinedAt: r.joined_at })),
+    members: rows.map((r) => ({ ...publicUser(r), email: r.email, role: r.role, owner: r.id === room.owner_id, joinedAt: r.joined_at })),
   };
 }
 
@@ -312,9 +319,7 @@ adminRouter.post('/rooms/:id/members', async (req, res) => {
   if (!target) throw notFound("That person doesn't exist.");
   if (target.disabled_at) throw conflict(`${target.name}'s account is switched off. Switch it on first.`);
   const cancelled = await transaction(async (c) => {
-    const { rows: [member] } = await c.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, userId]);
-    if (member) throw conflict(`${target.name} is already in this room.`);
-    await lockSeat(c, roomId);
+    if ((await lockSeat(c, roomId, userId)).member) throw conflict(`${target.name} is already in this room.`);
     await c.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)', [roomId, userId]);
     // An invite they hadn't answered yet isn't needed any more.
     const { rows } = await c.query(

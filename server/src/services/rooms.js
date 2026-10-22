@@ -6,7 +6,9 @@ import { photoUrl, publicUser, roomPhotoUrl, USER_COLUMNS } from './users.js';
 import { forgetRoomPhoto } from './photos.js';
 import { live } from '../socket/live.js';
 import { voice } from '../socket/voice.js';
-import { publicWatch } from './watch.js';
+import { getWatch, publicWatch } from './watch.js';
+import { cancelMerge } from '../stream/merge.js';
+import { forgetStream } from '../stream/cache.js';
 import { enrich } from './messages.js';
 import { introduce } from './presence.js';
 
@@ -21,6 +23,7 @@ export function roomMessage(row) {
       ? { id: row.sender_id, name: row.sender_name, hue: row.sender_hue, photo: row.sender_photo_url ?? photoUrl(row.sender_id, row.sender_photo) }
       : null,
     replyToId: row.reply_to_id ?? null,
+    clientId: row.client_id ?? null,
     deletedAt: row.deleted_at ?? null,
     // Deleted by a room admin rather than by whoever sent it.
     deletedByAdmin: !!row.deleted_at && !!row.deleted_by && row.deleted_by !== row.sender_id,
@@ -31,7 +34,7 @@ export function roomMessage(row) {
 }
 
 export const ROOM_MESSAGE_SELECT = `
-  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id, m.deleted_at, m.deleted_by,
+  SELECT m.id, m.room_id, m.kind, m.body, m.created_at, m.sender_id, m.reply_to_id, m.deleted_at, m.deleted_by, m.client_id,
          u.name AS sender_name, u.avatar_hue AS sender_hue, u.photo AS sender_photo
   FROM room_messages m LEFT JOIN users u ON u.id = m.sender_id`;
 
@@ -57,12 +60,16 @@ export async function requireAdmin(roomId, userId) {
  * Locks the room row and checks there is a free seat. Must run inside a
  * transaction so concurrent adds/accepts can't overfill the room.
  */
-export async function lockSeat(client, roomId) {
+export async function lockSeat(client, roomId, userId = null) {
   const { rows: [room] } = await client.query(
     'SELECT id, name, max_members FROM rooms WHERE id = $1 FOR UPDATE',
     [roomId],
   );
   if (!room) throw notFound("That room doesn't exist anymore.");
+  // Already in (checked under the lock, so two requests at once can't both join): no seat needed.
+  if (userId && (await client.query('SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, userId])).rowCount) {
+    return { ...room, member: true };
+  }
   const { rows: [{ count }] } = await client.query(
     'SELECT count(*)::int AS count FROM room_members WHERE room_id = $1',
     [roomId],
@@ -114,7 +121,7 @@ const SUMMARY_SELECT = `
     r.join_code, (r.join_password_hash IS NOT NULL) AS has_password,
     (SELECT count(*)::int FROM room_members x WHERE x.room_id = r.id) AS member_count,
     (SELECT count(*)::int FROM room_messages m
-       WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id <> rm.user_id AND m.deleted_at IS NULL
+       WHERE m.room_id = r.id AND m.id > rm.last_read_id AND m.kind = 'text' AND m.sender_id IS DISTINCT FROM rm.user_id AND m.deleted_at IS NULL
          AND NOT EXISTS (SELECT 1 FROM room_hidden h WHERE h.user_id = rm.user_id AND h.message_id = m.id)) AS unread,
     lm.id AS lm_id, lm.kind AS lm_kind, lm.body AS lm_body, lm.created_at AS lm_created_at,
     lm.sender_id AS lm_sender_id, lm.deleted_at AS lm_deleted_at, lm.deleted_by AS lm_deleted_by,
@@ -234,6 +241,18 @@ export async function postSystemMessage(roomId, body) {
 /** Tell every member's client to refetch the room. */
 export function announceRoomChanged(roomId) {
   getIO()?.to(roomChannel(roomId)).emit('room:changed', { roomId });
+  // People invited but not in yet see its new name, photo and member count too.
+  refreshInvites(roomId).catch((err) => console.error('Updating invites failed', err));
+}
+
+async function refreshInvites(roomId) {
+  const io = getIO();
+  if (!io) return;
+  const { rows } = await query(`SELECT id, invitee_id FROM room_invites WHERE room_id = $1 AND status = 'pending'`, [roomId]);
+  for (const r of rows) {
+    const invite = await inviteForInvitee(r.id);
+    if (invite) io.to(userChannel(r.invitee_id)).emit('invite:updated', invite);
+  }
 }
 
 export async function attachMember(roomId, userId) {
@@ -251,6 +270,12 @@ export async function attachMember(roomId, userId) {
 export async function deleteRoom(roomId) {
   const { rows: members } = await query('SELECT user_id FROM room_members WHERE room_id = $1', [roomId]);
   const { rows: invites } = await query(`SELECT id, invitee_id FROM room_invites WHERE room_id = $1 AND status = 'pending'`, [roomId]);
+  // Its video's shared download (or a join in progress) isn't needed any more.
+  const watch = await getWatch(roomId).catch(() => null);
+  if (watch?.stream) {
+    cancelMerge(watch.stream.token);
+    forgetStream(watch.stream.token);
+  }
   const gone = await one('DELETE FROM rooms WHERE id = $1 RETURNING photo', [roomId]);
   await forgetRoomPhoto(roomId, gone?.photo);
   for (const m of members) detachMember(roomId, m.user_id, 'deleted');

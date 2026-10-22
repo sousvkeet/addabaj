@@ -11,7 +11,7 @@ import { rootDir } from '../config.js';
 import { one } from '../db.js';
 import { AppError, notFound } from '../errors.js';
 import { getIO, userChannel } from '../realtime.js';
-import { contactIds, photoUrl, roomPhotoUrl } from './users.js';
+import { announceProfile, photoUrl, roomPhotoUrl } from './users.js';
 
 export const photoDir = process.env.PHOTO_DIR || resolve(rootDir, 'server/data/photos');
 mkdirSync(photoDir, { recursive: true });
@@ -71,14 +71,7 @@ export function cleanJpeg(buf) {
  * with their messages and calls.
  */
 async function announce(userId, version) {
-  const io = getIO();
-  if (!io) return;
-  const photo = photoUrl(userId, version);
-  for (const socket of io.of('/').sockets.values()) {
-    if (socket.data.userId === userId && socket.data.user) socket.data.user.photo = photo;
-  }
-  const channels = [userId, ...(await contactIds(userId))].map(userChannel);
-  io.to(channels).emit('user:updated', { user: { id: userId, photo } });
+  await announceProfile(userId, { photo: photoUrl(userId, version) });
 }
 
 /** A checked, cleaned photo and its version (from its contents). */

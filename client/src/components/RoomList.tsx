@@ -27,7 +27,8 @@ export function RoomList() {
   }, [linkCode]);
   const closeJoin = () => {
     setJoining(false);
-    if (linkCode) navigate(location.pathname, { replace: true, state: null });
+    // Forget the link's code (so it doesn't open again), unless joining already went on to the room.
+    if (linkCode && window.location.pathname === location.pathname) navigate(location.pathname, { replace: true, state: null });
   };
 
   const list = useMemo(() => {

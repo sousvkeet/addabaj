@@ -97,6 +97,7 @@ export function startMerge(roomId, stream) {
       if (!config.isProd) console.warn(`[merge] failed: ${err.message}`);
       await updateIfCurrent(roomId, stream.token, (w) => ({ ...w, source: { ...w.source, preparing: false, error: err.message }, playing: false }));
     })
+    .catch((err) => console.error(`[merge] couldn't report a failed join: ${err.message}`))
     .finally(() => jobs.delete(stream.token));
 }
 

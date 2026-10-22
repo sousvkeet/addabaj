@@ -16,11 +16,11 @@ import { DeviceSettings } from '../components/DeviceSettings';
 import { ConnectionNotice } from '../components/ConnectionNotice';
 
 export function AppShell() {
-  const { pathname, search, hash } = useLocation();
+  const { pathname, search, hash, state } = useLocation();
   const navigate = useNavigate();
   // Opened straight onto a chat or room (a notification, a link): the chats go underneath, so Back reaches them.
   useEffect(() => {
-    void homeUnderneath(navigate, pathname + search + hash);
+    void homeUnderneath(navigate, pathname + search + hash, state);
     // Only as the app opens.
   }, []);
   useBackSteps();

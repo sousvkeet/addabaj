@@ -284,6 +284,11 @@ export const useCall = create<CallState>()((set, get) => {
         const video = !!cameraTrack;
         set({ videoCall: video });
         const { callId } = await emitAck<{ callId: string }>('call:start', { to: peer.id, video });
+        // Hung up while it was being placed: cancel it, or they'd ring on.
+        if (get().phase !== 'outgoing' || get().peer?.id !== peer.id || get().callId) {
+          socket.emit('call:end', { callId });
+          return;
+        }
         set({ callId });
         startTone('ringback');
       } catch (err) {

@@ -65,8 +65,23 @@ export function bindRealtime() {
     useVoice.getState().onConnectionLost();
     if (reason === 'io server disconnect' && useAuth.getState().status === 'authed') socket.connect();
   });
+  // Refused: logged out elsewhere, or this device's login was just renewed (a
+  // password change hands it a new one) while the old one tried to reconnect.
+  // Ask the server once before going to the login page.
+  let rechecked = 0;
   socket.on('connect_error', (err) => {
-    if (err.message === 'unauthorized') useAuth.getState().expire();
+    if (err.message !== 'unauthorized') return;
+    if (Date.now() - rechecked < 10_000) return useAuth.getState().expire();
+    rechecked = Date.now();
+    useAuth
+      .getState()
+      .refresh()
+      .then(
+        () => {
+          if (useAuth.getState().status === 'authed') socket.connect();
+        },
+        () => useAuth.getState().expire(),
+      );
   });
   watchConnection(() => useAuth.getState().status === 'authed');
 
@@ -185,6 +200,10 @@ export function bindRealtime() {
     if (!invite) return;
     useChat.setState((s) => ({ invites: [invite, ...s.invites.filter((i) => i.id !== invite.id)] }));
     toast(`${invite.inviter.name} invited you to ${invite.room.name}.`, 'live');
+  });
+  // The room changed (its name, photo, member count) before they answered.
+  socket.on('invite:updated', (invite: Invite) => {
+    useChat.setState((s) => ({ invites: s.invites.map((i) => (i.id === invite.id ? invite : i)) }));
   });
   socket.on('invite:removed', ({ inviteId }: { inviteId: string }) => {
     useChat.setState((s) => ({ invites: s.invites.filter((i) => i.id !== inviteId) }));

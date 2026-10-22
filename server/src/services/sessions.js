@@ -17,8 +17,9 @@ const LIFETIME = "interval '30 days'";
 
 export async function loadSessions() {
   await query(`DELETE FROM sessions WHERE created_at < now() - ${LIFETIME}`);
+  const { rows } = await query('SELECT id, user_id FROM sessions');
   live.clear();
-  for (const r of (await query('SELECT id, user_id FROM sessions')).rows) live.set(r.id, r.user_id);
+  for (const r of rows) live.set(r.id, r.user_id);
 }
 
 export const sessionAlive = (sid, userId) => live.get(sid) === userId;

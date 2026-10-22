@@ -10,7 +10,11 @@ import { announceRoomChanged, attachMember, detachMember, inviteForInvitee, list
 import { findUser, publicUser, roomPhotoUrl } from '../services/users.js';
 import { MAX_PHOTO_BYTES, removeRoomPhoto, roomPhotoFile, saveRoomPhoto } from '../services/photos.js';
 import { enrich } from '../services/messages.js';
-import { readRoom, sendRoomMessage } from '../services/chat.js';
+import { asId, readRoom, sendRoomMessage } from '../services/chat.js';
+import { rateLimiter } from '../socket/util.js';
+
+// Plenty for anyone, but no floods: 10 new rooms per 10 minutes per person.
+const canCreate = rateLimiter(10, 10 * 60_000);
 
 export const roomsRouter = Router();
 
@@ -48,6 +52,7 @@ roomsRouter.get('/', async (req, res) => {
 
 roomsRouter.post('/', async (req, res) => {
   const input = createSchema.parse(req.body);
+  if (!canCreate(req.userId)) throw new AppError(429, 'That’s a lot of new rooms. Wait a few minutes and try again.');
   const user = await me(req);
   const room = await transaction(async (c) => {
     const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : null;
@@ -130,12 +135,13 @@ roomsRouter.post('/join', codeLookups, failedJoins, async (req, res) => {
   const user = await me(req);
   const cancelled = await transaction(async (c) => {
     try {
-      await lockSeat(c, room.id);
+      // Joined meanwhile (the same tap twice): nothing more to do.
+      if ((await lockSeat(c, room.id, req.userId)).member) return null;
     } catch (err) {
       if (err.status === 409) throw conflict(`${room.name} is full. Ask one of its admins to make room.`);
       throw err;
     }
-    await c.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [room.id, req.userId]);
+    await c.query('INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)', [room.id, req.userId]);
     const { rows } = await c.query(
       `UPDATE room_invites SET status = 'accepted', responded_at = now()
        WHERE room_id = $1 AND invitee_id = $2 AND status = 'pending' RETURNING id`,
@@ -143,6 +149,7 @@ roomsRouter.post('/join', codeLookups, failedJoins, async (req, res) => {
     );
     return rows;
   });
+  if (!cancelled) return res.json({ room: await roomDetail(room.id, req.userId) });
   for (const inv of cancelled) getIO()?.to(userChannel(req.userId)).emit('invite:removed', { inviteId: inv.id });
   await attachMember(room.id, req.userId);
   await postSystemMessage(room.id, `${user.name} joined with the invite code`);
@@ -219,9 +226,13 @@ roomsRouter.get('/:id/photo/:version', async (req, res) => {
   res.sendFile(file);
 });
 
-roomsRouter.put('/:id/photo', express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), async (req, res) => {
+const roomAdminsOnly = async (req, _res, next) => {
+  await requireAdmin(req.params.id, req.userId);
+  next();
+};
+
+roomsRouter.put('/:id/photo', roomAdminsOnly, express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), async (req, res) => {
   const roomId = req.params.id;
-  await requireAdmin(roomId, req.userId);
   const user = await me(req);
   await saveRoomPhoto(roomId, Buffer.isBuffer(req.body) ? req.body : null);
   await postSystemMessage(roomId, `${user.name} changed the room photo`);
@@ -251,7 +262,7 @@ roomsRouter.delete('/:id', async (req, res) => {
 roomsRouter.get('/:id/messages', async (req, res) => {
   const roomId = req.params.id;
   await requireMember(roomId, req.userId);
-  const before = Number(req.query.before) || null;
+  const before = asId(req.query.before);
   const limit = 50;
   const { rows } = await query(
     `${ROOM_MESSAGE_SELECT}
@@ -296,11 +307,8 @@ roomsRouter.post('/:id/members', async (req, res) => {
   const [actor, target] = await Promise.all([me(req), findUser(targetId)]);
   if (!target) throw notFound("That person doesn't exist.");
   const cancelled = await transaction(async (c) => {
-    await lockSeat(c, roomId);
-    const { rowCount } = await c.query(
-      `INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [roomId, targetId],
-    );
-    if (!rowCount) throw conflict(`${target.name} is already in this room.`);
+    if ((await lockSeat(c, roomId, targetId)).member) throw conflict(`${target.name} is already in this room.`);
+    await c.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [roomId, targetId]);
     const { rows } = await c.query(
       `UPDATE room_invites SET status = 'cancelled', responded_at = now()
        WHERE room_id = $1 AND invitee_id = $2 AND status = 'pending' RETURNING id`,

@@ -14,7 +14,7 @@ import { enrich } from './messages.js';
 import { receiptsShared } from './privacy.js';
 import { introduce } from './presence.js';
 import { pushChatRead, pushDeleted, pushDm, pushRoomMessage } from './push.js';
-import { roomMessage } from './rooms.js';
+import { ROOM_MESSAGE_SELECT, roomMessage } from './rooms.js';
 import { linkAttachment, uploadDir } from './uploads.js';
 import { findUser } from './users.js';
 
@@ -40,8 +40,23 @@ const toUser = (userId, except) => {
   return except ? target?.except(except) : target;
 };
 
-export async function sendDm(userId, to, { body, attachmentId, replyTo } = {}, except = null) {
+/** The app's name for a send (see schema.sql), or null. */
+const sendName = (v) => (typeof v === 'string' && /^[A-Za-z0-9-]{8,64}$/.test(v) ? v : null);
+
+/** A message saved earlier under this send's name: its answer was lost, and the app sent it again. */
+async function savedDm(userId, to, clientId) {
+  const row = clientId && (await one(`SELECT ${DM_COLUMNS} FROM dm_messages WHERE sender_id = $1 AND recipient_id = $2 AND client_id = $3`, [userId, to, clientId]));
+  if (!row) return null;
+  const message = dmMessage(row);
+  await enrich('dm', [message]);
+  return message;
+}
+
+export async function sendDm(userId, to, { body, attachmentId, replyTo, clientId: name } = {}, except = null) {
   if (!isUuid(to) || to === userId) throw new AppError(400, "You can't message that person.");
+  const clientId = sendName(name);
+  const again = await savedDm(userId, to, clientId);
+  if (again) return again;
   if (!canSend(userId)) throw new AppError(429, SLOW_DOWN);
   const text = cleanBody(body, !!attachmentId);
   const partner = await findUser(to, userId);
@@ -57,13 +72,16 @@ export async function sendDm(userId, to, { body, attachmentId, replyTo } = {}, e
   }
   const message = await transaction(async (c) => {
     const { rows: [row] } = await c.query(
-      `INSERT INTO dm_messages (sender_id, recipient_id, body, reply_to_id) VALUES ($1, $2, $3, $4) RETURNING ${DM_COLUMNS}`,
-      [userId, to, text, replyToId],
+      `INSERT INTO dm_messages (sender_id, recipient_id, body, reply_to_id, client_id) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING RETURNING ${DM_COLUMNS}`,
+      [userId, to, text, replyToId, clientId],
     );
+    if (!row) return null; // the same send, saved a moment ago
     const m = dmMessage(row);
     if (attachmentId) await linkAttachment(c, attachmentId, userId, 'dm_message_id', m.id);
     return m;
   });
+  if (!message) return (await savedDm(userId, to, clientId)) ?? Promise.reject(new AppError(409, 'Send it again.'));
   await enrich('dm', [message]);
   // Their first message: now they're contacts, and see each other's online status.
   const before = await one(
@@ -96,25 +114,42 @@ export async function readDm(userId, partnerId, except = null) {
   pushChatRead(userId, 'dm', partnerId);
 }
 
-export async function sendRoomMessage(user, roomId, { body, attachmentId, replyTo } = {}, except = null) {
+/** As savedDm, in a room. */
+async function savedRoomMessage(userId, roomId, clientId) {
+  const row = clientId && (await one(`${ROOM_MESSAGE_SELECT} WHERE m.room_id = $1 AND m.sender_id = $2 AND m.client_id = $3`, [roomId, userId, clientId]));
+  if (!row) return null;
+  const message = roomMessage(row);
+  await enrich('room', [message]);
+  return message;
+}
+
+export async function sendRoomMessage(user, roomId, { body, attachmentId, replyTo, clientId: name } = {}, except = null) {
   const userId = user.id;
   if (!isUuid(roomId)) throw new AppError(404, "That room doesn't exist.");
+  const clientId = sendName(name);
+  const again = await savedRoomMessage(userId, roomId, clientId);
+  if (again) return again;
   if (!canSend(userId)) throw new AppError(429, SLOW_DOWN);
   const text = cleanBody(body, !!attachmentId);
   let replyToId = asId(replyTo);
   if (replyToId && !(await one('SELECT 1 FROM room_messages WHERE id = $1 AND room_id = $2', [replyToId, roomId]))) replyToId = null;
   const message = await transaction(async (c) => {
     const { rows: [row] } = await c.query(
-      `INSERT INTO room_messages (room_id, sender_id, body, reply_to_id)
-       SELECT $1, $2, $3, $4 WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2)
-       RETURNING id, room_id, kind, body, created_at, sender_id, reply_to_id`,
-      [roomId, userId, text, replyToId],
+      `INSERT INTO room_messages (room_id, sender_id, body, reply_to_id, client_id)
+       SELECT $1, $2, $3, $4, $5 WHERE EXISTS (SELECT 1 FROM room_members WHERE room_id = $1 AND user_id = $2)
+       ON CONFLICT (sender_id, client_id) WHERE client_id IS NOT NULL DO NOTHING
+       RETURNING id, room_id, kind, body, created_at, sender_id, reply_to_id, client_id`,
+      [roomId, userId, text, replyToId, clientId],
     );
-    if (!row) throw new AppError(403, "You're not a member of this room anymore.");
+    if (!row) {
+      if (clientId) return null; // perhaps the same send, saved a moment ago
+      throw new AppError(403, "You're not a member of this room anymore.");
+    }
     const m = roomMessage({ ...row, sender_name: user.name, sender_hue: user.hue, sender_photo_url: user.photo ?? null });
     if (attachmentId) await linkAttachment(c, attachmentId, userId, 'room_message_id', m.id);
     return m;
   });
+  if (!message) return (await savedRoomMessage(userId, roomId, clientId)) ?? Promise.reject(new AppError(403, "You're not a member of this room anymore."));
   await enrich('room', [message]);
   await query(
     `UPDATE room_members SET last_read_id = $3, last_delivered_id = $3, last_read_at = now() WHERE room_id = $1 AND user_id = $2`,

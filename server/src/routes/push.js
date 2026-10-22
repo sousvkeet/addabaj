@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { conflict } from '../errors.js';
 import { registerDevice, unregisterDevice } from '../services/push.js';
 
 export const pushRouter = Router();
@@ -12,7 +13,7 @@ const deviceSchema = z.object({
 
 pushRouter.post('/devices', async (req, res) => {
   const { token, platform } = deviceSchema.parse(req.body);
-  await registerDevice(req.userId, token, platform, req.sessionId);
+  if (!(await registerDevice(req.userId, token, platform, req.sessionId))) throw conflict('That phone is signed in to another account.');
   res.status(204).end();
 });
 

@@ -30,16 +30,20 @@ async function pendingInvite(inviteId, userId) {
 
 invitesRouter.post('/:id/accept', async (req, res) => {
   const inv = await pendingInvite(req.params.id, req.userId);
-  await transaction(async (c) => {
-    await lockSeat(c, inv.room_id);
-    await c.query(
-      `INSERT INTO room_members (room_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [inv.room_id, req.userId],
+  const joined = await transaction(async (c) => {
+    const seat = await lockSeat(c, inv.room_id, req.userId);
+    // Answered once, even when the same tap arrives twice.
+    const { rowCount } = await c.query(
+      `UPDATE room_invites SET status = 'accepted', responded_at = now() WHERE id = $1 AND status = 'pending'`,
+      [inv.id],
     );
-    await c.query(`UPDATE room_invites SET status = 'accepted', responded_at = now() WHERE id = $1`, [inv.id]);
+    if (!rowCount || seat.member) return false;
+    await c.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [inv.room_id, req.userId]);
+    return true;
   });
-  const user = await findUser(req.userId);
   getIO()?.to(userChannel(req.userId)).emit('invite:removed', { inviteId: inv.id });
+  if (!joined) return res.json({ room: await roomDetail(inv.room_id, req.userId) });
+  const user = await findUser(req.userId);
   await attachMember(inv.room_id, req.userId);
   await postSystemMessage(inv.room_id, `${user.name} joined`);
   announceRoomChanged(inv.room_id);

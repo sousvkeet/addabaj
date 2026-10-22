@@ -82,9 +82,15 @@ final class Avatars {
         return IconCompat.createWithBitmap(bitmap(c, name, hue, photo, 192));
     }
 
+    /** Like icon(), but never waits for a download (a ringing phone mustn't): a kept photo, else initials. */
+    static IconCompat iconNow(Context c, String name, int hue, String photo) {
+        Bitmap b = photo(c, photo, 192, false);
+        return IconCompat.createWithBitmap(b != null ? b : bitmap(name, hue, 192));
+    }
+
     // ── Profile photos ─────────────────────────────────────────────────
 
-    private static final Pattern PHOTO = Pattern.compile("/api/users/[0-9a-fA-F-]{36}/photo/[0-9a-f]{16}");
+    private static final Pattern PHOTO = Pattern.compile("/api/(?:users|rooms)/[0-9a-fA-F-]{36}/photo/[0-9a-f]{16}");
     private static final int MAX_PHOTO_BYTES = 3 * 1024 * 1024;
     private static final LruCache<String, Bitmap> kept = new LruCache<>(48);
     private static final Set<String> fetching = Collections.synchronizedSet(new HashSet<>());
@@ -97,6 +103,10 @@ final class Avatars {
      * thread only a kept one is used, and it's fetched for next time.
      */
     static Bitmap photo(Context c, String path, int size) {
+        return photo(c, path, size, true);
+    }
+
+    private static Bitmap photo(Context c, String path, int size, boolean download) {
         if (path == null || !PHOTO.matcher(path).matches()) return null;
         String key = path + "@" + size;
         Bitmap b = kept.get(key);
@@ -115,7 +125,7 @@ final class Avatars {
             }
         }
         if (bytes == null) {
-            if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (!download || Looper.myLooper() == Looper.getMainLooper()) {
                 prefetch(c, path);
                 return null;
             }

@@ -69,12 +69,17 @@ async function accessToken() {
   return fetching;
 }
 
-/** Sends one data message to one phone: 'ok', or 'gone' when the app was uninstalled or signed out. */
-async function send(deviceToken, data, ttl) {
+/**
+ * Sends one data message to one phone: 'ok', or 'gone' when the app was
+ * uninstalled or signed out. Pushes that show nothing go at normal priority:
+ * Android holds back apps whose urgent pushes often show nothing, which would
+ * delay their calls.
+ */
+async function send(deviceToken, data, ttl, priority) {
   const res = await fetch(`${API}/v1/projects/${account.projectId}/messages:send`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message: { token: deviceToken, data, android: { priority: 'high', ttl: `${ttl}s` } } }),
+    body: JSON.stringify({ message: { token: deviceToken, data, android: { priority, ttl: `${ttl}s` } } }),
     signal: AbortSignal.timeout(10_000),
   });
   if (res.ok) return 'ok';
@@ -87,7 +92,7 @@ async function send(deviceToken, data, ttl) {
 }
 
 /** Sends `data` to every phone of `userId`. Values become strings (FCM data is string-only). */
-export async function pushToUser(userId, data, { ttl = 3600 } = {}) {
+export async function pushToUser(userId, data, { ttl = 3600, priority = 'high' } = {}) {
   if (!account || isDisabled(userId)) return 0;
   const { rows } = await query('SELECT token FROM push_devices WHERE user_id = $1', [userId]);
   if (!rows.length) return 0;
@@ -96,7 +101,7 @@ export async function pushToUser(userId, data, { ttl = 3600 } = {}) {
   await Promise.all(
     rows.map(async ({ token: t }) => {
       try {
-        if ((await send(t, payload, ttl)) === 'gone') await query('DELETE FROM push_devices WHERE token = $1', [t]);
+        if ((await send(t, payload, ttl, priority)) === 'gone') await query('DELETE FROM push_devices WHERE token = $1', [t]);
         else sent++;
       } catch (err) {
         console.error('Push notification failed:', err.message);
@@ -108,19 +113,28 @@ export async function pushToUser(userId, data, { ttl = 3600 } = {}) {
 
 // ── Phones ─────────────────────────────────────────────────────────────
 
-/** `sessionId`: the login on that phone, so logging the phone out (Settings › Devices) stops its notifications. */
+/**
+ * `sessionId`: the login on that phone, so logging the phone out (Settings ›
+ * Devices) stops its notifications. A phone stays with whoever registered it
+ * while their login there lasts (logging out frees it), so nobody else can
+ * claim it to take over its notifications. False when it belongs to someone else.
+ */
 export async function registerDevice(userId, deviceToken, platform = 'android', sessionId = null) {
-  await query(
+  const { rowCount } = await query(
     `INSERT INTO push_devices (token, user_id, platform, session_id) VALUES ($1, $2, $3, $4)
-     ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform, session_id = EXCLUDED.session_id, updated_at = now()`,
+     ON CONFLICT (token) DO UPDATE SET user_id = EXCLUDED.user_id, platform = EXCLUDED.platform, session_id = EXCLUDED.session_id, updated_at = now()
+     WHERE push_devices.user_id = EXCLUDED.user_id OR push_devices.session_id IS NULL
+        OR NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = push_devices.session_id AND s.created_at > now() - interval '30 days')`,
     [deviceToken, userId, platform, sessionId],
   );
+  if (!rowCount) return false;
   // Keep the newest few; old phones that never said goodbye drop off.
   await query(
     `DELETE FROM push_devices WHERE user_id = $1 AND token NOT IN (
        SELECT token FROM push_devices WHERE user_id = $1 ORDER BY updated_at DESC LIMIT ${MAX_DEVICES})`,
     [userId],
   );
+  return true;
 }
 
 export async function unregisterDevice(userId, deviceToken) {
@@ -234,7 +248,7 @@ export function pushChatRead(userId, scope, chatId) {
   const set = pushedChats.get(userId);
   if (!account || !set?.delete(`${scope}:${chatId}`)) return;
   if (!set.size) pushedChats.delete(userId);
-  pushToUser(userId, { type: 'read', scope, chatId }).catch(failed);
+  pushToUser(userId, { type: 'read', scope, chatId }, { priority: 'normal' }).catch(failed);
 }
 
 /**
@@ -245,7 +259,7 @@ export function pushDeleted(userIds, { scope, chatId, messageId }) {
   if (!account) return;
   for (const userId of userIds) {
     if (!pushedChats.get(userId)?.has(`${scope}:${chatId}`)) continue;
-    pushToUser(userId, { type: 'deleted', scope, chatId, messageId }).catch(failed);
+    pushToUser(userId, { type: 'deleted', scope, chatId, messageId }, { priority: 'normal' }).catch(failed);
   }
 }
 

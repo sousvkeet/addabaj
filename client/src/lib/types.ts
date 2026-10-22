@@ -1,6 +1,7 @@
 export type User = {
   id: string;
-  email: string;
+  /** Only on your own account and the host admin's pages: nobody else sees someone's email. */
+  email?: string;
   /** Their user ID: what people type to find them ("ana.rahman4821"). */
   handle?: string | null;
   name: string;
@@ -59,7 +60,13 @@ export type PreparedFile = {
 };
 
 /** What the composer sends: text, optionally a file and/or the message replied to. */
-export type Draft = { body: string; file?: PreparedFile; replyTo?: ReplyRef | null };
+export type Draft = {
+  body: string;
+  file?: PreparedFile;
+  replyTo?: ReplyRef | null;
+  /** Names this send, kept across retries, so the server saves it once even if its answer was lost. */
+  clientId?: string;
+};
 
 /** Fields every chat and room message carries besides its text. */
 type MessageExtras = {
@@ -71,6 +78,8 @@ type MessageExtras = {
   upload?: number;
   /** Client-only: what to send again on retry. */
   draft?: Draft;
+  /** The sender's name for this send (see Draft); only on the sender's own messages. */
+  clientId?: string | null;
 };
 
 export type DmMessage = MessageExtras & {
@@ -246,4 +255,13 @@ export type Invite = {
 export type PickerUser = User & { roomStatus?: 'member' | 'invited' | null };
 
 /** `stale`: kept on the phone from last time (lib/localCache.ts), until the server's copy arrives. */
-export type Paged<T> = { items: T[]; loaded: boolean; hasMore: boolean; loadingMore?: boolean; stale?: boolean };
+export type Paged<T> = {
+  items: T[];
+  loaded: boolean;
+  hasMore: boolean;
+  loadingMore?: boolean;
+  /** A copy kept from last time, or loaded before this device was away: replaced by the server's when next opened. */
+  stale?: boolean;
+  /** The open chat, after this device was away: its newest page is checked against the server's (see land()). */
+  recheck?: boolean;
+};

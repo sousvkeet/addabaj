@@ -13,6 +13,7 @@ export function dmMessage(row) {
     readAt: row.read_at,
     deletedAt: row.deleted_at ?? null,
     replyToId: row.reply_to_id ?? null,
+    clientId: row.client_id ?? null,
     attachment: null,
     replyTo: null,
     reactions: [],
@@ -27,4 +28,4 @@ export function dmForViewer(message, viewerId) {
   return message;
 }
 
-export const DM_COLUMNS = 'id, sender_id, recipient_id, kind, body, meta, created_at, delivered_at, read_at, reply_to_id, deleted_at';
+export const DM_COLUMNS = 'id, sender_id, recipient_id, kind, body, meta, created_at, delivered_at, read_at, reply_to_id, deleted_at, client_id';

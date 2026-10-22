@@ -253,3 +253,10 @@ ALTER TABLE push_devices ADD COLUMN IF NOT EXISTS session_id uuid REFERENCES ses
 
 -- Room photos: like profile photos (room-<room id>-<version>.jpg), set by the room's admins.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS photo text;
+
+-- A send's name from the app (kept across retries): a message whose answer was
+-- lost and is sent again is saved once.
+ALTER TABLE dm_messages ADD COLUMN IF NOT EXISTS client_id text;
+CREATE UNIQUE INDEX IF NOT EXISTS dm_messages_client_idx ON dm_messages (sender_id, client_id) WHERE client_id IS NOT NULL;
+ALTER TABLE room_messages ADD COLUMN IF NOT EXISTS client_id text;
+CREATE UNIQUE INDEX IF NOT EXISTS room_messages_client_idx ON room_messages (sender_id, client_id) WHERE client_id IS NOT NULL;

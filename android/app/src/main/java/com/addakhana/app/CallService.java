@@ -106,21 +106,21 @@ public class CallService extends Service {
         String action = intent == null ? ACTION_STOP : intent.getAction();
         if (ACTION_HANGUP.equals(action)) {
             // The page ends it and then reports "none", which stops this service.
-            if (!MainActivity.send(Push.event("hangup"))) stop();
+            if (!MainActivity.send(Push.event("hangup"))) stop(startId);
             return START_NOT_STICKY;
         }
         if (!ACTION_UPDATE.equals(action)) {
-            stop();
+            stop(startId);
             return START_NOT_STICKY;
         }
         try {
             session = new JSONObject(intent.getStringExtra("session"));
         } catch (Exception e) {
-            stop();
+            stop(startId);
             return START_NOT_STICKY;
         }
         if (!goForeground(build())) {
-            stop();
+            stop(startId);
             return START_NOT_STICKY;
         }
         running = true;
@@ -283,7 +283,16 @@ public class CallService extends Service {
         proximity = null;
     }
 
-    private void stop() {
+    /**
+     * Stops, unless another request is already queued behind this one: moving
+     * voice from one room to another sends "none" then the new room, and that
+     * second one must keep the service (and the microphone) going.
+     */
+    private void stop(int startId) {
+        if (stopSelfResult(startId)) tearDown();
+    }
+
+    private void tearDown() {
         running = false;
         speakerChoice = null;
         main.removeCallbacksAndMessages(null);
@@ -295,12 +304,11 @@ public class CallService extends Service {
         }
         routed = false;
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
-        stopSelf();
     }
 
     @Override
     public void onDestroy() {
-        if (running) stop();
+        if (running) tearDown();
         if (instance == this) instance = null;
         super.onDestroy();
     }

@@ -31,6 +31,17 @@ const limiter = rateLimit({
   message: { error: 'Too many attempts. Wait a few minutes and try again.' },
 });
 
+// Changing your own photo or user ID: per person, so it never locks others
+// behind the same address (an office, a phone network) out of logging in.
+const changes = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: config.isProd ? 60 : 600,
+  keyGenerator: (req) => req.userId,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'That’s a lot of changes. Wait a few minutes and try again.' },
+});
+
 const email = z.string().trim().toLowerCase().email('Enter a valid email address.').max(254);
 export const newPassword = z.string().min(8, 'Use at least 8 characters for your password.').max(200);
 
@@ -114,8 +125,16 @@ authRouter.post('/password', limiter, requireAuth, async (req, res) => {
   // Everywhere else is signed out; this device gets a fresh login (any copy of its old one stops) and stays in.
   await endOtherSessions(req.userId, req.sessionId, 'password');
   await endSessions(req.userId);
-  setAuthCookie(res, req.userId, await rotateSession(req.userId, req.sessionId, req));
-  getIO()?.in(userChannel(req.userId)).disconnectSockets(true);
+  const fresh = await rotateSession(req.userId, req.sessionId, req);
+  setAuthCookie(res, req.userId, fresh);
+  // This device's open connections carry on under its new login (cutting them
+  // would have them reconnect with the old cookie and land on the login page);
+  // anything else still connected is cut off.
+  for (const s of getIO()?.of('/').sockets.values() ?? []) {
+    if (s.data.userId !== req.userId) continue;
+    if (req.sessionId && s.data.sid === req.sessionId) s.data.sid = fresh;
+    else s.disconnect(true);
+  }
   res.json({ user: await findSessionUser(req.userId) });
 });
 
@@ -136,11 +155,13 @@ authRouter.patch('/privacy', requireAuth, async (req, res) => {
     // Their own apps reload who's online (their contacts, or no one now that it works both ways).
     io.to(userChannel(req.userId)).emit('presence:refresh');
   }
+  // Their other devices show the new choices.
+  io?.to(userChannel(req.userId)).emit('account:changed');
   res.json({ user: await findSessionUser(req.userId) });
 });
 
 // Your user ID: what people type to find you. Changing it frees the old one.
-authRouter.patch('/handle', limiter, requireAuth, async (req, res) => {
+authRouter.patch('/handle', requireAuth, changes, async (req, res) => {
   const handle = normalizeHandle(req.body?.handle);
   if (!handle) throw new AppError(400, `That user ID won't work. ${HANDLE_RULES}`);
   try {
@@ -149,11 +170,13 @@ authRouter.patch('/handle', limiter, requireAuth, async (req, res) => {
     if (err.code === '23505') throw conflict('That user ID is taken. Try another.');
     throw err;
   }
+  // Their other devices show the new ID.
+  getIO()?.to(userChannel(req.userId)).emit('account:changed');
   res.json({ user: await findSessionUser(req.userId) });
 });
 
 // Your profile photo: a JPEG (the app crops and shrinks it first). Your contacts see it change at once.
-authRouter.put('/photo', limiter, requireAuth, express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), async (req, res) => {
+authRouter.put('/photo', requireAuth, changes, express.raw({ type: () => true, limit: MAX_PHOTO_BYTES }), async (req, res) => {
   await savePhoto(req.userId, Buffer.isBuffer(req.body) ? req.body : null);
   res.json({ user: await findSessionUser(req.userId) });
 });

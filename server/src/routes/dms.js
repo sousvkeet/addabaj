@@ -4,7 +4,7 @@ import { assertUuid } from '../errors.js';
 import { DM_COLUMNS, dmForViewer, dmMessage } from '../services/dms.js';
 import { enrich } from '../services/messages.js';
 import { publicUser } from '../services/users.js';
-import { readDm, sendDm } from '../services/chat.js';
+import { asId, readDm, sendDm } from '../services/chat.js';
 
 export const dmsRouter = Router();
 
@@ -22,7 +22,7 @@ dmsRouter.get('/', async (req, res) => {
      )
      SELECT l.*, u.email, u.handle, u.name, u.avatar_hue, u.photo, u.last_seen_at,
        (SELECT count(*)::int FROM dm_messages d
-         WHERE d.recipient_id = $1 AND d.sender_id = l.partner AND d.read_at IS NULL AND d.deleted_at IS NULL
+         WHERE d.recipient_id = $1 AND d.sender_id = l.partner AND d.read_at IS NULL AND d.deleted_at IS NULL AND d.kind = 'text'
            AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id)) AS unread
      FROM latest l JOIN users u ON u.id = l.partner
      ORDER BY l.id DESC`,
@@ -39,7 +39,7 @@ dmsRouter.get('/', async (req, res) => {
 
 dmsRouter.get('/:userId/messages', async (req, res) => {
   const partner = assertUuid(req.params.userId, 'person');
-  const before = Number(req.query.before) || null;
+  const before = asId(req.query.before);
   const limit = 50;
   const { rows } = await query(
     `SELECT ${DM_COLUMNS} FROM dm_messages

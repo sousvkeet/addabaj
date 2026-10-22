@@ -12,12 +12,16 @@ import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.Person;
 import androidx.core.app.RemoteInput;
+import androidx.core.content.pm.ShortcutInfoCompat;
+import androidx.core.content.pm.ShortcutManagerCompat;
 import androidx.core.graphics.drawable.IconCompat;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -178,7 +182,30 @@ final class Notifications {
                         .build());
         // Older Android shows no sender pictures in the message list.
         if (!room && Build.VERSION.SDK_INT < 28) b.setLargeIcon(Avatars.bitmap(c, name, Avatars.hue(chat.optString("hue")), chat.optString("photo"), 192));
+        b.setShortcutInfo(conversation(c, scope, chatId, name, Avatars.hue(chat.optString("hue")), chat.optString("photo"), room ? null : people.get(chatId)));
         notify(c, key, ID_CHAT, b);
+    }
+
+    /**
+     * The chat as a conversation: Android 11+ shows conversations apart from
+     * other notifications, with their picture (a room's photo, the person's),
+     * as other messengers do. A shortcut that opens the chat names it.
+     */
+    private static ShortcutInfoCompat conversation(Context c, String scope, String chatId, String name, int hue, String photo, Person partner) {
+        Intent open = new Intent(c, MainActivity.class).setAction(MainActivity.ACTION_OPEN).putExtra(MainActivity.EXTRA_PATH, path(scope, chatId));
+        ShortcutInfoCompat.Builder s = new ShortcutInfoCompat.Builder(c, key(scope, chatId))
+                .setShortLabel(name)
+                .setLongLived(true)
+                .setIntent(open)
+                .setIcon(Avatars.icon(c, name, hue, photo));
+        if (partner != null) s.setPerson(partner);
+        ShortcutInfoCompat info = s.build();
+        try {
+            ShortcutManagerCompat.pushDynamicShortcut(c, info);
+        } catch (Exception ignored) {
+            // Shortcuts not allowed right now: the notification still shows.
+        }
+        return info;
     }
 
     private static NotificationCompat.Action replyAction(Context c, String scope, String chatId) {
@@ -295,6 +322,11 @@ final class Notifications {
         NotificationManager nm = c.getSystemService(NotificationManager.class);
         if (nm != null) for (StatusBarNotification n : nm.getActiveNotifications()) release(c, n.getTag(), n.getId());
         NotificationManagerCompat.from(c).cancelAll();
+        // The chats' conversation shortcuts go too (logged out, or someone else logged in).
+        List<String> kept = new ArrayList<>();
+        for (ShortcutInfoCompat s : ShortcutManagerCompat.getShortcuts(c, ShortcutManagerCompat.FLAG_MATCH_CACHED)) kept.add(s.getId());
+        ShortcutManagerCompat.removeAllDynamicShortcuts(c);
+        if (!kept.isEmpty()) ShortcutManagerCompat.removeLongLivedShortcuts(c, kept);
     }
 
     /**

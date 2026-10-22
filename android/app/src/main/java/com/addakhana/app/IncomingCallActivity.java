@@ -7,6 +7,8 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -31,6 +33,8 @@ public class IncomingCallActivity extends Activity {
         if (a != null && callId != null && callId.equals(a.callId)) a.runOnUiThread(a::finish);
     }
 
+    private final Handler main = new Handler(Looper.getMainLooper());
+
     @SuppressWarnings("deprecation")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -42,6 +46,7 @@ public class IncomingCallActivity extends Activity {
             return;
         }
         current = new WeakReference<>(this);
+        closeWhenUnanswered();
         if (Build.VERSION.SDK_INT >= 27) {
             setShowWhenLocked(true);
             setTurnScreenOn(true);
@@ -52,8 +57,28 @@ public class IncomingCallActivity extends Activity {
         setContentView(layout(getIntent().getStringExtra("name"), getIntent().getIntExtra("hue", 260)));
     }
 
+    /** A newer call while this screen is still up (the last one's end never arrived): show that one. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        String id = intent.getStringExtra("callId");
+        if (!ActionReceiver.isId(id) || id.equals(callId) || IncomingCall.wasEnded(this, id)) return;
+        setIntent(intent);
+        callId = id;
+        video = intent.getBooleanExtra("video", false);
+        setContentView(layout(intent.getStringExtra("name"), intent.getIntExtra("hue", 260)));
+        closeWhenUnanswered();
+    }
+
+    /** Nobody answered in time (and the call's end didn't arrive): the screen goes. */
+    private void closeWhenUnanswered() {
+        main.removeCallbacksAndMessages(null);
+        main.postDelayed(this::finish, 60_000);
+    }
+
     @Override
     protected void onDestroy() {
+        main.removeCallbacksAndMessages(null);
         if (current.get() == this) current.clear();
         super.onDestroy();
     }

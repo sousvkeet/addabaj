@@ -89,6 +89,14 @@ export function MessageList({
   const [sheetFor, setSheetFor] = useState<ThreadItem | null>(null);
   const [deleting, setDeleting] = useState<ThreadItem | null>(null);
 
+  // A message taken back (deleted for everyone, or for me elsewhere) takes its open menu or photo with it.
+  useEffect(() => {
+    const gone = (it: ThreadItem | null) => !!it && !items.some((m) => m.key === it.key && !m.deleted);
+    if (gone(sheetFor)) setSheetFor(null);
+    if (gone(deleting)) setDeleting(null);
+    if (viewing && !items.some((m) => m.attachment?.id === viewing.id)) setViewing(null);
+  }, [items, sheetFor, deleting, viewing]);
+
   useLayoutEffect(() => {
     const el = scroller.current;
     if (!el) return;
@@ -876,14 +884,22 @@ function ActionSheet({
   onInfo?: () => void;
   onDelete?: () => void;
 }) {
-  // Only a tap that starts on the backdrop closes it: lifting the finger that just opened it doesn't.
-  const fromBackdrop = useRef(false);
+  // Only taps that start once it's open count: lifting the finger that held
+  // the message (it opens under that finger) presses nothing and doesn't close
+  // it. Clicks from a keyboard or a screen reader (no pointer) always count.
+  const pressed = useRef<EventTarget | null>(null);
   useBackClose(true, onClose);
   return (
     <div
       className="fixed inset-0 z-[65] flex items-end bg-[rgb(6_8_22/0.55)] backdrop-blur-[3px]"
-      onPointerDown={(e) => (fromBackdrop.current = e.target === e.currentTarget)}
-      onClick={(e) => e.target === e.currentTarget && fromBackdrop.current && onClose()}
+      onPointerDown={(e) => (pressed.current = e.target)}
+      onClickCapture={(e) => {
+        if (e.detail > 0 && !pressed.current) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      onClick={(e) => e.target === e.currentTarget && pressed.current === e.currentTarget && onClose()}
     >
       <div
         role="dialog"

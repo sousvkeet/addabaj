@@ -28,6 +28,7 @@ final class IncomingCall {
     static final int ID_CALL = 4;
     /** A little longer than the server lets a call ring a phone. */
     private static final long RING_MS = 46_000;
+    private static final long CLOCK_SLACK_MS = 10 * 60_000;
 
     static String tag(String callId) {
         return "call:" + callId;
@@ -36,9 +37,10 @@ final class IncomingCall {
     static void ring(Context c, Map<String, String> d) {
         String callId = d.get("callId");
         if (!ActionReceiver.isId(callId) || wasEnded(c, callId)) return;
+        // A push that arrived too late to answer. Firebase drops call pushes after 40 s,
+        // so this only guards against stragglers; the margin allows for a phone whose clock is off.
         long sentAt = parse(d.get("sentAt"), System.currentTimeMillis());
-        // A push that arrived too late to answer.
-        if (System.currentTimeMillis() - sentAt > RING_MS) return;
+        if (System.currentTimeMillis() - sentAt > RING_MS + CLOCK_SLACK_MS) return;
         // The open app rings itself; and nobody takes a second call mid-call.
         if (AddaApp.visible || CallService.running) return;
 
@@ -48,7 +50,7 @@ final class IncomingCall {
         Person caller = new Person.Builder()
                 .setName(name)
                 .setKey(d.get("callerId"))
-                .setIcon(Avatars.icon(c, name, hue, d.get("callerPhoto")))
+                .setIcon(Avatars.iconNow(c, name, hue, d.get("callerPhoto")))
                 .setImportant(true)
                 .build();
 

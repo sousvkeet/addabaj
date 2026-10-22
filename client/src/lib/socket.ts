@@ -31,3 +31,19 @@ export function emitAck<T = object>(event: string, payload: unknown, timeout = 1
     socket.once('connect', onConnect);
   });
 }
+
+/** Resolves once connected (at once when already), or fails after `ms` without a connection. */
+export function whenOnline(ms: number): Promise<void> {
+  if (socket.connected) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const gaveUp = window.setTimeout(() => {
+      socket.off('connect', onConnect);
+      reject(new Error("Not sent: there's still no connection."));
+    }, ms);
+    const onConnect = () => {
+      window.clearTimeout(gaveUp);
+      resolve();
+    };
+    socket.once('connect', onConnect);
+  });
+}

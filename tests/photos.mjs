@@ -188,7 +188,10 @@ await check('Room photos: only its admins set one; members, invitees and the joi
   await call(ana.cookie, 'POST', `/rooms/${r2.id}/members`, { userId: cy.id });
   const put = (u, body = PICTURE) => call(u.cookie, 'PUT', `/rooms/${r2.id}/photo`, body);
   expect((await put(cy)).status === 403, 'a member who is not an admin set it');
-  expect((await put(stranger)).status === 403 || (await put(stranger)).status === 404, 'an outsider set it');
+  // (Zed's account was removed above, so its login no longer works: someone else is the outsider.)
+  const outsider = await register('Yan');
+  expect([403, 404].includes((await put(outsider)).status), 'an outsider set it');
+  expect((await put(stranger)).status === 401, 'a removed account set it');
   const set = await put(ana);
   const photo = set.data?.room?.photo;
   expect(set.status === 200 && /^\/api\/rooms\/[0-9a-f-]+\/photo\/[0-9a-f]{16}$/.test(photo ?? ''), `set: ${set.status} ${JSON.stringify(set.data)}`);

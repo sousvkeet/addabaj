@@ -137,6 +137,8 @@ public class MainActivity extends Activity {
     private static volatile boolean pageBack;
     /** Opened from the launcher (not a notification or an invite link). */
     private boolean launcherTask;
+    /** Retrying from the offline page: once the app loads, Back mustn't lead to that page again. */
+    private static boolean leavingOffline;
     private boolean askedNotifications;
 
     private static final class PendingDownload {
@@ -398,6 +400,7 @@ public class MainActivity extends Activity {
         public void retry() {
             main.post(() -> {
                 MainActivity a = current.get();
+                leavingOffline = true;
                 if (page != null) page.loadUrl(a != null && a.failedUrl != null ? a.failedUrl : BuildConfig.APP_URL);
             });
         }
@@ -615,7 +618,14 @@ public class MainActivity extends Activity {
 
         @Override
         public void onPageFinished(WebView view, String url) {
-            if (isAppUrl(Uri.parse(url))) view.evaluateJavascript(THEME_SYNC, null);
+            if (isAppUrl(Uri.parse(url))) {
+                view.evaluateJavascript(THEME_SYNC, null);
+                if (leavingOffline) {
+                    leavingOffline = false;
+                    view.clearHistory();
+                    updateBack();
+                }
+            }
             CookieManager.getInstance().flush();
         }
 

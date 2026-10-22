@@ -6,11 +6,12 @@ What the app adds:
 
 - **Notifications while the app is closed.**
   - New messages arrive as one notification per chat or room, with the latest messages and each sender's picture: their profile photo (kept on the phone after the first download), or their initials.
+  - On Android 11 and newer each chat is a conversation (a shortcut the app keeps for it), so it shows with the person's or the room's photo in Android's conversations section, as in other messengers. Logging out removes them.
   - Reply and Mark as read work right from the notification.
   - Several waiting chats are bundled together.
   - Reading a chat anywhere (phone, computer) clears its notification.
   - The phone stays quiet while you're using Adda Khana on it or on a computer.
-- **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with the caller's photo, Answer and Decline. Calls you didn't answer leave a missed-call notification.
+- **Calls ring like phone calls.** Someone calling you rings the phone with your ringtone even when the app is closed. The call screen appears over the lock screen with the caller's photo (once it's on the phone; ringing never waits for it), Answer and Decline. Calls you didn't answer leave a missed-call notification.
 - **Calls keep going in the background.**
   - Calls, room voice and live streams keep running with the screen off or another app open. A notification shows the call, its length and a hang-up button.
   - Swiping the app away doesn't end the call.
@@ -30,7 +31,7 @@ What the app adds:
   - The phone's font, press ripples, and no accidental zooming or text selection. Dialogs from the app itself use the phone's own style.
 - **Opens at once, even offline.**
   - Recent chats are kept on the phone, so the app opens straight onto them and catches up in the background. With no connection it still opens, with "Waiting for network…".
-  - Messages written offline wait with a clock and send themselves when the connection is back (for up to two minutes; after that they're marked "Not sent" with a retry).
+  - Messages written offline wait with a clock and send themselves when the connection is back (for up to two minutes; after that they're marked "Not sent" with a retry), in the order they were written, even if the app is closed and opened again meanwhile. Photos and files sent offline wait for the connection too.
   - Coming back after Android closed the app in the background opens the latest version of the site, never a stale copy.
   - An app left open while you update the server reloads itself the next time it's out of sight (not during a call, voice, a live stream or a message sending), so new features and the update screen arrive without closing it.
 - **Everything a browser does.**

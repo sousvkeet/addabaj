@@ -368,7 +368,58 @@ await check('A message written offline waits with its clock, and goes by itself 
   await p.context().close();
 });
 
+await check('Several messages written offline arrive in the order they were written, once each', async () => {
+  const p = await appPage(ana);
+  await p.goto(`${BASE}/chats/${cy.id}`);
+  await thread(p).getByText('Call me when you are free').waitFor();
+  await sleep(800);
+  await p.context().setOffline(true);
+  await waiting(p).waitFor({ timeout: 6000 });
+  const box = p.getByLabel(/^Message Cy/);
+  for (let i = 1; i <= 6; i++) {
+    await box.fill(`In order ${i}`);
+    await box.press('Enter');
+  }
+  await p.context().setOffline(false);
+  const wanted = [1, 2, 3, 4, 5, 6].map((i) => `In order ${i}`).join(' | ');
+  let got = '';
+  for (let i = 0; i < 40 && got !== wanted; i++) {
+    got = (await messagesBetween(cy, ana)).filter((b) => b.startsWith('In order')).join(' | ');
+    await sleep(250);
+  }
+  expect(got === wanted, `the chat has: ${got}`);
+  await thread(p).getByLabel('Sending').first().waitFor({ state: 'detached', timeout: 5000 });
+  const shown = await thread(p).getByText(/^In order \d$/).allTextContents();
+  expect(shown.join(' | ') === wanted, `the app shows: ${shown.join(' | ')}`);
+  await p.context().close();
+});
+
 if (BUILT) {
+  await check('A message written offline still goes after the app is closed and opened again', async () => {
+    const p = await appPage(ana, BUILT);
+    await p.goto(`${BUILT}/chats/${cy.id}`);
+    await thread(p).getByText('Call me when you are free').waitFor();
+    await p.waitForFunction(() => navigator.serviceWorker?.controller, null, { timeout: 15000 });
+    await p.context().setOffline(true);
+    await waiting(p, /Waiting for network…|Connecting…/).waitFor({ timeout: 6000 });
+    await p.getByLabel(/^Message Cy/).fill('Survives a restart');
+    await p.getByLabel(/^Message Cy/).press('Enter');
+    await thread(p).getByLabel('Sending').waitFor({ timeout: 3000 });
+    await sleep(1500); // kept on the phone
+    await p.goto(`${BUILT}/chats/${cy.id}`);
+    await thread(p).getByText('Survives a restart').waitFor({ timeout: 8000 });
+    await p.context().setOffline(false);
+    let count = 0;
+    for (let i = 0; i < 40 && !count; i++) {
+      count = (await messagesBetween(cy, ana)).filter((b) => b === 'Survives a restart').length;
+      await sleep(250);
+    }
+    await sleep(1500);
+    count = (await messagesBetween(cy, ana)).filter((b) => b === 'Survives a restart').length;
+    expect(count === 1, `it arrived ${count} times`);
+    await p.context().close();
+  });
+
   await check('The app opens straight onto the chats kept from last time, even with no connection', async () => {
     const p = await appPage(ana, BUILT);
     await p.goto(`${BUILT}/chats/${bo.id}`);

@@ -132,6 +132,11 @@ export function RoomView() {
     });
   }, [page?.items, me?.id, members, isRoomAdmin]);
 
+  // A message taken back while it's being replied to: the reply goes too.
+  useEffect(() => {
+    if (replyTo && items.some((m) => m.id === replyTo.id && m.deleted)) setReplyTo(null);
+  }, [items, replyTo]);
+
   if (!room) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">

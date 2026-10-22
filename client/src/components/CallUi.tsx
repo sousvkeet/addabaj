@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { AudioLines, Ear, Mic, MicOff, Minimize2, Pause, Phone, PhoneOff, Play, Radio, Settings2, Square, Video, VideoOff, Volume2 } from 'lucide-react';
+import { useBackClose } from '../lib/back';
 import { duration } from '../lib/format';
 import { canToggleSpeaker, nativeSetSpeaker, nativeSpeakerOn, onNative } from '../lib/native';
 import { audioContext } from '../lib/sounds';
@@ -32,6 +33,9 @@ export function IncomingCall() {
   const decline = useCall((s) => s.declineCall);
   const navigate = useNavigate();
   const acceptRef = useRef<HTMLButtonElement>(null);
+  // As on a phone's own call screen, Back doesn't dismiss a ringing call (or
+  // change the screen behind it): answer or decline it.
+  useBackClose(phase === 'incoming' && !!peer, () => {});
 
   useEffect(() => {
     if (phase === 'incoming') acceptRef.current?.focus();
@@ -40,7 +44,8 @@ export function IncomingCall() {
   if (phase !== 'incoming' || !peer) return null;
   const answer = (withVideo: boolean) => {
     void accept({ video: withVideo });
-    navigate(`/chats/${peer.id}`);
+    // To their chat (unless it's open already, which mustn't add it to Back again).
+    if (window.location.pathname !== `/chats/${peer.id}`) navigate(`/chats/${peer.id}`);
   };
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-[rgb(6_8_22/0.62)] p-4 backdrop-blur-[6px] sm:items-center">
@@ -247,7 +252,7 @@ function CallBar() {
       <button
         type="button"
         onClick={() => {
-          navigate(`/chats/${peer.id}`);
+          if (window.location.pathname !== `/chats/${peer.id}`) navigate(`/chats/${peer.id}`);
           if (videoActive) setMinimized(false);
         }}
         aria-label={videoActive ? `Show video with ${peer.name}` : `Open chat with ${peer.name}`}
@@ -291,6 +296,8 @@ export function CallStage() {
   const openDevices = useUi((s) => s.setDevicesOpen);
   const videoActive = useVideoActive();
   const status = useCallStatus();
+  // Back shrinks the video to the call bar rather than changing the screen hidden behind it.
+  useBackClose(LIVE_PHASES.includes(phase) && !!peer && videoActive && !minimized, () => setMinimized(true));
 
   if (!LIVE_PHASES.includes(phase) || !peer || !videoActive || minimized) return null;
   const remoteVideo = peerCameraOn && phase !== 'outgoing' && remoteStream?.getVideoTracks().length ? remoteStream : null;

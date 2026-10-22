@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate } from 'react-router';
+import { leaveGone } from '../lib/back';
 import { Camera } from 'lucide-react';
 import { errorMessage } from '../lib/api';
 import type { RoomDetail } from '../lib/types';
@@ -56,7 +57,7 @@ export function RoomSettingsDialog({ room, open, onClose, isOwner }: { room: Roo
     try {
       await deleteRoom(room.id);
       onClose();
-      navigate('/rooms', { replace: true });
+      leaveGone(navigate, '/rooms');
       toast(`${room.name} was deleted.`);
     } catch (err) {
       setError(errorMessage(err));

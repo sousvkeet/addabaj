@@ -25,6 +25,7 @@ export type Overview = {
 };
 
 export type AdminUser = User & {
+  email: string;
   createdAt: string;
   siteAdmin: boolean;
   disabled: boolean;

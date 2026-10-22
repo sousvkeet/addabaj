@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { one, query } from '../db.js';
-import { presence } from '../realtime.js';
+import { getIO, presence, userChannel } from '../realtime.js';
 import { hidesPresence } from './privacy.js';
 
 export const USER_COLUMNS = 'id, email, handle, name, avatar_hue, photo, last_seen_at';
@@ -23,7 +23,6 @@ export function publicUser(row, viewerId) {
   const hidden = hidesPresence(row.id) || (viewerId && viewerId !== row.id && hidesPresence(viewerId));
   return {
     id: row.id,
-    email: row.email,
     handle: row.handle ?? null,
     name: row.name,
     hue: row.avatar_hue,
@@ -46,6 +45,7 @@ export function sessionUser(row) {
   const siteAdmin = row.site_role === 'admin';
   return {
     ...publicUser({ ...row }),
+    email: row.email,
     online: true,
     lastSeenAt: row.last_seen_at,
     presenceHidden: undefined,
@@ -87,4 +87,19 @@ export async function contactIds(userId) {
     [userId],
   );
   return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Tells everyone who can see this person (their contacts and their own apps)
+ * what changed about them, and updates what their live connections send with
+ * their messages and calls.
+ */
+export async function announceProfile(userId, fields) {
+  const io = getIO();
+  if (!io) return;
+  for (const socket of io.of('/').sockets.values()) {
+    if (socket.data.userId === userId && socket.data.user) Object.assign(socket.data.user, fields);
+  }
+  const channels = [userId, ...(await contactIds(userId))].map(userChannel);
+  io.to(channels).emit('user:updated', { user: { id: userId, ...fields } });
 }

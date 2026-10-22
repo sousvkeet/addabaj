@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
+import { leaveGone } from '../lib/back';
 import { ArrowLeft, Camera, Crown, LogOut, MessageCircle, Settings, ShieldCheck, UserMinus, UserPlus, X } from 'lucide-react';
 import { errorMessage } from '../lib/api';
 import { lastSeen } from '../lib/format';
@@ -223,7 +224,7 @@ export function RoomPanel({ room, onClose, addOpen, setAddOpen }: Props) {
               onClick={() =>
                 void run(async () => {
                   await leaveRoom(room.id);
-                  navigate('/rooms', { replace: true });
+                  leaveGone(navigate, '/rooms');
                 }, `You left ${room.name}.`)
               }
             >

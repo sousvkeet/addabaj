@@ -81,6 +81,11 @@ export function ChatView() {
     [page?.items, me, partner],
   );
 
+  // A message taken back while it's being replied to: the reply goes too.
+  useEffect(() => {
+    if (replyTo && items.some((m) => m.id === replyTo.id && m.deleted)) setReplyTo(null);
+  }, [items, replyTo]);
+
   if (userId === me?.id) return <Navigate to="/chats" replace />;
 
   const name = partner?.name ?? '…';

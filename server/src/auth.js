@@ -48,7 +48,14 @@ export async function adoptLogin(req, res, userId) {
     adopting.set(token, pending);
     setTimeout(() => adopting.delete(token), 60_000);
   }
-  const sessionId = await pending;
+  let sessionId;
+  try {
+    sessionId = await pending;
+  } catch (err) {
+    // The account is gone (removed by the host).
+    if (err.code === '23503') throw new AppError(401, 'Log in to continue.');
+    throw err;
+  }
   setAuthCookie(res, userId, sessionId);
   return sessionId;
 }

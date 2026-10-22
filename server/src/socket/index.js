@@ -19,8 +19,10 @@ import { registerWatch } from './watch.js';
 const canReact = rateLimiter(30, 10_000);
 const canDelete = rateLimiter(30, 10_000);
 
-// One emoji (with skin tone / joiner / variation parts), nothing else.
-const EMOJI = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\u200d|\ufe0f)+$/u;
+// One emoji, nothing else: a picture (with skin tones, joiners and variation
+// parts), a flag, or a keycap like 1️⃣ (but not plain digits, # or *).
+const PICTURE = String.raw`\p{Extended_Pictographic}[\p{Emoji_Modifier}\ufe0f\u{e0020}-\u{e007f}]*`;
+const EMOJI = new RegExp(String.raw`^(?:${PICTURE}(?:\u200d${PICTURE})*|\p{Regional_Indicator}{2}|[0-9#*]\ufe0f?\u20e3)$`, 'u');
 
 export function initSocket(io) {
   io.use(async (socket, next) => {
@@ -31,7 +33,7 @@ export function initSocket(io) {
     // Which device (Settings › Devices), so logging it out also closes this connection.
     socket.data.sid = login.sessionId;
     touchSession(login.sessionId, null);
-    socket.data.user = { id: user.id, name: user.name, email: user.email, hue: user.hue, photo: user.photo };
+    socket.data.user = { id: user.id, name: user.name, hue: user.hue, photo: user.photo };
     next();
   });
 

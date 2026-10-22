@@ -101,11 +101,23 @@ let shaped = false;
  * room): put the chats underneath it, so Back reaches the home screen before
  * leaving the app.
  */
-export async function homeUnderneath(navigate: NavigateFunction, path: string) {
+export async function homeUnderneath(navigate: NavigateFunction, path: string, state?: unknown) {
   // Once per page load (React may run the opening effect twice).
   if (shaped) return;
   shaped = true;
   if (!inApp || historyIndex() > 0 || path === HOME || !/^\/(chats|rooms|invites|settings|admin)\b/.test(path)) return;
   await navigate(HOME, { replace: true });
-  await navigate(path);
+  // With what came with it (a /join link's code).
+  await navigate(path, { state });
+}
+
+/**
+ * Leaves a screen that's gone (a room just left or deleted): back past it,
+ * and its info page if open, to where it was opened from, so Back doesn't
+ * lead to it again; or on to `fallback` when it was the first screen.
+ */
+export function leaveGone(navigate: NavigateFunction, fallback: string) {
+  const steps = window.location.hash === '#info' ? 2 : 1;
+  if (historyIndex() >= steps) void navigate(-steps);
+  else void navigate(fallback, { replace: true });
 }
