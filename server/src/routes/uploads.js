@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { AppError } from '../errors.js';
+import { AppError, notFound } from '../errors.js';
+import { hasThumb, sendThumb, thumbFor, thumbSize } from '../services/thumbs.js';
 import { fileFor, saveUpload, sendFile } from '../services/uploads.js';
 
 export const uploadsRouter = Router();
@@ -29,6 +30,17 @@ uploadsRouter.post('/', async (req, res) => {
   res.status(201).json({ attachment });
 });
 
+// ?thumb=<size>: a small copy of a photo, or a video's picture, for chat bubbles (services/thumbs.js).
 filesRouter.get('/:id', async (req, res) => {
-  sendFile(req, res, await fileFor(req.params.id, req.userId));
+  const file = await fileFor(req.params.id, req.userId);
+  if (req.query.thumb !== undefined && req.query.download === undefined && hasThumb(file.row)) {
+    const size = thumbSize(req.query.thumb);
+    const thumb = await thumbFor(file, size);
+    if (thumb) return sendThumb(res, thumb);
+    // Without FFmpeg a photo for a bubble is sent whole. A video has no picture, and a photo
+    // no blurred placeholder (a phone asks for one to save data, not to get the whole photo).
+    if (file.row.kind === 'video') throw notFound('This video has no picture.');
+    if (size < 320) throw notFound('This photo has no small copy.');
+  }
+  sendFile(req, res, file);
 });

@@ -1,0 +1,137 @@
+# Adda Khana for Android (native)
+
+The Android app, written natively in Kotlin with Jetpack Compose. It replaces the WebView app in [`../android`](../android): it has the same package (`com.addakhana.app`) and the same signing key, so phones get it as an ordinary update from **Admin › App updates**, and people stay signed in across it.
+
+Why native: a web page in a WebView is frozen by Android once it's out of sight and quiet for a minute (WebView 149 on). Room voice and calls then dropped a minute or two after leaving the app or locking the phone. WhatsApp and Telegram don't have this problem because nothing of theirs runs in a web page. This app is built the same way: the connection to the server, calls, room voice and their sound are all native, in a foreground service, and nothing waits on a page.
+
+## What it does
+
+Everything the web app does, natively:
+
+- **Chats and rooms.**
+  - Chats, rooms and invites.
+  - Replies, edits, deletes, forwards, reactions, mentions and link cards.
+  - Photos, files, and voice messages.
+  - Read receipts and "Seen by", typing, presence and last seen.
+  - Mute, pin and archive.
+  - Blocking and reports.
+  - Room admin: passwords, invite codes, roles, voice and camera moderation, and chat history clearing (presets or a custom time).
+- **Calls ring like phone calls.**
+  - A call rings the phone even when the app is closed or killed (a high-priority push), as a call notification with Answer and Decline.
+  - On a locked phone the call screen lights up over the lock screen. Answering there connects at once, without unlocking; unlocking only opens the rest of the app.
+  - Calls you didn't answer leave a missed-call notification.
+- **Room voice, calls and live streams keep going out of sight.**
+  - This covers the app in the background, the screen off, and the app swiped away from Recents.
+  - It runs as a foreground service (microphone, camera, media playback or screen capture, as needed), with the processor and Wi-Fi kept awake and a notification with Mute and Leave.
+  - The app keeps its connection to the server only while something needs it: the app on screen, a call, room voice, or a ringing call. Otherwise it lets go after 5 seconds, so the server sends notifications instead.
+- **Video calls float** in picture-in-picture when you leave the app, with Mute and Hang up.
+- **Watch together.**
+  - Files and streams play in ExoPlayer. YouTube plays in YouTube's own player, the only one apps may use.
+  - Everyone stays in sync with the room's timeline, and admins drive play, pause and seeking.
+  - Up next and the admin's "find videos at a link" work as on the web.
+  - The video carries on in a small player around the app, and full screen turns the phone sideways.
+  - A file's sound keeps playing in the background. YouTube stops there, as YouTube requires, and catches up when you're back.
+- **Live streams.**
+  - Watch a stream from a phone or computer.
+  - Stream your screen (the picture), or a video file playing on the phone, with its sound. The film's sound goes out in place of the microphone's.
+- **Audio and video settings** (Settings, and the call screens):
+  - where calls sound (earpiece, loudspeaker, Bluetooth, headphones), with a test sound
+  - a microphone level meter
+  - which camera calls start with, with a preview
+- **Uses little data, like WhatsApp** (**You › Storage and data**):
+  - **Calls:** voices send next to nothing while nobody speaks, always. **Use less data for calls** (*Off*, *On mobile data* by default, or *Always*) also caps voices at 20 kbit/s, and video at about 450 kbit/s and 20 frames a second in calls and 480p in rooms. It asks the other side to send less too, and films in watch together stop at 480p.
+  - **Media auto-download**, chosen separately for mobile data, Wi-Fi and roaming: by default photos on mobile data, everything on Wi-Fi, nothing when roaming. Chats show the server's small copies (a photo bubble is about 30 KB). Anything not downloaded shows blurred with its size, and downloads on a tap. Voice messages and videos up to 25 MB download ahead where allowed, so they play at once.
+  - **Media upload quality:** *Standard* sends photos at up to 1600 px, and videos at 720p and about 2 Mbit/s (shrunk on the phone, with the progress shown). *HD* sends photos at up to 4096 px, and videos as they are, within the size limit.
+  - What you send stays on the phone, so it never downloads back. **Network usage** counts what calls, media and messages sent and received, on mobile data and Wi-Fi, and **Clear** frees what's kept on the phone.
+- **Updates from your own server.** A newer version from Admin › App updates downloads with a progress bar, is checked against its SHA-256, and opens Android's installer.
+- **Offline.**
+  - Recent chats are kept on the phone.
+  - Messages written offline wait and send themselves in order when the connection is back.
+- **Site admin** (host admins): overview, people, rooms, reports, site and message settings, email, and app updates.
+
+Works on Android 7.0 and newer (API 24+), targets Android 16 (API 36).
+
+## How it's built
+
+- `Graph` holds what lives as long as the app's process: the cookie jar and HTTP client, the live connection, and the stores.
+- **`net/`**
+  - `Api` is the REST API.
+  - `Realtime` is a small Socket.IO v4 client over OkHttp's WebSocket: Engine.IO 4, websocket transport, with heartbeats, a watchdog and reconnection.
+- **`data/`** has the chats store (a port of the web app's `store/chat.ts`), auth, site settings, media, permissions, updates and device settings.
+- **`call/`**
+  - `CallStore` handles one-to-one calls and `VoiceStore` handles room voice: WebRTC mesh with the web app's signalling and repair rules.
+  - `CallService` is the foreground service: audio mode and routing, proximity, and wake locks.
+  - `IncomingCallActivity` is the lock-screen call screen.
+- **`watch/`**
+  - `WatchStore` keeps watch together in sync, with `Players` (ExoPlayer, YouTube).
+  - `LiveStore` handles live streams. `FileSound` copies a file's sound into WebRTC's recording.
+- **`push/`** has Firebase messages, notifications (the same channels as the WebView app), and ringing.
+- **`ui/`** is Compose: one activity, a small back stack (`Nav`), and the web app's design tokens (`ui/theme`).
+
+Libraries (each at least two weeks old when chosen):
+
+- Compose BOM 2026.06.01
+- OkHttp 5.4
+- kotlinx.serialization 1.11
+- Media3 1.10.1
+- Coil 3.5
+- WebRTC (`io.github.webrtc-sdk:android`) 144.7559.15
+- Firebase BOM 34.19
+
+## Notifications (Firebase)
+
+The same Firebase project as the WebView app: the build reads `../android/app/google-services.json` (see [its README](../android/README.md#turning-on-notifications-firebase)). Without it the app works, but doesn't notify or ring while closed.
+
+## Build
+
+Needs JDK 17 or newer and the Android SDK (platform 36). Set `sdk.dir` in `local.properties` or `ANDROID_HOME`.
+
+```bash
+cd android-native
+./gradlew assembleRelease
+# → app/build/outputs/apk/release/app-release.apk
+```
+
+The server is `addaUrl` in `gradle.properties`; `-PaddaUrl=https://your-server.example` builds for another.
+
+Release builds are shrunk (R8) and carry only the ARM code real phones use. The keep rules for WebRTC, whose native code finds its Java classes by name, are in `app/proguard-rules.pro`.
+
+## Signing
+
+Release builds are signed with the WebView app's key, named in `../android/keystore.properties` (see [its README](../android/README.md#signing)). It must be that key: phones only install an update signed like the app they have. Without the file, release builds come out unsigned.
+
+## Publishing a release
+
+1. Raise `versionCode` and `versionName` in `app/build.gradle.kts`. The first native version must be above the WebView app's last (16).
+2. Build and check the signature:
+
+   ```bash
+   ./gradlew clean assembleRelease
+   apksigner verify --print-certs app/build/outputs/apk/release/app-release.apk
+   mkdir -p dist && cp app/build/outputs/apk/release/app-release.apk dist/AddaKhana-<version>.apk
+   ```
+
+3. Upload it in **Admin › App updates** (in the app, or on the site) and publish it on GitHub, as in the [WebView app's steps](../android/README.md#publishing-a-release). `dist/` is ignored by git.
+
+People updating from the WebView app stay signed in: on first start the app takes over the login kept by the old app's web view.
+
+## Testing on an emulator
+
+Debug builds install beside the release app as `com.addakhana.app.dev` ("Adda Khana Dev"), can use a server on your computer, and accept pretend pushes over adb:
+
+```bash
+./gradlew installDebug -PaddaDebugUrl=http://localhost:4080
+adb reverse tcp:4080 tcp:4080
+# a pretend call push:
+adb shell am broadcast -n com.addakhana.app.dev/com.addakhana.app.push.DebugPushReceiver --es data \
+  "'{\"type\":\"call\",\"callId\":\"<id>\",\"callerId\":\"<user id>\",\"callerName\":\"Ana\",\"video\":\"0\"}'"
+```
+
+On an emulator, video decoding and encoding are in software, so YouTube and live streams run at a few frames a second. Phones do it in hardware.
+
+## Limits
+
+- **Phones that stop background apps** (Xiaomi, Huawei, OPPO, Vivo, and Samsung's sleeping apps): the first-start screen offers the settings that let calls ring and voice stay on.
+- **Screen sharing** sends the picture, not the phone's sound.
+- **A video file's sound in a live stream** goes out through WebRTC's recording. So it needs the microphone permission (the microphone's own sound is replaced, not sent), and it can't play while you're in a call or room voice.
+- **Updates** need one tap on Android's installer.

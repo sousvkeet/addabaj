@@ -90,7 +90,7 @@ createdb adda_khana                   # the tables are created on first start
 
 npm install
 npm run setup:yt-dlp                  # optional: finds videos on about 1,800 sites
-npm run setup:ffmpeg                  # optional: joins sites' separate picture and sound (about 160 MB)
+npm run setup:ffmpeg                  # optional: small copies of photos for chats, and joining sites' separate picture and sound (about 160 MB)
 npx playwright install chromium       # optional: the deep scan for JavaScript video players
 
 npm run dev
@@ -130,6 +130,7 @@ To try calls by yourself, open a second browser profile or an incognito window a
 - **Photos, files and voice messages** (in rooms too):
   - Attach with the paperclip, paste a picture, or drag files onto the chat. Send up to 10 at once; the caption goes with the first.
   - Photos are shrunk to 2048 px on the long side before sending, which also strips hidden details such as where they were taken. Tap a photo to see it full screen and download it.
+  - **Less data in chats:** a photo shows as a small copy the server makes (about 30 KB, instead of the whole photo), and a video shows its picture and downloads nothing until it's played. The server makes these with FFmpeg (`npm run setup:ffmpeg`), the first time each is asked for. Without FFmpeg, photos load whole and videos show no picture.
   - Videos play in the chat. Other files show as a card with a download button.
   - Tap the microphone to record a voice message (up to 5 minutes), then send or discard it. Voice messages show a waveform you can tap to jump around, and play at 1×, 1.5× or 2×.
   - Upload progress shows on the message, and a failed send can be retried without picking the file again.
@@ -437,6 +438,8 @@ server {
 
 `android/` holds a native app that opens the production site full screen and adds what a messenger needs on a phone. Because the app shows the live site, server updates reach it without a new APK.
 
+**App 2.0.0 is fully native** ([`android-native/`](android-native/README.md), Kotlin and Jetpack Compose), built like WhatsApp and Telegram so room voice and calls never depend on a web page that Android can freeze. It also uses far less data (see its README). It's the same app to Android (same package and signing key), so it installs over 1.x and keeps you signed in. What follows describes the WebView app (1.x).
+
 **Install:** download `AddaKhana-<version>.apk` from the [latest release](https://github.com/sousvkeet/addabaj/releases/latest) on an Android phone (Android 7.0 or newer), open it, and allow installing from your browser or file manager when Android asks. After that, the app offers new versions itself (see [App updates](#app-updates)); they install over the old version, keeping you signed in. The released APK opens `https://adda-api.clix.dpdns.org`; to use your own server, build the app yourself (below).
 
 - **Asks for what it needs on first start** (app 1.10.0 on). **Before you start** lists notifications, the microphone, the camera, ringing over the lock screen (Android 14 and newer) and running in the background, each with what it's for. From app 1.11.0 it also shows **Background activity** (when Android restricts the app in the background, as "Restricted" battery use does), and on Samsung phones **Never sleeping**, which opens Samsung's battery settings to add Adda Khana to *Never sleeping apps*: otherwise Samsung's battery saving can stop messages and room voice once you leave the app. After updating, it shows once more if either is off. **Allow** brings up Android's own prompts for the first three in one go; the next taps open the lock-screen setting, then Android's "Let app always run in background?". **Not now** (or Back) leaves the rest for **Settings › App permissions**, which shows what's off and allows it later, opening the phone's settings for anything refused twice. It doesn't come back by itself, and updating from an older version shows it once only if something is off.
@@ -500,7 +503,7 @@ Apps from before 1.4.0 can't install updates themselves: they're offered the upd
 | `npm run db:migrate` | Applies the database schema (also done on every start) |
 | `npm run setup:yt-dlp` | Downloads yt-dlp to `server/bin/` and checks its checksum. Re-run now and then; sites change. |
 | `npm run setup` | All three video tools at once: yt-dlp, FFmpeg and the background browser |
-| `npm run setup:ffmpeg` | Downloads a static FFmpeg to `server/bin/` and checks its checksum |
+| `npm run setup:ffmpeg` | Downloads a static FFmpeg to `server/bin/` and checks its checksum (for chat previews of photos and videos, and joining picture and sound) |
 | `npm run setup:browser` | Installs the background browser Find videos uses (Chromium's headless shell, via Playwright) |
 | `npm run admin:reset` | Puts the host admin login back to `ADMIN_USERNAME` / `ADMIN_PASSWORD` (or `admin` / `admin`) |
 | `npm run test:*` | Browser tests, see below |
@@ -512,7 +515,7 @@ The tests drive real browsers with Playwright. Start `npm run dev` first, and ru
 | Command | What it checks |
 |---|---|
 | `npm run test:e2e` | Sign-up and login errors; chat with typing and read ticks; voice calls with mute, hang-up and decline; a video call with real frames both ways, camera off/on and switching microphone mid-call; rooms with add, invite and the member limit; three-way room voice; room video (cameras turned on from Room info and from the call's window and seen by everyone, including on a phone; a person shown large getting the full-size camera while a phone's small tile gets a smaller one; a shrunk window receiving no video at all, and getting it back; cameras off closing the window); removing a member; the themes. It also checks the TURN relay with a relay-only connection. |
-| `npm run test:attachments` | A large photo shrunk and delivered live; a file that only downloads; video in the chat; paste and drag; voice messages; replies and reactions; retrying a failed upload; the size limit; history after reload; files private to their chat or room; the phone's press-and-hold menu. |
+| `npm run test:attachments` | A large photo shrunk and delivered live, shown in the chat as its small copy; a file that only downloads; video in the chat, showing its picture and loading nothing until played; paste and drag; voice messages; replies and reactions; retrying a failed upload; the size limit; history after reload; files and their small copies private to their chat or room; the phone's press-and-hold menu. |
 | `npm run test:watch` | Admin-only control; play, pause and seek in sync; drift correction; late joiners; YouTube in its player and through the server; finding videos on real pages (Wikimedia Commons, a JavaScript player, Bilibili's separate picture and sound); relay fallback; clear refusals for DRM, pages without video and private addresses; an admin's phone pausing the video out of sight not stopping the room (nor pulling it back after); the small player that keeps it going away from the room; and in the app the sound going on out of sight and the picture picking up after; Up next (a queued video playing by itself for everyone when the current one ends, members seeing it but unable to change it or skip, a YouTube playlist added with one tap and Next moving on to it, and members never seeing the links behind it); an admin muting the video for everyone (every player going quiet, members unable to turn it back on, the next video and a late joiner muted too without a tap, unmuting bringing back everyone's own sound, and stopping ending it). Needs internet. |
 | `npm run test:find` | Offline: video lengths (MP4, WebM, streams, live), preview clips next to the real video, downloads in small pieces, sites that limit each connection or allow only one, jumps ahead, and joining picture and sound with FFmpeg. Ad blocking: an ad-heavy page with a pre-roll ad and a click-hijacking layer still finds the movie, the filter lists tell ads from videos, and ad breaks are cut from finished streams. |
 | `npm run test:live` | Streaming a file from a device to a computer and a phone with stereo sound; a movie with Dolby Digital 5.1 sound converted in the host's browser and heard by viewers, in sync after a jump; pause and seek for viewers; an admin muting the stream for everyone, the host's own file included, with everyone's own sound back after; the host browsing away; a viewer reloading; a short connection drop; screen sharing in full sharpness; stopping, refusing members, closing the tab, and timing out. |
@@ -567,6 +570,7 @@ client/src/
 client/public/sw.js     Keeps the page on the device, so the app opens at once and offline
 tests/                  Playwright browser tests and their video clips
 android/                The Android app: the site in a WebView, plus notifications, ringing, background calls, screen sharing and updates
+android-native/         The native Android app (2.0.0 on): Kotlin and Jetpack Compose, the same package and signing key
 docs/                   The logo and README screenshots
 ```
 

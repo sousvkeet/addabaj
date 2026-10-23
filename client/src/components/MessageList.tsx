@@ -755,11 +755,13 @@ function AttachmentView({ attachment: a, mine, upload, onView }: { attachment: A
     </div>
   );
 
+  // In the chat, a small copy the server makes (the photo itself opens full size); one still sending is local.
+  const small = a.url.startsWith('/api/files/') ? `${a.url}?thumb=640` : a.url;
   if (a.kind === 'image') {
     return (
       <div className="relative">
         <button type="button" onClick={() => onView(a)} aria-label={`Open photo ${a.name}`} className="block">
-          <img src={a.url} alt={a.name} loading="lazy" style={boxFor(a)} className="rounded-[14px] bg-black/10 object-cover" />
+          <img src={small} alt={a.name} loading="lazy" style={boxFor(a)} className="rounded-[14px] bg-black/10 object-cover" />
         </button>
         {uploading}
       </div>
@@ -768,7 +770,8 @@ function AttachmentView({ attachment: a, mine, upload, onView }: { attachment: A
   if (a.kind === 'video') {
     return (
       <div className="relative">
-        <video src={a.url} controls preload="metadata" playsInline style={boxFor(a)} className="rounded-[14px] bg-black" />
+        {/* Its picture until it's played: nothing of the video itself downloads before then. */}
+        <video src={a.url} poster={small !== a.url ? small : undefined} controls preload={small !== a.url ? 'none' : 'metadata'} playsInline style={boxFor(a)} className="rounded-[14px] bg-black" />
         {uploading}
       </div>
     );

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Debug builds only: pretend pushes over adb (see DebugPushReceiver). -->
+        <receiver
+            android:name="com.addakhana.app.push.DebugPushReceiver"
+            android:exported="true" />
+    </application>
+</manifest>
