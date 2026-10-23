@@ -65,6 +65,10 @@ type ChatState = {
   deleteMessage: (scope: 'dm' | 'room', chatId: string, messageId: number, forEveryone: boolean) => Promise<boolean>;
   applyDeleted: (e: { scope: 'dm' | 'room'; messageId: number; deletedAt: string; between?: string[]; roomId?: string; byAdmin?: boolean }) => void;
   applyHidden: (e: { scope: 'dm' | 'room'; messageId: number; chatId: string }) => void;
+  /** Clears my chat with someone (as Telegram's Clear history): for me, or for both of us. */
+  clearDm: (partnerId: string, everyone: boolean) => Promise<void>;
+  /** A chat cleared (here, on another device, or by them for both of us): its messages up to `upTo` go. */
+  applyDmCleared: (e: { chatId: string; upTo: number | null; clearedAt: string }) => void;
   receiveRoomMessage: (message: RoomMessage) => void;
   markRoomRead: (roomId: string) => void;
   /** My notifications for a room: off for 8 hours, a week, for good, or back on. */
@@ -1052,6 +1056,24 @@ export const useChat = create<ChatState>()((set, get) => ({
       });
     }
   },
+
+  clearDm: async (partnerId, everyone) => {
+    const res = await api<{ upTo: number | null; clearedAt: string }>(`/dms/${partnerId}/clear`, { method: 'POST', body: { everyone } });
+    get().applyDmCleared({ chatId: partnerId, ...res });
+  },
+
+  applyDmCleared: ({ chatId, upTo, clearedAt }) =>
+    set((s) => {
+      // What's still sending, or came after, stays.
+      const stays = (m: DmMessage) => !!m.tempId || upTo === null || m.id > upTo;
+      const page = s.dms[chatId];
+      const conv = s.conversations[chatId];
+      const last = conv?.lastMessage && stays(conv.lastMessage) ? conv.lastMessage : null;
+      return {
+        dms: page ? { ...s.dms, [chatId]: { ...page, items: page.items.filter(stays), hasMore: upTo === null ? page.hasMore : false } } : s.dms,
+        conversations: conv ? { ...s.conversations, [chatId]: { ...conv, lastMessage: last, unread: last ? conv.unread : 0, clearedAt } } : s.conversations,
+      };
+    }),
 
   applyHidden: ({ scope, messageId, chatId }) => {
     if (scope === 'dm') {

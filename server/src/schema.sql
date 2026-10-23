@@ -405,3 +405,8 @@ CREATE INDEX IF NOT EXISTS room_messages_room_time_idx ON room_messages (room_id
 -- until an admin lets them (also after leaving voice and coming back).
 ALTER TABLE room_members ADD COLUMN IF NOT EXISTS voice_muted boolean NOT NULL DEFAULT false;
 ALTER TABLE room_members ADD COLUMN IF NOT EXISTS camera_blocked boolean NOT NULL DEFAULT false;
+
+-- A chat with someone, cleared (Clear chat history): when, for whoever it was
+-- cleared for (me only, or both of us). The chat stays in their list, empty,
+-- until the next message.
+ALTER TABLE dm_settings ADD COLUMN IF NOT EXISTS cleared_at timestamptz;

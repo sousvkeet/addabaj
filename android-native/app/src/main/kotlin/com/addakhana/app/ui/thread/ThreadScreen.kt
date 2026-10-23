@@ -156,6 +156,10 @@ fun ChatScreen(partnerId: String) {
                             co.launch { runCatching { Graph.chat.setChatSettings(Scope.Dm, partnerId, archived = conv.archivedAt == null) } }
                         })
                     }
+                    // Something to clear.
+                    if (conv?.lastMessage != null) {
+                        DropdownMenuItem(text = { Text("Clear chat history", color = p.ink) }, onClick = { menu = false; dialog = "clear" })
+                    }
                     if (partner != null) {
                         DropdownMenuItem(text = { Text(if (blocked) "Unblock ${partner.name}" else "Block ${partner.name}", color = p.danger) }, onClick = {
                             menu = false
@@ -199,6 +203,7 @@ fun ChatScreen(partnerId: String) {
             onDismiss = { dialog = null },
         )
         "report" -> ReportDialog("user", partnerId, partner?.name ?: "them", null) { dialog = null }
+        "clear" -> ClearChatDialog(partnerId, partner?.name ?: "them") { dialog = null }
     }
 }
 

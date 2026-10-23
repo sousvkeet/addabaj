@@ -84,10 +84,10 @@ fun ChatsTab() {
     val me = Graph.auth.user?.id
     androidx.activity.compose.BackHandler(archived) { archived = false }
 
-    val all = state.conversations.values.filter { it.lastMessage != null }
+    val all = state.conversations.values.filter { it.lastMessage != null || it.clearedAt != null }
     val shown = if (query.isNotBlank()) all.filter { it.partner.name.contains(query.trim(), ignoreCase = true) }
     else all.filter { (it.archivedAt != null) == archived }
-    val list = ordered(shown, { it.pinnedAt }, { it.lastMessage?.createdAt.orEmpty() })
+    val list = ordered(shown, { it.pinnedAt }, { it.lastMessage?.createdAt ?: it.clearedAt.orEmpty() })
     val archive = all.filter { it.archivedAt != null }
 
     Box(Modifier.fillMaxSize()) {
@@ -203,7 +203,7 @@ fun ChatRow(c: Conversation, typing: Boolean, online: Boolean, me: String?, onCl
                 }
                 Spacer(Modifier.weight(1f))
                 Text(
-                    listStamp(last?.createdAt),
+                    listStamp(last?.createdAt ?: c.clearedAt),
                     color = if (unread) (if (p.dark) p.live else p.brand) else p.inkSoft,
                     fontSize = 12.sp,
                     fontWeight = if (unread) FontWeight.SemiBold else FontWeight.Normal,
@@ -211,7 +211,10 @@ fun ChatRow(c: Conversation, typing: Boolean, online: Boolean, me: String?, onCl
             }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) { Preview(last, typing, me) }
+                Box(Modifier.weight(1f)) {
+                    if (last == null && !typing && c.clearedAt != null) Text("History cleared", color = p.inkSoft, fontSize = 14.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, maxLines = 1)
+                    else Preview(last, typing, me)
+                }
                 if (c.pinnedAt != null) {
                     Icon(Icons.Rounded.PushPin, "Pinned", tint = p.inkSoft, modifier = Modifier.size(15.dp).rotate(45f))
                     Spacer(Modifier.width(6.dp))

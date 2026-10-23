@@ -18,7 +18,7 @@ export function ChatList() {
   const [picking, setPicking] = useState(false);
   const [archive, setArchive] = useState(false);
 
-  const all = useMemo(() => Object.values(conversations).filter((c) => c.lastMessage), [conversations]);
+  const all = useMemo(() => Object.values(conversations).filter((c) => c.lastMessage || c.clearedAt), [conversations]);
   const archived = all.filter((c) => c.archivedAt);
   // The last one brought back: back to the list.
   useEffect(() => {
@@ -31,7 +31,7 @@ export function ChatList() {
     () =>
       ordered(
         all.filter((c) => (showing === 'search' ? c.partner.name.toLowerCase().includes(f) : showing === 'archive' ? c.archivedAt : !c.archivedAt)),
-        (c) => c.lastMessage?.createdAt ?? '',
+        (c) => c.lastMessage?.createdAt ?? c.clearedAt ?? '',
       ),
     [all, f, showing],
   );
@@ -85,8 +85,8 @@ function ChatRow({ conversation: c }: { conversation: Conversation }) {
   const isTyping = useChat((s) => !!s.dmTyping[partner.id]);
   const me = useAuth((s) => s.user);
   const menu = useRowMenu('dm', partner.id, partner.name, c);
-  const m = c.lastMessage!;
-  const mine = m.senderId === me?.id;
+  const m = c.lastMessage;
+  const mine = m?.senderId === me?.id;
   const muted = isMuted(c);
   return (
     <li className="group relative">
@@ -101,12 +101,14 @@ function ChatRow({ conversation: c }: { conversation: Conversation }) {
           <span className="flex items-baseline gap-2">
             <span className="truncate font-semibold">{partner.name}</span>
             {muted && <BellOff size={14} className="shrink-0 self-center text-ink-soft" role="img" aria-label="Muted" />}
-            <span className={`ml-auto shrink-0 text-[12px] ${ROW_TIME_HIDES} ${unread && !muted ? 'font-semibold text-brand dark:text-live' : 'text-ink-soft'}`}>{listStamp(m.createdAt)}</span>
+            <span className={`ml-auto shrink-0 text-[12px] ${ROW_TIME_HIDES} ${unread && !muted ? 'font-semibold text-brand dark:text-live' : 'text-ink-soft'}`}>{listStamp(m?.createdAt ?? c.clearedAt ?? '')}</span>
           </span>
           <span className="flex items-center gap-2">
             <span className={`flex min-w-0 flex-1 items-center gap-1 truncate text-[14px] ${unread && !muted ? 'font-medium text-ink' : 'text-ink-soft'}`}>
               {isTyping ? (
                 <span className="text-brand dark:text-live">typing…</span>
+              ) : !m ? (
+                <span className="truncate italic">History cleared</span>
               ) : m.kind === 'call' ? (
                 <>
                   {m.meta?.outcome !== 'completed' ? (

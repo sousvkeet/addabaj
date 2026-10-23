@@ -253,6 +253,40 @@ fun ReportDialog(scope: String, targetId: String?, targetName: String, messageId
     }
 }
 
+/** "Clear chat history?" (as Telegram's): for me, or with "Also clear for them", for both of us. */
+@Composable
+fun ClearChatDialog(partnerId: String, name: String, onDismiss: () -> Unit) {
+    val p = palette
+    var everyone by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    AppDialog(onDismiss, "Clear chat history?", "Every message, photo and file in your chat with $name goes. This can't be undone.", buttons = {
+        AddaButton(if (everyone) "Clear for both of us" else "Clear for me", {
+            busy = true
+            // The app's scope: closing the dialog doesn't stop it.
+            Graph.scope.launch {
+                runCatching { Graph.chat.clearDm(partnerId, everyone) }
+                    .onSuccess {
+                        Toasts.show(if (everyone) "Chat history cleared for you and $name" else "Chat history cleared")
+                        onDismiss()
+                    }
+                    .onFailure {
+                        busy = false
+                        Toasts.error(it.message ?: "Couldn't clear the chat.")
+                    }
+            }
+        }, Modifier.fillMaxWidth(), variant = Variant.Danger, loading = busy)
+        AddaButton("Cancel", onDismiss, Modifier.fillMaxWidth(), variant = Variant.Ghost, enabled = !busy)
+    }) {
+        Row(Modifier.fillMaxWidth().clickable { everyone = !everyone }.padding(bottom = 4.dp), verticalAlignment = Alignment.Top) {
+            Checkbox(everyone, { everyone = it }, colors = CheckboxDefaults.colors(checkedColor = p.brand))
+            Column(Modifier.padding(top = 12.dp)) {
+                Text("Also clear for $name", color = p.ink, fontWeight = FontWeight.SemiBold)
+                Text("The chat empties on both sides, their messages too. Otherwise only you stop seeing it.", color = p.inkSoft, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
 /** Who has read or received one of my messages. */
 @Composable
 fun MessageInfoDialog(m: Message, scope: Scope, chatId: String, onDismiss: () -> Unit) {
