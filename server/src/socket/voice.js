@@ -13,8 +13,12 @@ import { getIO, roomChannel } from '../realtime.js';
 import { calls } from './calls.js';
 import { handle } from './util.js';
 
-/** How long a seat waits for someone whose connection dropped. */
-const AWAY_MS = 45_000;
+/**
+ * How long a seat waits for someone whose connection dropped: long enough for
+ * a phone that held the app back out of sight (some do, for a minute or so)
+ * to come back to the same seat, as in other messengers' group calls.
+ */
+const AWAY_MS = 120_000;
 
 const rooms = new Map(); // roomId -> Map<userId, { socketId, muted, camera, silenced, cameraBlocked, awayTimer }>
 const userRoom = new Map(); // userId -> roomId

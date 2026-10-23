@@ -7,18 +7,23 @@ import android.webkit.WebView;
 import org.json.JSONObject;
 
 /**
- * The app's WebView. While this phone streams a video file live to a room,
- * the page must keep playing that file with the app out of sight, which a
- * WebView doesn't do for a page it thinks is hidden: it pauses the video and
- * won't let it play again, so the stream would stop for everyone. So, only
+ * The app's WebView. While a call, room voice or a live stream from this
+ * phone runs, the page must keep going with the app out of sight, which a
+ * WebView doesn't do for a page it thinks is hidden: current WebViews freeze
+ * a hidden page once it has been silent for a minute, so the server stops
+ * hearing from it and drops the call or the seat; and a hidden page's video
+ * is paused for good, which would stop a stream. So, only
  * then, the WebView isn't told the app went out of sight; the page is told
- * instead (a "sight" event) and acts as it would when hidden.
+ * instead (a "sight" event) and acts as it would when hidden. With the app
+ * closed meanwhile, the page waits in a window of its own (see Backstage).
  */
 final class PageView extends WebView {
-    /** Streaming a file live from this phone (see MainActivity.Bridge.callState). */
+    /** A call, room voice, or a live stream from this phone (see MainActivity.keepsAwake). */
     private boolean awake;
     /** Out of sight, but the WebView wasn't told. */
     private boolean masked;
+    /** In the backstage window: out of sight, whatever that window says. */
+    private boolean backstage;
     private int windowVisibility = View.VISIBLE;
 
     PageView(Context context) {
@@ -27,6 +32,7 @@ final class PageView extends WebView {
 
     @Override
     protected void onWindowVisibilityChanged(int visibility) {
+        if (backstage) visibility = View.GONE;
         windowVisibility = visibility;
         if (awake && visibility != View.VISIBLE) {
             if (!masked) {
@@ -42,7 +48,7 @@ final class PageView extends WebView {
         super.onWindowVisibilityChanged(visibility);
     }
 
-    /** A live file stream from this phone started (or stopped). */
+    /** Something that must keep going out of sight started (or stopped). */
     void keepAwake(boolean on) {
         if (awake == on) return;
         awake = on;
@@ -52,5 +58,13 @@ final class PageView extends WebView {
             MainActivity.send(Push.event("sight").put("visible", JSONObject.NULL));
             super.onWindowVisibilityChanged(windowVisibility);
         }
+    }
+
+    boolean awake() {
+        return awake;
+    }
+
+    void backstage(boolean on) {
+        backstage = on;
     }
 }

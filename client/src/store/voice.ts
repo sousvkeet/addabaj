@@ -44,8 +44,8 @@ const UPLOAD_BUDGET = 4_000_000;
 
 type Signal = { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; view?: View; restart?: boolean };
 
-/** How long the call waits for the connection to come back before giving up (the server keeps the seat about as long). */
-const RECONNECT_MS = 50_000;
+/** How long the call waits for the connection to come back before giving up (just after the server lets the seat go). */
+const RECONNECT_MS = 125_000;
 /** A call connection that's been "disconnected" this long is made again (it rarely comes back by itself after a network change). */
 const STALL_MS = 2500;
 /** At most one fresh connection to the same person this often. */

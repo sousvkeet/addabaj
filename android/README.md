@@ -21,6 +21,9 @@ What the app adds:
 - **Calls keep going in the background.**
   - Calls, room voice (and room video calls, camera included) and live streams keep running with the screen off or another app open. A notification shows the call, its length and a hang-up button.
   - While something runs, `CallService` keeps the processor awake (a partial wake lock, renewed with each update) and Wi-Fi as far as Android lets it (out of power saving before Android 10; low latency since, in front), 1.11.0 on: with the screen off, battery saving would otherwise stall the page and its connection, and the server would let the seat go.
+  - During a call, room voice or a live stream (a file or the screen), the WebView isn't told it's out of sight (`PageView.keepAwake`, `MainActivity.keepsAwake`), 1.12.0 on. Chromium freezes a page it thinks is hidden once it has been silent for a minute (WebView 143 on), and since WebView 149 Android measures whether sound is really audible, so a quiet call counts as silent: the frozen page stopped answering the server's heartbeat, and the server let the seat go a minute or two after you left the app or locked the phone. The page hears it's out of sight from the app instead (a "sight" event), so it still stops asking for video and lets the server push notifications.
+  - If the activity closes meanwhile (the app swiped away in recents), the page, out of any window, would count as hidden again. It waits in a window of its own instead, on a private virtual display that shows nothing anywhere (`Backstage`), drawing nothing, until the app opens again or nothing runs any more.
+  - Room voice keeps a seat for 2 minutes after a connection drops, and the voice panel offers whichever setting would let the phone stop it out of sight (Run in the background, Background activity, Samsung's Never sleeping).
   - **Video calls float over other apps** (1.10.0 on, Android 8+), as in WhatsApp. Leaving the app during a one-to-one video call, or a room's call with a camera on, shrinks it into Android's picture-in-picture window:
     - Leaving means Home, recents, opening another app, or Back from the chats. The page says when a call can float, and in what shape, in its call state (`pip`): the other person's picture as it's decoded, so the window turns with their phone.
     - Android 12+ enters it with the Home gesture's own animation (`setAutoEnterEnabled`); Android 8 to 11 enters from `onUserLeaveHint`, but not for the app's own prompts (permissions, the file picker, screen sharing).
@@ -159,6 +162,14 @@ adb shell am broadcast -n com.addakhana.app/.DebugPushReceiver --es data \
 ```
 
 `npm run test:push` checks the server side of notifications against a fake Firebase.
+
+**Background freezing:** emulator images can ship a WebView older than 149, where a call never freezes out of sight (any sound output counted as audible, even silence), so they can't show what phones do. Install a newer one, such as `SystemWebView.apk` (package `com.android.webview`) from a Chromium `AndroidDesktop_x64` snapshot, and choose it with `adb shell cmd webviewupdate set-webview-implementation com.android.webview`. Desktop builds don't freeze pages unless told to; debug builds read WebView flags from a file, so:
+
+```bash
+adb shell "echo '_ --enable-features=stop-in-background' > /data/local/tmp/webview-command-line"
+```
+
+Then, in a quiet room's voice, leave the app: a page that isn't kept awake gets a `freeze` event a minute after the room went quiet.
 
 **Trying updates with debug builds:** debug builds are signed with your debug key, which the server refuses by default. Set `ANDROID_CERT_SHA256` in `server/.env` to the debug key's fingerprint (`./gradlew signingReport`), clear the uploaded versions in Admin › App updates, install one debug build, then upload a debug build with a higher `versionCode`. `npm run test:updates` checks the server and the update screens (without a phone).
 

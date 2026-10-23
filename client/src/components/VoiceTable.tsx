@@ -1,8 +1,9 @@
 import { useEffect } from 'react';
-import { AudioLines, Headphones, Mic, MicOff, PhoneOff, Video, VideoOff, Volume2 } from 'lucide-react';
+import { AudioLines, BatteryCharging, Headphones, Mic, MicOff, PhoneOff, Video, VideoOff, Volume2 } from 'lucide-react';
 import type { RoomMember, VoiceParticipant } from '../lib/types';
 import { useAuth } from '../store/auth';
 import { useCall } from '../store/call';
+import { usePermissions } from '../store/permissions';
 import { useChat } from '../store/chat';
 import { canPickSpeaker, useDevices } from '../store/devices';
 import { useUi } from '../store/ui';
@@ -14,6 +15,13 @@ import { useCallCameras, useRoomStageOpen } from './RoomCall';
 
 export const VOICE_SEATS = 12;
 const EMPTY: VoiceParticipant[] = [];
+
+/** What's off that lets the phone stop voice once you leave the app, and what allowing it does. */
+const AWAY: { which: 'battery' | 'background' | 'samsung'; text: string; action: string }[] = [
+  { which: 'battery', text: 'Let Adda Khana run in the background, so voice goes on when you leave the app or lock the phone.', action: 'Allow' },
+  { which: 'background', text: 'Android holds Adda Khana back in the background: voice can stop when you leave the app.', action: 'Settings' },
+  { which: 'samsung', text: 'On Samsung phones, add Adda Khana to Never sleeping apps, so voice goes on when you leave the app.', action: 'Open' },
+];
 
 /** The adda table: everyone in voice sits around it; whoever speaks lights up. */
 export function VoiceTable({ roomId, members }: { roomId: string; members: RoomMember[] }) {
@@ -36,6 +44,11 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
   const inCall = useCall((s) => s.phase !== 'idle');
   const meId = useAuth((s) => s.user?.id);
   const openDevices = useUi((s) => s.setDevicesOpen);
+  // The app (1.10.0 on): something off that would let the phone stop voice out of sight.
+  const permissions = usePermissions((s) => s.state);
+  const ask = usePermissions((s) => s.ask);
+  const asking = usePermissions((s) => s.asking);
+  const away = permissions ? AWAY.find((a) => permissions[a.which] && permissions[a.which] !== 'granted' && permissions[a.which] !== 'opened') : undefined;
 
   const here = voiceRoom === roomId && status !== 'idle';
   const byId = new Map(members.map((m) => [m.id, m]));
@@ -148,6 +161,15 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
           </>
         )}
       </div>
+      {here && away && (
+        <div role="note" className="mt-3 flex items-center gap-3 rounded-2xl border border-live/30 bg-live/10 px-3 py-2.5">
+          <BatteryCharging size={18} className="shrink-0 text-live-ink" aria-hidden />
+          <span className="min-w-0 flex-1 text-[13px] leading-snug">{away.text}</span>
+          <Button size="sm" variant="soft" busy={asking === away.which} disabled={!!asking} onClick={() => ask(away.which)}>
+            {away.action}
+          </Button>
+        </div>
+      )}
       {here && status === 'live' && cameras > 0 && !stageOpen && (
         <Button variant="outline" className="mt-2 w-full" onClick={() => setMinimized(false)}>
           <Video size={17} />

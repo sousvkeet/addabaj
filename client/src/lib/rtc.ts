@@ -143,7 +143,9 @@ export const stopStream = (stream: MediaStream | null | undefined) =>
 
 /**
  * Watches a stream's loudness and reports when someone starts or stops
- * speaking. A short hold keeps the ring from flickering between words.
+ * speaking. A short hold keeps the ring from flickering between words. Out
+ * of sight it rests (nobody sees the rings, and the Android app keeps a
+ * call's page running at full speed there).
  */
 export function watchSpeaking(stream: MediaStream, onChange: (speaking: boolean) => void) {
   let ctx: AudioContext;
@@ -159,7 +161,14 @@ export function watchSpeaking(stream: MediaStream, onChange: (speaking: boolean)
   const data = new Uint8Array(analyser.fftSize);
   let speaking = false;
   let quietSince = 0;
-  const id = window.setInterval(() => {
+  let id = 0;
+  const sight = () => {
+    window.clearInterval(id);
+    id = 0;
+    if (!document.hidden) id = window.setInterval(listen, 90);
+    else if (speaking) onChange((speaking = false));
+  };
+  const listen = () => {
     analyser.getByteTimeDomainData(data);
     let sum = 0;
     for (const v of data) {
@@ -175,9 +184,12 @@ export function watchSpeaking(stream: MediaStream, onChange: (speaking: boolean)
       if (!quietSince) quietSince = now;
       else if (now - quietSince > 350) onChange((speaking = false));
     }
-  }, 90);
+  };
+  sight();
+  document.addEventListener('visibilitychange', sight);
   return () => {
     window.clearInterval(id);
+    document.removeEventListener('visibilitychange', sight);
     source.disconnect();
     if (speaking) onChange(false);
   };

@@ -182,6 +182,8 @@ public class MainActivity extends Activity {
             pageContext.setBaseContext(this);
         }
         web = page;
+        // Back from the backstage window (see onDestroy), or from another activity's.
+        if (web instanceof PageView) Backstage.release((PageView) web);
         if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web);
         web.setWebViewClient(new Client());
         web.setWebChromeClient(new Chrome());
@@ -244,6 +246,7 @@ public class MainActivity extends Activity {
         WebView p = page;
         page = null;
         pending.clear();
+        if (p instanceof PageView) Backstage.release((PageView) p);
         if (p.getParent() instanceof ViewGroup) ((ViewGroup) p.getParent()).removeView(p);
         p.destroy();
     }
@@ -478,8 +481,14 @@ public class MainActivity extends Activity {
             main.post(() -> {
                 CallService.update(app, json);
                 pipFrom(json);
-                // Streaming a file live from this phone: it keeps playing out of sight (see PageView).
-                if (page instanceof PageView) ((PageView) page).keepAwake(json.contains("\"kind\":\"live\"") && json.contains("\"mode\":\"file\""));
+                // A call, room voice, or a live stream from this phone: the page keeps going
+                // out of sight, and hears it's out of sight from the app (see PageView).
+                if (page instanceof PageView) {
+                    PageView p = (PageView) page;
+                    p.keepAwake(keepsAwake(json));
+                    // Nothing like that any more: out of the backstage window, if it was there.
+                    if (!p.awake()) Backstage.release(p);
+                }
                 // Nothing running and nobody looking: the page can go.
                 if (json.contains("\"kind\":\"none\"") && current.get() == null && !ScreenCaptureService.running) destroyPage();
             });
@@ -797,6 +806,25 @@ public class MainActivity extends Activity {
                     ? View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                     : 0);
             applyBars();
+        }
+    }
+
+    /**
+     * What keeps the page awake out of sight: a call (not just ringing), room
+     * voice, or a live stream from this phone (a video file, or its screen,
+     * shared while you use other apps). A WebView freezes a page it thinks is
+     * hidden once it has been silent for a minute: the server stops hearing
+     * from it, so the call drops or the seat goes, and a stream stops.
+     */
+    static boolean keepsAwake(String json) {
+        try {
+            JSONObject s = new JSONObject(json);
+            String kind = s.optString("kind");
+            return ("call".equals(kind) && !"incoming".equals(s.optString("phase")))
+                    || "voice".equals(kind)
+                    || "live".equals(kind);
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -1231,11 +1259,19 @@ public class MainActivity extends Activity {
             send(Push.event("pip").put("on", false));
         }
         if (web != null && web == page) {
+            int width = web.getWidth(), height = web.getHeight();
             root.removeView(web);
             // A call or screen share keeps going without the window, and a call that ended
             // in the floating window leaves the page for the app's next opening; otherwise it closes.
-            if (CallService.running || ScreenCaptureService.running || closingPip) pageContext.setBaseContext(getApplicationContext());
-            else destroyPage();
+            if (CallService.running || ScreenCaptureService.running || closingPip) {
+                pageContext.setBaseContext(getApplicationContext());
+                // Out of any window, the page would count as hidden, and freeze (see Backstage).
+                if (web instanceof PageView && ((PageView) web).awake() && !isChangingConfigurations()) {
+                    Backstage.hold(getApplicationContext(), (PageView) web, width, height, getResources().getDisplayMetrics().densityDpi);
+                }
+            } else {
+                destroyPage();
+            }
         }
         web = null;
         super.onDestroy();

@@ -206,10 +206,10 @@ try {
     await voiceBar(pb).getByText('Talking with 1 other').waitFor({ timeout: 15_000 });
     // Her page gives up 50 s after it notices, which can be before the server
     // lets her seat go: its notice may have come and gone by then.
-    const told = pa.getByText('You left voice: the connection didn’t come back.').waitFor({ timeout: 100_000 });
+    const told = pa.getByText('You left voice: the connection didn’t come back.').waitFor({ timeout: 190_000 });
     await pa.context().setOffline(true);
-    // The server's wait (45 s, after noticing), then she's out for Bikram.
-    await pb.waitForFunction(([roomId, id]) => !window.adda.chat.getState().voice[roomId]?.some((x) => x.userId === id), [room.id, A.id], { timeout: 75_000 });
+    // The server's wait (2 minutes, after noticing), then she's out for Bikram.
+    await pb.waitForFunction(([roomId, id]) => !window.adda.chat.getState().voice[roomId]?.some((x) => x.userId === id), [room.id, A.id], { timeout: 170_000 });
     await voiceBar(pb).getByText('Only you so far').waitFor();
     await told;
     await pa.context().setOffline(false);

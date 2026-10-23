@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Debug builds only: plain http to a server on this computer (adb reverse) or the emulator's host. -->
+<!-- Debug builds only: plain http to a server on this computer (adb reverse) or the emulator's host,
+     and https to one with a test certificate authority installed on the phone (user certificates). -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
+            <certificates src="user" />
         </trust-anchors>
     </base-config>
     <domain-config cleartextTrafficPermitted="true">
