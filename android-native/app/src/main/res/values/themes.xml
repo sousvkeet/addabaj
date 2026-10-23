@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark from the first frame (the app is dark-first); Compose draws everything else. -->
+    <style name="Theme.Adda" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/canvas</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Midnight Aurora, the web app's default theme. -->
+    <color name="canvas">#FF090C1A</color>
+    <color name="brand">#FF7C5CFF</color>
+</resources>

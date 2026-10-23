@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Adda Khana</string>
+
+    <!-- Notification channels (Settings › Apps › Adda Khana › Notifications) -->
+    <string name="ch_messages">Messages</string>
+    <string name="ch_messages_desc">New messages in your chats</string>
+    <string name="ch_rooms">Room messages</string>
+    <string name="ch_rooms_desc">New messages in your rooms</string>
+    <string name="ch_calls">Incoming calls</string>
+    <string name="ch_calls_desc">Rings when someone calls you</string>
+    <string name="ch_missed">Missed calls</string>
+    <string name="ch_missed_desc">Calls you didn\'t answer</string>
+    <string name="ch_ongoing">Calls and sharing in progress</string>
+    <string name="ch_ongoing_desc">Shown while a call, room voice, live stream or screen share is running</string>
+
+    <!-- Message notifications -->
+    <string name="you">You</string>
+    <string name="reply">Reply</string>
+    <string name="reply_hint">Message</string>
+    <string name="reply_failed">Not sent: %1$s</string>
+    <string name="mark_read">Mark as read</string>
+    <plurals name="new_messages">
+        <item quantity="one">%d new message</item>
+        <item quantity="other">%d new messages</item>
+    </plurals>
+    <plurals name="messages_from_chats">
+        <item quantity="one">%1$d message from %2$d chats</item>
+        <item quantity="other">%1$d messages from %2$d chats</item>
+    </plurals>
+
+    <!-- Calls -->
+    <string name="incoming_voice_call">Incoming voice call</string>
+    <string name="incoming_video_call">Incoming video call</string>
+    <string name="missed_voice_call">Missed voice call</string>
+    <string name="missed_video_call">Missed video call</string>
+    <plurals name="missed_calls">
+        <item quantity="one">%d missed call</item>
+        <item quantity="other">%d missed calls</item>
+    </plurals>
+    <string name="answer">Answer</string>
+    <string name="decline">Decline</string>
+    <string name="call_calling">Calling…</string>
+    <string name="call_connecting">Connecting…</string>
+    <string name="call_ongoing_voice">Ongoing voice call</string>
+    <string name="call_ongoing_video">Ongoing video call</string>
+    <string name="room_voice">Room voice</string>
+    <string name="room_video">Room video call</string>
+    <string name="leave">Leave</string>
+    <string name="live_screen">Sharing your screen live</string>
+    <string name="live_file">Streaming a video live</string>
+    <string name="live_to">To %1$s</string>
+    <string name="stop">Stop</string>
+    <string name="watching_in">Watching together in %1$s</string>
+    <string name="watching_paused">Paused in %1$s</string>
+
+    <!-- Screen sharing -->
+    <string name="screen_sharing">Sharing your screen</string>
+    <string name="screen_sharing_text">Everyone watching the live stream sees your screen</string>
+    <string name="stop_sharing">Stop sharing</string>
+
+    <!-- Android 14+: full-screen incoming calls -->
+    <string name="fsi_title">Ring like a phone call?</string>
+    <string name="fsi_text">To show incoming calls on the full screen, even when your phone is locked, allow Adda Khana to use full-screen notifications.</string>
+    <string name="fsi_allow">Allow</string>
+    <string name="not_now">Not now</string>
+    <!-- The picture-in-picture window's buttons during a video call. -->
+    <string name="pip_mute">Mute</string>
+    <string name="pip_unmute">Unmute</string>
+    <string name="pip_hang_up">Hang up</string>
+</resources>

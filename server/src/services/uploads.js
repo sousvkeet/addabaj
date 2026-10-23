@@ -13,6 +13,9 @@ import { AppError, assertUuid, notFound } from '../errors.js';
 export const uploadDir = process.env.UPLOAD_DIR || resolve(rootDir, 'server/uploads');
 export const maxUploadBytes = Math.max(1, Number(process.env.UPLOAD_MAX_MB ?? 25) || 25) * 1024 * 1024;
 mkdirSync(uploadDir, { recursive: true });
+/** Small copies of photos and video frames, for chat bubbles (services/thumbs.js). */
+export const thumbDir = join(uploadDir, '.thumbs');
+mkdirSync(thumbDir, { recursive: true });
 
 /** What a file really is, from its first bytes (never trust the name or the browser's guess). */
 function sniff(head) {
@@ -216,9 +219,14 @@ export async function cleanUploads() {
   for (const r of rows) await rm(join(uploadDir, r.stored), { force: true });
   const known = new Set((await query('SELECT stored FROM attachments')).rows.map((r) => r.stored));
   for (const name of await readdir(uploadDir)) {
-    if (known.has(name)) continue;
+    // The small copies' folder (cleaned below).
+    if (known.has(name) || name.startsWith('.')) continue;
     const info = await stat(join(uploadDir, name)).catch(() => null);
     // Leave files that may still be uploading.
     if (info && Date.now() - info.mtimeMs > 60 * 60 * 1000) await rm(join(uploadDir, name), { force: true });
+  }
+  // Small copies of files that are gone.
+  for (const name of await readdir(thumbDir)) {
+    if (!known.has(name.replace(/-\d+\.jpg(\.part)?$/, ''))) await rm(join(thumbDir, name), { force: true });
   }
 }

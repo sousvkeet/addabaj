@@ -126,10 +126,19 @@ await check('Asha attaches a large photo with a caption; it is shrunk, and Rahul
   await img.waitFor({ timeout: 10000 });
   await thread(B.page).getByText('Puja pandal').waitFor();
   await B.page.waitForFunction(() => [...document.querySelectorAll('[role=log] img')].some((i) => i.complete && i.naturalWidth > 0));
-  photoUrl = await img.getAttribute('src');
-  const width = await img.evaluate((i) => i.naturalWidth);
+  // The chat shows the server's small copy (FFmpeg makes it); the photo itself opens full size.
+  const shown = await img.getAttribute('src');
+  if (!/^\/api\/files\/[^?]+\?thumb=640$/.test(shown)) throw new Error(`photo src ${shown}`);
+  const small = await img.evaluate((i) => i.naturalWidth);
+  if (small !== 640) throw new Error(`the chat shows a ${small}px copy, expected the 640px one (is FFmpeg set up?)`);
+  photoUrl = shown.replace(/\?.*$/, '');
+  const width = await B.page.evaluate((u) => new Promise((ok, no) => {
+    const i = new Image();
+    i.onload = () => ok(i.naturalWidth);
+    i.onerror = no;
+    i.src = u;
+  }), photoUrl);
   if (width !== 2048) throw new Error(`photo is ${width}px wide, expected 2048`);
-  if (!photoUrl.startsWith('/api/files/')) throw new Error(`photo src ${photoUrl}`);
 });
 
 await check('Rahul opens the photo full screen and closes it with Escape', async () => {
@@ -163,6 +172,18 @@ await check('a video plays inline for Rahul', async () => {
   await A.page.getByRole('button', { name: 'Send message' }).click();
   const v = thread(B.page).locator('video');
   await v.waitFor({ timeout: 10000 });
+  // Its picture shows, and nothing of the video loads until it's played.
+  const before = await v.evaluate(async (v) => ({
+    poster: v.getAttribute('poster'),
+    type: v.poster ? (await fetch(v.poster)).headers.get('content-type') : null,
+    state: v.readyState,
+  }));
+  if (!/\?thumb=640$/.test(before.poster ?? '') || before.type !== 'image/jpeg') throw new Error(`video picture ${before.poster} (${before.type})`);
+  if (before.state !== 0) throw new Error(`the video loaded before it was played (readyState ${before.state})`);
+  await v.evaluate((v) => {
+    v.muted = true;
+    return v.play().catch(() => {});
+  });
   await B.page.waitForFunction(() => {
     const v = document.querySelector('[role=log] video');
     return v && v.readyState >= 1 && v.duration > 30;
@@ -276,10 +297,12 @@ await check('history after reload keeps photo, reply quote and reactions', async
 });
 
 await check('people outside the chat cannot open its files', async () => {
-  const r = await D.page.evaluate(async (u) => (await fetch(u)).status, photoUrl);
-  if (r !== 404) throw new Error(`outsider got ${r}`);
-  const loggedOut = await (await fetch(`${BASE}${photoUrl}`)).status;
-  if (loggedOut !== 401) throw new Error(`logged-out request got ${loggedOut}`);
+  for (const u of [photoUrl, `${photoUrl}?thumb=640`]) {
+    const r = await D.page.evaluate(async (u) => (await fetch(u)).status, u);
+    if (r !== 404) throw new Error(`outsider got ${r} for ${u}`);
+    const loggedOut = await (await fetch(`${BASE}${u}`)).status;
+    if (loggedOut !== 401) throw new Error(`logged-out request got ${loggedOut} for ${u}`);
+  }
 });
 
 // ── Rooms ──
