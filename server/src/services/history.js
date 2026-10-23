@@ -4,10 +4,13 @@
 // with their files, reactions and earlier versions (a report keeps its own
 // copy). Apps drop what they kept: they're told (room:cleared), and a room's
 // clearedAt and clearAfter tell those that were offline.
+//
+// A chat with someone, cleared by either of them (as Telegram's Clear
+// history): for me only, or for both of us.
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { one, query, transaction } from '../db.js';
-import { getIO, roomChannel } from '../realtime.js';
+import { getIO, roomChannel, userChannel } from '../realtime.js';
 import { pushChatRead } from './push.js';
 import { uploadDir } from './uploads.js';
 
@@ -87,4 +90,56 @@ export function startHistorySweeps() {
     sweepHistory().catch((err) => console.error('Clearing room history failed:', err.message));
   }, SWEEP_MS);
   timer.unref?.();
+}
+
+// ── A chat with someone ────────────────────────────────────────────────
+
+const BETWEEN = '((m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)) AND m.id <= $3';
+
+/**
+ * Clears my chat with `partnerId`, up to its latest message. For me: every
+ * message is hidden from me (on all my devices), as "Delete for me" on each.
+ * `everyone` (also for them): every message between us goes, theirs too,
+ * with files, reactions and earlier versions (a report keeps its own copy).
+ * The chat stays in the list, empty, for whoever it was cleared for. Their
+ * apps drop what they kept (dm:cleared); a message sent meanwhile stays.
+ * Returns { upTo (the last message cleared, or null), clearedAt }.
+ */
+export async function clearDmHistory(userId, partnerId, everyone) {
+  const latest = await one(
+    'SELECT max(m.id) AS id FROM dm_messages m WHERE (m.sender_id = $1 AND m.recipient_id = $2) OR (m.sender_id = $2 AND m.recipient_id = $1)',
+    [userId, partnerId],
+  );
+  const upTo = latest?.id ?? null;
+  const { files, clearedAt } = await transaction(async (c) => {
+    let files = [];
+    if (upTo) {
+      const params = [userId, partnerId, upTo];
+      if (everyone) {
+        ({ rows: files } = await c.query(`SELECT a.stored FROM attachments a JOIN dm_messages m ON m.id = a.dm_message_id WHERE ${BETWEEN}`, params));
+        const { rows: gone } = await c.query(`DELETE FROM dm_messages m WHERE ${BETWEEN} RETURNING m.id`, params);
+        if (gone.length) await c.query("DELETE FROM message_edits WHERE scope = 'dm' AND message_id = ANY($1::bigint[])", [gone.map((g) => g.id)]);
+      } else {
+        await c.query(`INSERT INTO dm_hidden (user_id, message_id) SELECT $1, m.id FROM dm_messages m WHERE ${BETWEEN} ON CONFLICT DO NOTHING`, params);
+      }
+    }
+    const { rows } = await c.query(
+      `INSERT INTO dm_settings (user_id, peer_id, cleared_at)
+       SELECT u, CASE WHEN u = $1 THEN $2::uuid ELSE $1::uuid END, now() FROM unnest($3::uuid[]) AS u
+       ON CONFLICT (user_id, peer_id) DO UPDATE SET cleared_at = now()
+       RETURNING cleared_at`,
+      [userId, partnerId, everyone ? [userId, partnerId] : [userId]],
+    );
+    return { files, clearedAt: rows[0].cleared_at };
+  });
+  for (const f of files) await rm(join(uploadDir, f.stored), { force: true }).catch(() => {});
+  const io = getIO();
+  const tell = (to, chatId) => {
+    io?.to(userChannel(to)).emit('dm:cleared', { chatId, upTo, everyone: !!everyone, by: userId, clearedAt });
+    // Phones drop the chat's notifications too.
+    pushChatRead(to, 'dm', chatId);
+  };
+  tell(userId, partnerId);
+  if (everyone) tell(partnerId, userId);
+  return { upTo, clearedAt };
 }

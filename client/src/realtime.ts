@@ -3,7 +3,7 @@ import { syncClock } from './lib/clock';
 import { useSite } from './lib/site';
 import { watchConnection } from './lib/liveness';
 import { socket } from './lib/socket';
-import type { DmMessage, Invite, QueueItem, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
+import type { Conversation, DmMessage, Invite, QueueItem, RoomMessage, RoomSummary, User, VoiceParticipant, WatchState } from './lib/types';
 import { useAuth } from './store/auth';
 import { useCall } from './store/call';
 import { useChat } from './store/chat';
@@ -165,6 +165,16 @@ export function bindRealtime() {
   // Deleted for everyone (the marker stays), or hidden by me on another device.
   socket.on('msg:deleted', (e: Parameters<ReturnType<typeof useChat.getState>['applyDeleted']>[0]) => chat().applyDeleted(e));
   socket.on('msg:hidden', (e: Parameters<ReturnType<typeof useChat.getState>['applyHidden']>[0]) => chat().applyHidden(e));
+  // A chat's history cleared: by me on another device, or by them for both of us.
+  socket.on('dm:cleared', (e: { chatId: string; upTo: number | null; clearedAt: string }) => {
+    if (chat().conversations[e.chatId]) chat().applyDmCleared(e);
+    else {
+      // Not in my list here yet: the list again (it shows the chat, emptied).
+      void api<{ conversations: Conversation[] }>('/dms')
+        .then(({ conversations }) => useChat.setState({ conversations: Object.fromEntries(conversations.map((c) => [c.partner.id, c])) }))
+        .catch(() => {});
+    }
+  });
   // A message changed by its sender, and a link's card arriving.
   socket.on('msg:edited', (e: Parameters<ReturnType<typeof useChat.getState>['applyEdited']>[0]) => chat().applyEdited(e));
   socket.on('msg:preview', (e: Parameters<ReturnType<typeof useChat.getState>['applyPreview']>[0]) => chat().applyPreview(e));

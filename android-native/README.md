@@ -11,6 +11,7 @@ Everything the web app does, natively:
 - **Chats and rooms.**
   - Chats, rooms and invites.
   - Replies, edits, deletes, forwards, reactions, mentions and link cards.
+  - Clear chat history (⋮ in a chat): for you, or with "Also clear for them" for both of you, as on Telegram.
   - Photos, files, and voice messages.
   - Read receipts and "Seen by", typing, presence and last seen.
   - Mute, pin and archive.

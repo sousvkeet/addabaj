@@ -141,6 +141,8 @@ export type Conversation = ChatSettings & {
   partner: User;
   lastMessage: DmMessage | null;
   unread: number;
+  /** Its history was cleared then: it stays in the list, empty, until the next message. */
+  clearedAt?: string | null;
 };
 
 export type RoomMessage = MessageExtras & {

@@ -875,6 +875,8 @@ class ChatStore(
                 val partner = if (scope == Scope.Dm) partnerOf(o) else null
                 applyDeleted(scope, messageId, o.str("deletedAt") ?: Instant.now().toString(), partner, o.str("roomId"), o.bool("byAdmin") == true)
             }
+            // A chat's history cleared: by me on another device, or by them for both of us.
+            "dm:cleared" -> applyDmCleared(o.str("chatId") ?: return, o.long("upTo"), o.str("clearedAt"))
             "msg:hidden" -> {
                 val scope = if (o.str("scope") == "dm") Scope.Dm else Scope.Room
                 applyHidden(scope, o.long("messageId") ?: return, o.str("chatId") ?: o.str("roomId") ?: return)
@@ -1069,6 +1071,32 @@ class ChatStore(
             }
             Graph.notifications.removeMessage("room", roomId, messageId)
         }
+    }
+
+    /** Clears my chat with someone (as Telegram's Clear history): for me, or for both of us. */
+    suspend fun clearDm(partnerId: String, everyone: Boolean) {
+        val (upTo, clearedAt) = api.clearDm(partnerId, everyone)
+        applyDmCleared(partnerId, upTo, clearedAt)
+    }
+
+    /** A chat cleared (here, on another device, or by them): its messages up to `upTo` go; it stays in the list. */
+    private fun applyDmCleared(partnerId: String, upTo: Long?, clearedAt: String?) {
+        // What's still sending, or came after, stays.
+        fun stays(m: Message) = m.pending != null || upTo == null || m.id > upTo
+        if (now.conversations[partnerId] == null) {
+            // Not in my list here yet: the list again (it shows the chat, emptied).
+            scope.launch { runCatching { api.conversations() }.onSuccess { list -> set { s -> s.copy(conversations = list.associateBy { it.partner.id }) } } }
+        }
+        set { s ->
+            val page = s.dms[partnerId]
+            val conv = s.conversations[partnerId]
+            val last = conv?.lastMessage?.takeIf(::stays)
+            s.copy(
+                dms = page?.let { s.dms + (partnerId to it.copy(items = it.items.filter(::stays), hasMore = if (upTo == null) it.hasMore else false)) } ?: s.dms,
+                conversations = conv?.let { s.conversations + (partnerId to it.copy(lastMessage = last, unread = if (last != null) it.unread else 0, clearedAt = clearedAt ?: it.clearedAt)) } ?: s.conversations,
+            )
+        }
+        Graph.notifications.clearChat("dm", partnerId)
     }
 
     private fun applyHidden(chatScope: Scope, messageId: Long, chatId: String) {

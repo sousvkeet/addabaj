@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Navigate, useNavigate, useParams } from 'react-router';
-import { ArrowLeft, Ban, BellOff, Flag, Phone, PhoneOff, Settings2, ShieldCheck, Video } from 'lucide-react';
+import { ArrowLeft, Ban, BellOff, Eraser, Flag, Phone, PhoneOff, Settings2, ShieldCheck, Video } from 'lucide-react';
 import { errorMessage } from '../lib/api';
 import { lastSeen } from '../lib/format';
 import { useSite } from '../lib/site';
@@ -54,6 +54,7 @@ export function ChatView() {
   const [info, setInfo] = useState<InfoTarget | null>(null);
   const [muting, setMuting] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [reporting, setReporting] = useState<ReportTarget | null>(null);
   // "Last seen 5 min ago" keeps counting.
   useNow(30_000, !online);
@@ -122,6 +123,8 @@ export function ChatView() {
   // ⋮ in the header: my settings for the chat, and blocking or reporting them.
   const menu: MenuItem[] = [
     ...(conversation ? settingsItems('dm', userId, conversation, () => setMuting(true)) : []),
+    // Something to clear.
+    ...(conversation?.lastMessage ? [{ label: 'Clear chat history', icon: <Eraser size={18} />, onSelect: () => setClearing(true) }] : []),
     blocked
       ? { label: `Unblock ${name}`, icon: <ShieldCheck size={18} />, onSelect: unblock }
       : { label: `Block ${name}`, icon: <Ban size={18} />, onSelect: () => setBlocking(true), danger: true },
@@ -271,6 +274,7 @@ export function ChatView() {
       <MessageInfo target={info} onClose={() => setInfo(null)} />
       <MuteDialog open={muting} scope="dm" id={userId} name={name} onClose={() => setMuting(false)} />
       <BlockDialog open={blocking} userId={userId} name={name} onClose={() => setBlocking(false)} />
+      <ClearDialog open={clearing} userId={userId} name={name} onClose={() => setClearing(false)} />
       <ReportDialog target={reporting} onClose={() => setReporting(null)} />
     </div>
   );
@@ -320,6 +324,53 @@ function BlockDialog({ open, userId, name, onClose }: { open: boolean; userId: s
       <div className="flex flex-col gap-2">
         <Button variant="danger" busy={busy} onClick={() => void block()}>
           Block
+        </Button>
+        <Button variant="ghost" disabled={busy} onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </Dialog>
+  );
+}
+
+/** "Clear chat history?" (as Telegram's): for me, or with "Also clear for them", for both of us. */
+function ClearDialog({ open, userId, name, onClose }: { open: boolean; userId: string; name: string; onClose: () => void }) {
+  const [everyone, setEveryone] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) setEveryone(false);
+  }, [open]);
+  async function clear() {
+    setBusy(true);
+    try {
+      await useChat.getState().clearDm(userId, everyone);
+      toast(everyone ? `Chat history cleared for you and ${name}` : 'Chat history cleared');
+      onClose();
+    } catch (err) {
+      toast(errorMessage(err), 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      alert
+      width={400}
+      title="Clear chat history?"
+      description={`Every message, photo and file in your chat with ${name} goes. This can't be undone.`}
+    >
+      <label className="flex cursor-pointer items-start gap-3 text-[14px]">
+        <input type="checkbox" checked={everyone} onChange={(e) => setEveryone(e.target.checked)} className="mt-1 size-4 accent-[var(--brand)]" />
+        <span>
+          <span className="block font-semibold">Also clear for {name}</span>
+          <span className="block text-[13px] text-ink-soft">The chat empties on both sides, their messages too. Otherwise only you stop seeing it.</span>
+        </span>
+      </label>
+      <div className="mt-5 flex flex-col gap-2">
+        <Button variant="danger" busy={busy} onClick={() => void clear()}>
+          {everyone ? 'Clear for both of us' : 'Clear for me'}
         </Button>
         <Button variant="ghost" disabled={busy} onClick={onClose}>
           Cancel

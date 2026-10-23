@@ -47,13 +47,13 @@ export async function setDmSettings(userId, peerId, change) {
   const row = await one('SELECT muted_until, pinned_at, archived_at FROM dm_settings WHERE user_id = $1 AND peer_id = $2', [userId, peerId]);
   const { pinnedAt, archivedAt } = next(row, change);
   if (pinnedAt && !row?.pinned_at) {
-    // Pinned chats still in my list (a chat I've cleared doesn't count).
+    // Pinned chats still in my list (an emptied chat counts while it's there: cleared, with clearedAt).
     const { count } = await one(
       `SELECT count(*)::int AS count FROM dm_settings s
        WHERE s.user_id = $1 AND s.pinned_at IS NOT NULL AND s.peer_id <> $2
-         AND EXISTS (SELECT 1 FROM dm_messages d
+         AND (s.cleared_at IS NOT NULL OR EXISTS (SELECT 1 FROM dm_messages d
                      WHERE ((d.sender_id = $1 AND d.recipient_id = s.peer_id) OR (d.sender_id = s.peer_id AND d.recipient_id = $1))
-                       AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id))`,
+                       AND NOT EXISTS (SELECT 1 FROM dm_hidden h WHERE h.user_id = $1 AND h.message_id = d.id)))`,
       [userId, peerId],
     );
     if (count >= MAX_PINNED) throw new AppError(409, `You can pin up to ${MAX_PINNED} chats. Unpin one first.`);

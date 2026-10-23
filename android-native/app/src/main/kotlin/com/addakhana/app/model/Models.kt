@@ -160,6 +160,8 @@ data class Conversation(
     val mutedUntil: String? = null,
     val pinnedAt: String? = null,
     val archivedAt: String? = null,
+    /** Its history was cleared then: it stays in the list, empty, until the next message. */
+    val clearedAt: String? = null,
 )
 
 @Serializable

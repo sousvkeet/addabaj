@@ -41,6 +41,7 @@
     "test:pip": "node tests/pip.mjs",
     "test:profile": "node tests/profile.mjs",
     "test:history": "node tests/history.mjs",
+    "test:clear-chat": "node tests/clear-chat.mjs",
     "test:moderation": "node tests/moderation.mjs"
   },
   "devDependencies": {

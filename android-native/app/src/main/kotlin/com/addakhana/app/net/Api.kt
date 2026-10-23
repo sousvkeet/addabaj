@@ -159,6 +159,12 @@ class Api(val http: OkHttpClient) {
 
     suspend fun dmRead(userId: String) { call("POST", "/dms/${enc(userId)}/read") }
 
+    /** Clear chat history: for me, or (`everyone`) for both of us. Returns the last message cleared (or null) and when. */
+    suspend fun clearDm(userId: String, everyone: Boolean): Pair<Long?, String?> {
+        val o = call("POST", "/dms/${enc(userId)}/clear", buildJsonObject { put("everyone", everyone) }) as JsonObject
+        return o.long("upTo") to o.str("clearedAt")
+    }
+
     /** A plain reply (from a notification): no attachment, no clientId. */
     suspend fun replyDm(userId: String, body: String) { call("POST", "/dms/${enc(userId)}/messages", buildJsonObject { put("body", body) }) }
     suspend fun replyRoom(roomId: String, body: String) { call("POST", "/rooms/${enc(roomId)}/messages", buildJsonObject { put("body", body) }) }
