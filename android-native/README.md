@@ -24,7 +24,12 @@ Everything the web app does, natively:
   - This covers the app in the background, the screen off, and the app swiped away from Recents.
   - It runs as a foreground service (microphone, camera, media playback or screen capture, as needed), with the processor and Wi-Fi kept awake and a notification with Mute and Leave.
   - The app keeps its connection to the server only while something needs it: the app on screen, a call, room voice, or a ringing call. Otherwise it lets go after 5 seconds, so the server sends notifications instead.
-- **Video calls float** in picture-in-picture when you leave the app, with Mute and Hang up.
+- **Arrange the videos however you like** in one-to-one and room video calls. Each person is in the grid, full screen, or in a small floating window:
+  - **Full screen:** tap someone, or use their ⋮ › Full screen. The others wait in a row along the bottom, and a tap on the full-screen video hides or shows the buttons. Back (in a room) goes back to the grid.
+  - **Floating:** drag a floating window anywhere; it stays clear of the buttons. Press and hold anyone else and drag them out of the grid into one. Tap a floating window to swap it with whoever's full screen, as in WhatsApp.
+  - **Switch any time:** press and hold anyone (or tap their ⋮) for Full screen, Small floating window or Back to the grid. The grid button at the top puts everyone back.
+  - A one-to-one call starts as WhatsApp's: them full screen, you floating in the corner. Each picture keeps playing while it moves between these (nothing reconnects or goes black), and in rooms each person is asked to send just the size they're shown at.
+- **Video calls float** in picture-in-picture when you leave the app, with Mute and Hang up. In a room, it shows whoever you made full screen.
 - **Watch together.**
   - Files and streams play in ExoPlayer. YouTube plays in YouTube's own player, the only one apps may use.
   - Everyone stays in sync with the room's timeline, and admins drive play, pause and seeking.

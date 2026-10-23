@@ -16,11 +16,9 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,6 +37,7 @@ import androidx.compose.material.icons.rounded.Cameraswitch
 import androidx.compose.material.icons.rounded.CloseFullscreen
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Hearing
 import androidx.compose.material.icons.rounded.Mic
 import androidx.compose.material.icons.rounded.MicOff
@@ -89,8 +88,6 @@ import kotlinx.coroutines.delay
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
-import kotlin.math.ceil
-import kotlin.math.sqrt
 
 /** A camera's picture (libwebrtc's renderer). `overlay`: drawn above other video (the self view). */
 @Composable
@@ -231,7 +228,11 @@ fun callStatus(): String {
     return base + if (call.muted) ", muted" else ""
 }
 
-/** The call full screen: the other person's video (or their picture), my camera in the corner, the buttons. */
+/**
+ * The call full screen. A video call: both of you on the stage (VideoStage),
+ * them full screen and you floating in a corner to begin with; a voice
+ * call: their picture. The buttons, and the name and time at the top.
+ */
 @Composable
 fun CallStage() {
     val p = palette
@@ -242,46 +243,38 @@ fun CallStage() {
     val status = callStatus()
     var settings by remember { mutableStateOf(false) }
     if (settings) com.addakhana.app.ui.home.DeviceSettings { settings = false }
-    Box(Modifier.fillMaxSize().background(p.deep)) {
-        if (call.peerCameraOn && call.remoteVideo != null) {
-            VideoView(call.remoteVideo, Modifier.fillMaxSize())
-        } else {
-            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                Avatar(peer.name, peer.hue, peer.photo, 112.dp, ring = call.remoteSpeaking)
-                Spacer(Modifier.height(16.dp))
-                Text(peer.name, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Text(
-                    if (call.phase == "outgoing") "Calling ${peer.name.split(' ').first()}…" else if (call.videoCall) "${peer.name.split(' ').first()}'s camera is off" else status,
-                    color = Color.White.copy(alpha = 0.75f),
-                    fontSize = 15.sp,
-                )
-            }
+    val first = peer.name.split(' ').first()
+    val me = Graph.auth.user
+    val myId = me?.id ?: "me"
+    val layout = if (call.videoCall) {
+        Stages.of("call:${peer.id}") {
+            set(peer.id, Mode.Full)
+            set(myId, Mode.Floating)
         }
-        // Top: name and status, and Shrink.
+    } else {
+        null
+    }
+    val header: @Composable () -> Unit = {
         Row(
             Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent))).statusBarsPadding().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text(peer.name, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.SemiBold)
+                Text(peer.name, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(status, color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+            }
+            if (layout?.arranged == true) {
+                RoundButton(Icons.Rounded.GridView, "Show you both side by side", { layout.everyoneToGrid() }, 44.dp)
+                Spacer(Modifier.width(8.dp))
             }
             RoundButton(Icons.Rounded.Tune, "Audio and video settings", { settings = true }, 44.dp)
             Spacer(Modifier.width(8.dp))
             RoundButton(Icons.Rounded.CloseFullscreen, "Shrink", { Graph.calls.setMinimized(true) }, 44.dp)
         }
-        if (call.localVideo != null) {
-            BoxWithConstraints(Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 130.dp)) {
-                VideoView(
-                    call.localVideo,
-                    Modifier.width((maxWidth * 0.3f).coerceIn(96.dp, 190.dp)).aspectRatio(3f / 4f).clip(RoundedCornerShape(16.dp)),
-                    mirror = call.frontCamera,
-                    overlay = true,
-                )
-            }
-        }
+    }
+    val controls: @Composable () -> Unit = {
         Row(
-            Modifier.align(Alignment.BottomCenter).fillMaxWidth().navigationBarsPadding().padding(bottom = 24.dp),
+            Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)))).navigationBarsPadding().padding(top = 16.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.SpaceEvenly,
         ) {
             RoundButton(if (call.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (call.muted) "Unmute microphone" else "Mute microphone", { Graph.calls.toggleMute() }, background = if (call.muted) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (call.muted) p.deep else Color.White)
@@ -289,6 +282,33 @@ fun CallStage() {
             if (call.cameraOn) RoundButton(Icons.Rounded.Cameraswitch, "Switch camera", { Graph.calls.switchCamera() })
             RoundButton(if (call.speaker) Icons.Rounded.VolumeUp else Icons.Rounded.Hearing, if (call.speaker) "Use the earpiece" else "Use the loudspeaker", { Graph.calls.setSpeaker(!call.speaker) }, background = if (call.speaker) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (call.speaker) p.deep else Color.White)
             RoundButton(Icons.Rounded.CallEnd, if (call.phase == "outgoing") "Cancel call" else "End call", { Graph.calls.endCall() }, background = SolidColor(p.danger))
+        }
+    }
+    if (layout != null) {
+        val feeds = listOfNotNull(
+            Feed(
+                peer.id, peer.name, peer.hue, peer.photo,
+                video = call.remoteVideo.takeIf { call.peerCameraOn },
+                speaking = call.remoteSpeaking,
+                muted = call.peerMuted,
+                caption = if (call.phase == "outgoing") "Calling $first…" else "$first's camera is off",
+            ),
+            // Me while my camera's on (where I was put stays for when it's back).
+            call.localVideo?.takeIf { call.cameraOn }?.let { video ->
+                Feed(myId, me?.name ?: "You", me?.hue ?: 260, me?.photo, video = video, mirror = call.frontCamera, mine = true, speaking = call.localSpeaking)
+            },
+        )
+        VideoStage(feeds, layout, header, controls, labels = false, everyone = setOf(peer.id, myId))
+    } else {
+        Box(Modifier.fillMaxSize().background(p.deep)) {
+            Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Avatar(peer.name, peer.hue, peer.photo, 112.dp, ring = call.remoteSpeaking)
+                Spacer(Modifier.height(16.dp))
+                Text(peer.name, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Text(if (call.phase == "outgoing") "Calling $first…" else status, color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp)
+            }
+            Box(Modifier.align(Alignment.TopCenter)) { header() }
+            Box(Modifier.align(Alignment.BottomCenter)) { controls() }
         }
     }
 }
@@ -474,9 +494,10 @@ private fun AwayCard() {
 }
 
 /**
- * The room's video call: everyone as a tile (their camera, or their photo),
- * the one tapped large with the others in a row; my camera too. Each tile's
- * size is told to its sender, so they send just that.
+ * The room's video call: everyone on the stage (VideoStage), with their
+ * camera or their photo, in a grid to begin with. Anyone can be made full
+ * screen or floated in a small window. Each picture's size is told to its
+ * sender, so they send just that.
  */
 @Composable
 fun RoomCallStage() {
@@ -488,96 +509,84 @@ fun RoomCallStage() {
     val room = chat.rooms[roomId]
     val members = chat.roomDetails[roomId]?.members.orEmpty().associateBy { it.id }
     val people = chat.voice[roomId].orEmpty()
-    var focused by remember { mutableStateOf<String?>(null) }
+    val layout = Stages.of("room:$roomId")
     var settings by remember { mutableStateOf(false) }
     if (settings) com.addakhana.app.ui.home.DeviceSettings { settings = false }
-    BackHandler { Graph.voice.setMinimized(true) }
+    // Back: someone full screen goes back to the grid first.
+    BackHandler {
+        val full = layout.full
+        if (full != null) layout.set(full, Mode.Grid) else Graph.voice.setMinimized(true)
+    }
     val camAsk = rememberMediaPermission { ok, video -> if (ok && video) Graph.voice.toggleCamera() }
-    Column(Modifier.fillMaxSize().background(p.deep)) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(room?.name ?: "Room call", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold)
-                Text("${people.size} in the call, ${people.count { it.camera }} on camera", color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { Graph.voice.setViews(emptyMap()) } }
+    val feeds = people.map { v ->
+        val mine = v.userId == me
+        val m = members[v.userId]
+        val track = if (mine) voice.localVideo else voice.videos[v.userId]
+        Feed(
+            id = v.userId,
+            name = m?.name ?: chat.users[v.userId]?.name ?: "?",
+            hue = m?.hue ?: 260,
+            photo = m?.photo,
+            video = track?.takeIf { (v.camera || mine && voice.cameraOn) && !v.cameraBlocked },
+            mirror = mine && voice.frontCamera,
+            mine = mine,
+            speaking = voice.speaking[v.userId] == true,
+            muted = v.muted,
+            silenced = v.silenced,
+            note = when {
+                v.away -> ", reconnecting…"
+                !mine && voice.connection[v.userId]?.let { it != org.webrtc.PeerConnection.PeerConnectionState.CONNECTED } == true -> ", connecting…"
+                else -> ""
+            },
+        )
+    }
+    VideoStage(
+        feeds = feeds,
+        layout = layout,
+        header = {
+            Row(
+                Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent))).statusBarsPadding().padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(room?.name ?: "Room call", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${people.size} in the call, ${people.count { it.camera }} on camera", color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+                }
+                if (layout.arranged) {
+                    RoundButton(Icons.Rounded.GridView, "Everyone back to the grid", { layout.everyoneToGrid() }, 44.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
+                RoundButton(Icons.Rounded.Tune, "Audio and video settings", { settings = true }, 44.dp)
+                Spacer(Modifier.width(8.dp))
+                RoundButton(Icons.Rounded.CloseFullscreen, "Shrink", { Graph.voice.setMinimized(true) }, 44.dp)
             }
-            RoundButton(Icons.Rounded.Tune, "Audio and video settings", { settings = true }, 44.dp)
-            Spacer(Modifier.width(8.dp))
-            RoundButton(Icons.Rounded.CloseFullscreen, "Shrink", { Graph.voice.setMinimized(true) }, 44.dp)
-        }
-        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth().padding(8.dp)) {
-            val density = LocalDensity.current
-            val n = people.size.coerceAtLeast(1)
-            val portrait = maxHeight > maxWidth
-            // Columns that give the biggest tiles (3:4 standing, 4:3 lying).
-            val cols = (1..n).maxByOrNull { c ->
-                val rows = ceil(n / c.toDouble()).toFloat()
-                val w = maxWidth.value / c
-                val h = maxHeight.value / rows
-                val aspect = if (portrait) 3f / 4f else 4f / 3f
-                minOf(w, h * aspect) * minOf(w / aspect, h)
-            } ?: 1
-            val rows = ceil(n / cols.toDouble()).toInt()
-            val tileW = maxWidth / cols
-            val tileH = maxHeight / rows
-            // Each person's tile size, told to them (in device pixels).
-            LaunchedEffect(people.map { it.userId to it.camera }, cols, focused) {
-                val views = people.filter { it.userId != me && it.camera }.associate { v ->
-                    val px = with(density) { maxOf(if (focused == v.userId) maxWidth.toPx() else tileW.toPx(), tileH.toPx()) } * 1.0f
+        },
+        controls = {
+            Row(
+                Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)))).navigationBarsPadding().padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                RoundButton(if (voice.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (voice.muted) "Unmute" else "Mute", { Graph.voice.toggleMute() }, 48.dp, background = if (voice.muted) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (voice.muted) p.deep else Color.White)
+                RoundButton(if (voice.cameraOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, "Camera", { if (voice.cameraOn) Graph.voice.toggleCamera() else camAsk(true) }, 48.dp)
+                if (voice.cameraOn) RoundButton(Icons.Rounded.Cameraswitch, "Switch camera", { Graph.voice.switchCamera() }, 48.dp)
+                RoundButton(Icons.Rounded.CallEnd, "Leave the call", { Graph.voice.leave() }, 48.dp, background = SolidColor(p.danger))
+            }
+        },
+        // Each person's picture size, told to them (in device pixels), so they send just that.
+        onShown = { sizes ->
+            Graph.voice.setViews(
+                people.filter { it.userId != me && it.camera }.associate { v ->
+                    val px = sizes[v.userId] ?: 0
                     v.userId to when {
                         px < 340 -> View.Small
                         px < 680 -> View.Medium
                         else -> View.Large
                     }
-                }
-                Graph.voice.setViews(views)
-            }
-            androidx.compose.runtime.DisposableEffect(Unit) { onDispose { Graph.voice.setViews(emptyMap()) } }
-            Column {
-                for (r in 0 until rows) {
-                    Row(Modifier.height(tileH)) {
-                        for (c in 0 until cols) {
-                            val i = r * cols + c
-                            val v = people.getOrNull(i) ?: continue
-                            val mine = v.userId == me
-                            val m = members[v.userId]
-                            val name = m?.name ?: chat.users[v.userId]?.name ?: "?"
-                            val track = if (mine) voice.localVideo else voice.videos[v.userId]
-                            Box(
-                                Modifier.width(tileW).height(tileH).padding(4.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFF141A33))
-                                    .then(if (voice.speaking[v.userId] == true) Modifier.border(2.dp, p.live, RoundedCornerShape(16.dp)) else Modifier)
-                                    .clickable { focused = if (focused == v.userId) null else v.userId },
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                if ((v.camera || mine && voice.cameraOn) && track != null && !v.cameraBlocked) {
-                                    VideoView(track, Modifier.fillMaxSize(), mirror = mine && voice.frontCamera)
-                                } else {
-                                    Avatar(name, m?.hue ?: 260, m?.photo, 72.dp)
-                                }
-                                Row(Modifier.align(Alignment.BottomStart).padding(6.dp).clip(RoundedCornerShape(10.dp)).background(Color.Black.copy(alpha = 0.55f)).padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    if (v.muted || v.silenced) Icon(Icons.Rounded.MicOff, "Muted", tint = if (v.silenced) p.danger else p.live, modifier = Modifier.size(13.dp).padding(end = 2.dp))
-                                    Text(
-                                        (if (mine) "You" else name) + when {
-                                            v.away -> ", reconnecting…"
-                                            !mine && voice.connection[v.userId]?.let { it != org.webrtc.PeerConnection.PeerConnectionState.CONNECTED } == true -> ", connecting…"
-                                            else -> ""
-                                        },
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        maxLines = 1,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 16.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
-            RoundButton(if (voice.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (voice.muted) "Unmute" else "Mute", { Graph.voice.toggleMute() }, 48.dp, background = if (voice.muted) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (voice.muted) p.deep else Color.White)
-            RoundButton(if (voice.cameraOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, "Camera", { if (voice.cameraOn) Graph.voice.toggleCamera() else camAsk(true) }, 48.dp)
-            if (voice.cameraOn) RoundButton(Icons.Rounded.Cameraswitch, "Switch camera", { Graph.voice.switchCamera() }, 48.dp)
-            RoundButton(Icons.Rounded.CallEnd, "Leave the call", { Graph.voice.leave() }, 48.dp, background = SolidColor(p.danger))
-        }
-    }
+                },
+            )
+        },
+    )
 }
 
 /** The call floating in Android's picture-in-picture window: the other person (or whoever's speaking on camera in a room). */
@@ -595,8 +604,10 @@ fun PipView() {
         } else if (voice.live) {
             val me = Graph.auth.user?.id
             val people = chat.voice[voice.roomId].orEmpty()
-            // Whoever's speaking on camera, else anyone on camera, else whoever's speaking.
-            val main = people.firstOrNull { it.userId != me && it.camera && voice.speaking[it.userId] == true }
+            // Whoever was made full screen (on camera), else whoever's speaking on camera, else anyone on camera, else whoever's speaking.
+            val chosen = voice.roomId?.let { Stages.current("room:$it")?.full }
+            val main = people.firstOrNull { it.userId == chosen && it.camera && it.userId != me }
+                ?: people.firstOrNull { it.userId != me && it.camera && voice.speaking[it.userId] == true }
                 ?: people.firstOrNull { it.userId != me && it.camera }
                 ?: people.firstOrNull { it.userId != me && voice.speaking[it.userId] == true }
                 ?: people.firstOrNull { it.userId != me }

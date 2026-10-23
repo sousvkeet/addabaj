@@ -140,6 +140,8 @@ private fun Main(leave: () -> Unit) {
     val cams = voice.roomId?.let { id -> chat.voice[id].orEmpty().count { it.camera } } ?: 0
     val roomStage = voice.live && !voice.minimized && (cams > 0 || voice.cameraOn)
     val callStage = call.inCall && !call.minimized
+    // A call's stage layout (who's full screen or floating) lasts until it ends.
+    androidx.compose.runtime.LaunchedEffect(call.idle && !voice.active) { if (call.idle && !voice.active) com.addakhana.app.ui.call.Stages.clear() }
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
             // A call or room voice going on: its bar at the top (it takes the status bar's space, so the screens below don't).
