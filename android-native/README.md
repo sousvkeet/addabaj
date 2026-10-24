@@ -47,10 +47,17 @@ Everything the web app does, natively:
   - a microphone level meter
   - which camera calls start with, with a preview
 - **Uses little data, like WhatsApp** (**You › Storage and data**):
-  - **Calls:** voices send next to nothing while nobody speaks, always. **Use less data for calls** (*Off*, *On mobile data* by default, or *Always*) also caps voices at 20 kbit/s, and video at about 450 kbit/s and 20 frames a second in calls and 480p in rooms. It asks the other side to send less too, and films in watch together stop at 480p.
+  - **Calls:** voices send next to nothing while nobody speaks, always. **Use less data for calls** (*Off*, *On mobile data* by default, or *Always*; and whenever the phone's Battery Saver is on) also caps voices at 20 kbit/s, and video at about 450 kbit/s and 20 frames a second in calls and 480p in rooms. It asks the other side to send less too, and films in watch together stop at 480p.
   - **Media auto-download**, chosen separately for mobile data, Wi-Fi and roaming: by default photos on mobile data, everything on Wi-Fi, nothing when roaming. Chats show the server's small copies (a photo bubble is about 30 KB). Anything not downloaded shows blurred with its size, and downloads on a tap. Voice messages and videos up to 25 MB download ahead where allowed, so they play at once.
   - **Media upload quality:** *Standard* sends photos at up to 1600 px, and videos at 720p and about 2 Mbit/s (shrunk on the phone, with the progress shown). *HD* sends photos at up to 4096 px, and videos as they are, within the size limit.
   - What you send stays on the phone, so it never downloads back. **Network usage** counts what calls, media and messages sent and received, on mobile data and Wi-Fi, and **Clear** frees what's kept on the phone.
+- **Easy on the battery, like WhatsApp:**
+  - Out of the app, nothing runs unless a call, room voice or a live stream does: the connection to the server closes a few seconds after you leave, and messages and calls come as push notifications.
+  - **A video call out of sight pauses video** (screen off, or another app without the floating window): your camera stops, and the other side stops sending you theirs (each sees the other's photo). Both come back with the call screen. In rooms, your camera stops and nobody sends you video, as before.
+  - With the screen off, a call does only what its sound needs: the call screen's clock, speaking rings and "No sound arriving" check stop until it shows again.
+  - Room calls through LiveKit leave out LiveKit's call statistics (sent to its server all call long) and its copy of every 10 ms of the microphone (for features the app doesn't use). With the screen off, room voice takes about a third less processor than before (measured on the emulator).
+  - Watch together's sync runs only while a video plays. Network usage is counted every 10 seconds on screen, less often out of sight, and saved once a minute.
+  - With Battery Saver on, calls use less data, and so less battery (Storage and data shows it).
 - **Updates from your own server.** A newer version from Admin › App updates downloads with a progress bar, is checked against its SHA-256, and opens Android's installer.
 - **Offline.**
   - Recent chats are kept on the phone.

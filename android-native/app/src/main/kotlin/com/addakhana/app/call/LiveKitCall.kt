@@ -75,11 +75,20 @@ class LiveKitCall(
                     val rate = (context.getSystemService(AudioManager::class.java)
                         ?.getProperty(AudioManager.PROPERTY_OUTPUT_SAMPLE_RATE)?.toIntOrNull() ?: 0).takeIf { it >= 16_000 } ?: 48_000
                     builder.setSampleRate(rate).setUseHardwareAcousticEchoCanceler(true).setUseHardwareNoiseSuppressor(true)
+                    // LiveKit hands every 10 ms of my microphone to its audio sinks, copied each time; the app has
+                    // none, so the copying (a hundred a second, all call long, and the clean-up after) goes.
+                    builder.setSamplesReadyCallback(null)
                 },
             ),
             eglBase = egl,
         ),
     )
+
+    init {
+        // LiveKit's call metrics: it reads the connection's statistics and sends them to the server all call
+        // long. Off: that's CPU (and data) the call itself never needed, most of the work out of sight.
+        room.enableMetrics = false
+    }
 
     private var listening: Job? = null
     private var camera: LocalVideoTrack? = null

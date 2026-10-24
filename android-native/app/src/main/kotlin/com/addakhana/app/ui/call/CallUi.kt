@@ -71,8 +71,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.addakhana.app.Graph
@@ -296,10 +300,14 @@ fun IncomingCallScreen() {
 fun callStatus(): String {
     val call by Graph.calls.state.collectAsState()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(call.startedAt) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(1_000)
+    // The clock ticks only while the screen shows it (screen off, nothing redraws for it).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(call.startedAt, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                now = System.currentTimeMillis()
+                delay(1_000)
+            }
         }
     }
     val base = when {
@@ -311,6 +319,14 @@ fun callStatus(): String {
         else -> ""
     }
     return base + if (call.muted) ", muted" else ""
+}
+
+/** The call's status line, on its own: its clock ticking redraws just this line, not the call screen. */
+@Composable
+private fun CallStatusText(color: Color, fontSize: TextUnit, whileCalling: String? = null) {
+    val phase = Graph.calls.state.collectAsState().value.phase
+    val status = callStatus()
+    Text(if (whileCalling != null && phase == "outgoing") whileCalling else status, color = color, fontSize = fontSize)
 }
 
 /**
@@ -325,7 +341,6 @@ fun CallStage() {
     val peer = call.peer ?: return
     BackHandler { Graph.calls.setMinimized(true) }
     val ask = rememberMediaPermission { ok, video -> if (ok && video) Graph.calls.toggleCamera() }
-    val status = callStatus()
     var settings by remember { mutableStateOf(false) }
     if (settings) com.addakhana.app.ui.home.DeviceSettings { settings = false }
     val first = peer.name.split(' ').first()
@@ -346,7 +361,7 @@ fun CallStage() {
         ) {
             Column(Modifier.weight(1f)) {
                 Text(peer.name, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(status, color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                CallStatusText(Color.White.copy(alpha = 0.8f), 14.sp)
             }
             if (layout?.arranged == true) {
                 RoundButton(Icons.Rounded.GridView, "Show you both side by side", { layout.everyoneToGrid() }, 44.dp)
@@ -390,7 +405,7 @@ fun CallStage() {
                 Avatar(peer.name, peer.hue, peer.photo, 112.dp, ring = call.remoteSpeaking)
                 Spacer(Modifier.height(16.dp))
                 Text(peer.name, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Text(if (call.phase == "outgoing") "Calling $first…" else status, color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp)
+                CallStatusText(Color.White.copy(alpha = 0.75f), 15.sp, whileCalling = "Calling $first…")
             }
             Box(Modifier.align(Alignment.TopCenter)) { header() }
             Box(Modifier.align(Alignment.BottomCenter)) { controls() }
@@ -404,13 +419,12 @@ fun CallBar() {
     val p = palette
     val call by Graph.calls.state.collectAsState()
     val peer = call.peer ?: return
-    val status = callStatus()
     Bar(onClick = { Graph.calls.setMinimized(false) }) {
         Avatar(peer.name, peer.hue, peer.photo, 40.dp, ring = call.remoteSpeaking)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(peer.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(status, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+            CallStatusText(Color.White.copy(alpha = 0.75f), 13.sp)
         }
         SoundBarButton()
         BarButton(if (call.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (call.muted) "Unmute microphone" else "Mute microphone", { Graph.calls.toggleMute() }, on = call.muted)

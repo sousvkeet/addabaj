@@ -28,8 +28,8 @@ android {
         applicationId = "com.addakhana.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 103
-        versionName = "2.3.0"
+        versionCode = 104
+        versionName = "2.4.0"
         buildConfigField("String", "APP_URL", "\"$appUrl\"")
         // The site's own https address, also in debug builds (YouTube's player wants a real https page).
         buildConfigField("String", "SITE_URL", "\"$appUrl\"")

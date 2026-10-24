@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
@@ -183,7 +184,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         scope.launch { realtime.connects.collect { onReconnected() } }
         // Onto mobile data, or the setting changed: what I ask for, and send, follows.
         scope.launch {
-            combine(DataUse.net, DataUse.calls) { _, _ -> DataUse.lessForCalls() }.distinctUntilChanged().drop(1).collect {
+            combine(DataUse.net, DataUse.calls, DataUse.saver) { _, _, _ -> DataUse.lessForCalls() }.distinctUntilChanged().drop(1).collect {
                 tellAll()
                 sendVideoToAll()
             }
@@ -692,7 +693,11 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
             val quietSince = mutableMapOf<String, Long>()
             while (isActive) {
                 delay(300)
-                if (!AppLifecycle.foreground.value) continue
+                // Out of sight nobody sees the rings: nothing to look at until the app shows again.
+                if (!AppLifecycle.foreground.value) {
+                    AppLifecycle.foreground.first { it }
+                    continue
+                }
                 var local: Double? = null
                 for ((id, peer) in peers.toMap()) {
                     val report = runCatching { peer.pc.stats() }.getOrNull() ?: continue

@@ -38,6 +38,11 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -129,6 +134,15 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
     private var lastRepair = 0L
     /** Answered on the phone's call screen, before the app heard of the call: (callId, video, when). */
     private var pendingAnswer: Triple<String, Boolean, Long>? = null
+    /** The call can be seen: the app on screen (its floating window too), or the phone's call screen. */
+    private val inSight = combine(AppLifecycle.foreground, AppLifecycle.callScreen) { app, callScreen -> app || callScreen }
+        .stateIn(scope, SharingStarted.Eagerly, false)
+    /** My camera was on when the call went out of sight (it stops there, and comes back with me, facing the same way). */
+    private var cameraPaused: Boolean? = null
+    /** The other side sees my video (it doesn't with their screen off): my camera sends only then. */
+    private var peerWatching = true
+    /** What I last told the other side about seeing theirs. */
+    private var toldWatching = true
 
     init {
         scope.launch { realtime.events.collect { handle(it) } }
@@ -142,7 +156,31 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         scope.launch { realtime.connects.collect { onReconnected() } }
         // Onto mobile data, or the setting changed: my camera follows (what I receive changes at the next negotiation).
         scope.launch {
-            combine(DataUse.net, DataUse.calls) { _, _ -> DataUse.lessForCalls() }.distinctUntilChanged().collect { if (camera != null) tuneVideo() }
+            combine(DataUse.net, DataUse.calls, DataUse.saver) { _, _, _ -> DataUse.lessForCalls() }.distinctUntilChanged().collect { if (camera != null) tuneVideo() }
+        }
+        // Out of sight (screen off, another app), as in WhatsApp: my camera pauses, and the other side stops
+        // sending me theirs; both come back with me. (A moment between two screens isn't out of sight.)
+        scope.launch {
+            inSight.drop(1).collectLatest { seen ->
+                // (Noted at once: Android may stop the camera itself meanwhile, and it still comes back with me.)
+                val facing = camera?.front
+                if (!seen) delay(1_000)
+                if (s.idle || s.phase == "incoming") return@collectLatest
+                if (!seen && facing != null && cameraPaused == null) {
+                    cameraPaused = facing
+                    if (camera != null) stopCamera()
+                } else if (seen) {
+                    cameraPaused?.let { front ->
+                        cameraPaused = null
+                        val minimized = s.minimized
+                        if (startCamera(front)) {
+                            emitCamera(true)
+                            set { it.copy(minimized = minimized) }
+                        }
+                    }
+                }
+                tellWatching()
+            }
         }
         scope.launch {
             AppLifecycle.foreground.collect { shown ->
@@ -175,6 +213,9 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         mic = null
         micSource?.dispose()
         micSource = null
+        cameraPaused = null
+        peerWatching = true
+        toldWatching = true
         _state.value = CallState()
     }
 
@@ -188,6 +229,14 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         if (pc != null) realtime.emit("call:camera", buildJsonObject { put("callId", callId); put("on", on) })
     }
 
+    /** Tells the other side whether I see their video now (out of sight I don't: they needn't send it). */
+    private fun tellWatching() {
+        val seen = inSight.value
+        if (pc == null || seen == toldWatching) return
+        toldWatching = seen
+        signal(buildJsonObject { put("watching", seen) })
+    }
+
     private suspend fun startMic() {
         Rtc.ready(Graph.context)
         val (source, track) = Rtc.openMicrophone()
@@ -195,10 +244,10 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         mic = track
     }
 
-    private fun startCamera(): Boolean {
+    private fun startCamera(front: Boolean = com.addakhana.app.data.Devices.frontCamera.value): Boolean {
         if (s.idle) return false
         Rtc.init(Graph.context)
-        val cam = Rtc.Camera.open(front = com.addakhana.app.data.Devices.frontCamera.value, onEnded = { scope.launch { if (camera != null) stopCamera() } }) ?: return false
+        val cam = Rtc.Camera.open(front = front, onEnded = { scope.launch { if (camera != null) stopCamera() } }) ?: return false
         camera?.stop()
         camera = cam
         videoTx?.sender?.let { runCatching { it.setTrack(cam.track, false) } }
@@ -215,7 +264,10 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         val bitrate = if (less) LESS_BITRATE else MAX_BITRATE
         val fps = if (less) LESS_FPS else MAX_FPS
         val scale = if (less) LESS_SCALE else 1.0
-        if (encoding.maxBitrateBps == bitrate && encoding.maxFramerate == fps && encoding.scaleResolutionDownBy == scale) return
+        // Nobody watching (their screen is off): nothing is encoded or sent.
+        val active = peerWatching
+        if (encoding.maxBitrateBps == bitrate && encoding.maxFramerate == fps && encoding.scaleResolutionDownBy == scale && encoding.active == active) return
+        encoding.active = active
         encoding.maxBitrateBps = bitrate
         encoding.maxFramerate = fps
         encoding.scaleResolutionDownBy = scale
@@ -294,6 +346,7 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
                             if (!synced) {
                                 synced = true
                                 emitCamera(s.cameraOn)
+                                tellWatching()
                             }
                         }
                         PeerConnection.PeerConnectionState.DISCONNECTED -> {
@@ -342,17 +395,28 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         return conn
     }
 
-    /** Sound arriving (even a silent speaker sends a few packets a second), and who's speaking. */
+    /**
+     * Sound arriving (even a silent speaker sends a few packets a second), and
+     * who's speaking, for the call screen. Out of sight (screen off, another
+     * app) nobody sees either, so it doesn't look until the call shows again.
+     */
     private fun watchIncomingAudio(conn: PeerConnection) {
         healthJob?.cancel()
         healthJob = scope.launch {
             var last: Long? = null
             var stalledSince = 0L
-            var tick = 0
+            var checkedAt = 0L
             var localQuiet = 0L
             var remoteQuiet = 0L
             while (isActive && pc === conn) {
                 delay(300)
+                if (!inSight.value) {
+                    if (s.remoteSpeaking || s.localSpeaking || s.noIncomingAudio) set { it.copy(remoteSpeaking = false, localSpeaking = false, noIncomingAudio = false) }
+                    inSight.first { it }
+                    last = null
+                    stalledSince = 0
+                    continue
+                }
                 val report = runCatching { conn.stats() }.getOrNull() ?: continue
                 val now = System.currentTimeMillis()
                 // Speaking rings.
@@ -371,7 +435,8 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
                     if (localQuiet == 0L) localQuiet = now else if (now - localQuiet > 400) set { it.copy(localSpeaking = false) }
                 }
                 // Every 2 s: is any sound arriving at all?
-                if (++tick % 7 != 0) continue
+                if (now - checkedAt < 1_900) continue
+                checkedAt = now
                 val bytes = report.incomingAudioBytes() ?: continue
                 if (last != null && bytes == last) {
                     if (stalledSince == 0L) stalledSince = now
@@ -586,6 +651,12 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
     }
 
     private suspend fun onSignal(data: JsonObject) {
+        // Whether the other side sees my video now.
+        data.bool("watching")?.let {
+            peerWatching = it
+            tuneVideo()
+            return
+        }
         val conn = pc ?: return
         // The callee's side broke: it asks me (the caller) for a new path.
         if (data.bool("restart") == true) {

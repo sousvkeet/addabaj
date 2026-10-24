@@ -176,6 +176,7 @@ Each chat and room has your own settings, which only you see and which follow yo
   - Tap it to go back to the call.
   - It stays where you left it, and as big, for the next call.
 - **In the Android app it floats over other apps** (app 1.10.0, Android 8 and newer). Leaving the app during a video call (Home, Back from the chats, or switching apps) turns it into Android's picture-in-picture window: just the video, with mute and hang-up buttons. Drag it, pinch it, or tap it to go back to Adda Khana. Closing it keeps the call going, with its notification. Messages that arrive meanwhile notify as usual.
+- **Paused out of sight, as in WhatsApp** (Android app 2.4.0 on): when the phone's screen goes off during a video call, or the app goes out of sight without its floating window, its camera pauses (you see the person's photo), and your side stops sending it video it can't show. Both come back when the call's on screen again; the call itself carries on.
 - Missed, declined and finished calls are logged in the chat.
 - **Microphone, speaker and camera:** choose them from the account menu, during a call, or under room voice.
   - A live level bar shows which microphone hears you, a test sound checks the speaker, and a preview checks the camera.
@@ -446,7 +447,7 @@ server {
 
 `android/` holds a native app that opens the production site full screen and adds what a messenger needs on a phone. Because the app shows the live site, server updates reach it without a new APK.
 
-**App 2.0.0 is fully native** ([`android-native/`](android-native/README.md), Kotlin and Jetpack Compose), built like WhatsApp and Telegram so room voice and calls never depend on a web page that Android can freeze. It also uses far less data (see its README). It's the same app to Android (same package and signing key), so it installs over 1.x and keeps you signed in. What follows describes the WebView app (1.x).
+**App 2.0.0 is fully native** ([`android-native/`](android-native/README.md), Kotlin and Jetpack Compose), built like WhatsApp and Telegram so room voice and calls never depend on a web page that Android can freeze. It also uses far less data and battery (see its README). It's the same app to Android (same package and signing key), so it installs over 1.x and keeps you signed in. What follows describes the WebView app (1.x).
 
 **Install:** download `AddaKhana-<version>.apk` from the [latest release](https://github.com/sousvkeet/addabaj/releases/latest) on an Android phone (Android 7.0 or newer), open it, and allow installing from your browser or file manager when Android asks. After that, the app offers new versions itself (see [App updates](#app-updates)); they install over the old version, keeping you signed in. The released APK opens `https://adda-api.clix.dpdns.org`; to use your own server, build the app yourself (below).
 
