@@ -132,8 +132,17 @@ async function open(kind: 'audioinput' | 'videoinput', base: MediaTrackConstrain
   }
 }
 
-/** Ask for the microphone with clear, fixable error messages. */
-export const getMicrophone = () => open('audioinput', AUDIO);
+/**
+ * Ask for the microphone with clear, fixable error messages. With noise
+ * cancellation on (the default), it comes cleaned of background noise
+ * (lib/noiseCancel.ts), or as it is where that can't run.
+ */
+export async function getMicrophone() {
+  const mic = await open('audioinput', AUDIO);
+  if (!useDevices.getState().noiseCancel) return mic;
+  const { cancelNoise } = await import('./noiseCancel');
+  return (await cancelNoise(mic)) ?? mic;
+}
 
 /** Ask for the camera with clear, fixable error messages. */
 export const getCamera = () => open('videoinput', VIDEO);

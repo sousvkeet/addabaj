@@ -13,26 +13,27 @@ type Names = Partial<Record<DeviceKind, string>>;
 const KEY = 'adda-devices';
 const KINDS = ['audioinput', 'audiooutput', 'videoinput'] as const;
 
-function load(): { choice: Choice; names: Names } {
+function load(): { choice: Choice; names: Names; noiseCancel: boolean } {
   const choice = { audioinput: '', audiooutput: '', videoinput: '' };
   try {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}');
     for (const k of KINDS) if (typeof saved[k] === 'string') choice[k] = saved[k];
-    return { choice, names: saved.names ?? {} };
+    return { choice, names: saved.names ?? {}, noiseCancel: saved.noiseCancel !== false };
   } catch {
-    return { choice, names: {} };
-  }
-}
-
-function persist(choice: Choice, names: Names) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ ...choice, names }));
-  } catch {
-    /* storage unavailable */
+    return { choice, names: {}, noiseCancel: true };
   }
 }
 
 const saved = load();
+let noiseCancel = saved.noiseCancel;
+
+function persist(choice: Choice, names: Names) {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ ...choice, names, noiseCancel }));
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 /** Browsers that can send audio to a chosen speaker (Chrome, Edge, Firefox). */
 export const canPickSpeaker = typeof HTMLMediaElement !== 'undefined' && 'setSinkId' in HTMLMediaElement.prototype;
@@ -54,8 +55,11 @@ type DevicesState = {
   defaults: Partial<Record<DeviceKind, string>>;
   /** False until the browser reveals device names (needs mic/camera permission once). */
   labelled: boolean;
+  /** Noise cancellation of the microphone in calls and room voice (on unless turned off). */
+  noiseCancel: boolean;
   refresh: () => Promise<void>;
   choose: (kind: DeviceKind, deviceId: string) => void;
+  setNoiseCancel: (on: boolean) => void;
 };
 
 export const useDevices = create<DevicesState>()((set, get) => ({
@@ -64,6 +68,7 @@ export const useDevices = create<DevicesState>()((set, get) => ({
   devices: [],
   defaults: {},
   labelled: false,
+  noiseCancel,
 
   refresh: async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -106,6 +111,14 @@ export const useDevices = create<DevicesState>()((set, get) => ({
     persist(choice, names);
     set({ choice, names });
     listeners.forEach((fn) => fn(kind));
+  },
+
+  setNoiseCancel: (on) => {
+    noiseCancel = on;
+    persist(get().choice, get().names);
+    set({ noiseCancel: on });
+    // A call or room voice going on takes the microphone again, with or without it.
+    listeners.forEach((fn) => fn('audioinput'));
   },
 }));
 

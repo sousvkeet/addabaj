@@ -19,9 +19,10 @@ enum class Output(val label: String) {
 }
 
 /**
- * Settings › Audio and video: where calls and room voice sound, and which
- * camera they start with. A phone's microphone follows its sound (the
- * headset's when the sound is in the headset), so there's no separate choice.
+ * Settings › Audio and video: where calls and room voice sound, whether
+ * noise cancellation cleans the microphone, and which camera they start with.
+ * A phone's microphone follows its sound (the headset's when the sound is in
+ * the headset), so there's no separate choice.
  */
 object Devices {
     private lateinit var prefs: android.content.SharedPreferences
@@ -30,11 +31,16 @@ object Devices {
     private val _frontCamera = MutableStateFlow(true)
     /** Calls and room video start with the front camera (else the back one). */
     val frontCamera: StateFlow<Boolean> = _frontCamera.asStateFlow()
+    private val _noiseCancel = MutableStateFlow(true)
+    /** Noise cancellation of the microphone in calls and room voice (rtc/NoiseCanceller), on unless turned off. */
+    val noiseCancel: StateFlow<Boolean> = _noiseCancel.asStateFlow()
 
     fun init(c: Context) {
         prefs = c.getSharedPreferences("devices", Context.MODE_PRIVATE)
         _output.value = runCatching { Output.valueOf(prefs.getString("output", null) ?: "Auto") }.getOrDefault(Output.Auto)
         _frontCamera.value = prefs.getBoolean("front_camera", true)
+        _noiseCancel.value = prefs.getBoolean("noise_cancel", true)
+        com.addakhana.app.rtc.NoiseCanceller.setOn(_noiseCancel.value)
     }
 
     fun setOutput(o: Output) {
@@ -45,6 +51,13 @@ object Devices {
     fun setFrontCamera(front: Boolean) {
         _frontCamera.value = front
         prefs.edit().putBoolean("front_camera", front).apply()
+    }
+
+    /** Takes effect at once, in a call or room voice too. */
+    fun setNoiseCancel(on: Boolean) {
+        _noiseCancel.value = on
+        prefs.edit().putBoolean("noise_cancel", on).apply()
+        com.addakhana.app.rtc.NoiseCanceller.setOn(on)
     }
 
     /** What kind of output a device is (null: one calls don't use). */

@@ -23,13 +23,15 @@ val debugUrl = (findProperty("addaDebugUrl") ?: appUrl).toString().trimEnd('/')
 android {
     namespace = "com.addakhana.app"
     compileSdk = 36
+    // Noise cancellation (RNNoise, src/main/cpp) is native code.
+    ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.addakhana.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 104
-        versionName = "2.4.0"
+        versionCode = 105
+        versionName = "2.5.0"
         buildConfigField("String", "APP_URL", "\"$appUrl\"")
         // The site's own https address, also in debug builds (YouTube's player wants a real https page).
         buildConfigField("String", "SITE_URL", "\"$appUrl\"")
@@ -80,6 +82,13 @@ android {
             // ...and only the code real phones run (emulators are x86).
             ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
             if (keystoreFile.exists()) signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
         }
     }
 

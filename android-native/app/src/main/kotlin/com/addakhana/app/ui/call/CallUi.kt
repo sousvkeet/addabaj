@@ -39,6 +39,7 @@ import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Cameraswitch
 import androidx.compose.material.icons.rounded.CloseFullscreen
+import androidx.compose.material.icons.rounded.PictureInPictureAlt
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.GridView
@@ -147,7 +148,7 @@ fun rememberMediaPermission(onResult: (granted: Boolean, video: Boolean) -> Unit
 }
 
 @Composable
-private fun RoundButton(icon: ImageVector, label: String, onClick: () -> Unit, size: Dp = 56.dp, background: Brush = SolidColor(Color.White.copy(alpha = 0.14f)), tint: Color = Color.White, caption: String? = null) {
+internal fun RoundButton(icon: ImageVector, label: String, onClick: () -> Unit, size: Dp = 56.dp, background: Brush = SolidColor(Color.White.copy(alpha = 0.14f)), tint: Color = Color.White, caption: String? = null) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.size(size).clip(CircleShape).background(background).clickable(onClickLabel = label, onClick = onClick), contentAlignment = Alignment.Center) {
             Icon(icon, label, tint = tint, modifier = Modifier.size(size * 0.45f))
@@ -575,7 +576,11 @@ fun VoiceTable(room: Room) {
                 AddaButton("Leave", { Graph.voice.leave() }, Modifier.weight(1f), variant = Variant.DangerSoft)
             }
             val cams = people.count { it.camera }
-            if (cams > 0) AddaButton("Show video ($cams on camera)", { Graph.voice.setMinimized(false) }, Modifier.fillMaxWidth().padding(top = 8.dp), variant = Variant.Soft, icon = Icons.Rounded.Videocam)
+            if (cams > 0) AddaButton("Show video ($cams on camera)", {
+                // The call's own screen, even with the room's video playing.
+                Graph.voice.setOnPlayer(false)
+                Graph.voice.setMinimized(false)
+            }, Modifier.fillMaxWidth().padding(top = 8.dp), variant = Variant.Soft, icon = Icons.Rounded.Videocam)
             AwayCard()
         }
     }
@@ -612,6 +617,7 @@ fun RoomCallStage() {
     val p = palette
     val voice by Graph.voice.state.collectAsState()
     val chat by Graph.chat.state.collectAsState()
+    val watchUi by Graph.watch.state.collectAsState()
     val roomId = voice.roomId ?: return
     val me = Graph.auth.user?.id
     val room = chat.rooms[roomId]
@@ -667,6 +673,11 @@ fun RoomCallStage() {
                 }
                 RoundButton(Icons.Rounded.Tune, "Audio and video settings", { settings = true }, 44.dp)
                 Spacer(Modifier.width(8.dp))
+                // The room's video is on its page: the cameras can go back over it.
+                if (com.addakhana.app.ui.watch.callRoomPlayerShown(voice, chat, watchUi)) {
+                    RoundButton(Icons.Rounded.PictureInPictureAlt, "Show over the video", { Graph.voice.setOnPlayer(true) }, 44.dp)
+                    Spacer(Modifier.width(8.dp))
+                }
                 RoundButton(Icons.Rounded.CloseFullscreen, "Shrink", { Graph.voice.setMinimized(true) }, 44.dp)
             }
         },

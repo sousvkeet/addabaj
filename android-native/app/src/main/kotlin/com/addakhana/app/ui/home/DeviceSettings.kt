@@ -59,7 +59,9 @@ import com.addakhana.app.Graph
 import com.addakhana.app.call.CallService
 import com.addakhana.app.data.Devices
 import com.addakhana.app.data.Output
+import com.addakhana.app.rtc.NoiseCanceller
 import com.addakhana.app.rtc.Rtc
+import com.addakhana.app.ui.admin.ToggleRow
 import com.addakhana.app.ui.call.VideoView
 import com.addakhana.app.ui.call.rememberMediaPermission
 import com.addakhana.app.ui.components.AddaButton
@@ -75,8 +77,8 @@ import kotlin.math.sqrt
 
 /**
  * Settings › Audio and video: where calls and room voice sound (and a test
- * sound there), whether the microphone hears you, and which camera they
- * start with (with a preview).
+ * sound there), whether the microphone hears you, noise cancellation, and
+ * which camera they start with (with a preview).
  */
 @Composable
 fun DeviceSettings(onDismiss: () -> Unit) {
@@ -138,6 +140,21 @@ fun DeviceSettings(onDismiss: () -> Unit) {
         Spacer(Modifier.height(18.dp))
         Heading(Icons.Rounded.Mic, "Microphone")
         MicMeter(output, busy)
+        Spacer(Modifier.height(14.dp))
+        val noiseCancel by Devices.noiseCancel.collectAsState()
+        val tooSlow by NoiseCanceller.tooSlow.collectAsState()
+        val canCancel = NoiseCanceller.available && !tooSlow
+        ToggleRow(
+            "Noise cancellation",
+            noiseCancel && canCancel,
+            { Devices.setNoiseCancel(it) },
+            hint = when {
+                !NoiseCanceller.available -> "Not available on this phone."
+                tooSlow -> "Off for now: this phone couldn't keep up with it in a call. It tries again when the app starts next."
+                else -> "Takes background noise out of your microphone in calls and room voice: traffic, typing, fans, a television. Your voice stays."
+            },
+            enabled = canCancel,
+        )
 
         Spacer(Modifier.height(18.dp))
         Heading(Icons.Rounded.Videocam, "Camera")

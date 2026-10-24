@@ -1,7 +1,8 @@
 import { useState, type ReactNode } from 'react';
-import { AtSign, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, PenLine, Settings2, ShieldCheck } from 'lucide-react';
+import { AtSign, AudioLines, Camera, ChevronRight, EyeOff, KeyRound, LogOut, MonitorSmartphone, Moon, PenLine, Settings2, ShieldCheck } from 'lucide-react';
 import { inApp, nativeAppVersion } from '../lib/native';
 import { useAuth } from '../store/auth';
+import { useDevices } from '../store/devices';
 import { useUi } from '../store/ui';
 import { Avatar } from './ui/Avatar';
 import { ConfirmDialog } from './ui/Dialog';
@@ -38,6 +39,15 @@ function Row({ icon, title, hint, onClick, trailing, danger, checked }: RowProps
   );
 }
 
+/** A switch drawn at the end of a row (the row itself is the switch). */
+function SwitchMark({ on }: { on: boolean }) {
+  return (
+    <span aria-hidden className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${on ? 'bg-aurora' : 'bg-line'}`}>
+      <span className={`absolute top-1 size-5 rounded-full bg-white shadow transition-[left] ${on ? 'left-6' : 'left-1'}`} />
+    </span>
+  );
+}
+
 /** Settings, as a screen of its own on phones (the You tab), like other messengers. */
 export function SettingsList() {
   const user = useAuth((s) => s.user);
@@ -45,6 +55,8 @@ export function SettingsList() {
   const theme = useUi((s) => s.theme);
   const toggleTheme = useUi((s) => s.toggleTheme);
   const openDevices = useUi((s) => s.setDevicesOpen);
+  const noiseCancel = useDevices((s) => s.noiseCancel);
+  const setNoiseCancel = useDevices((s) => s.setNoiseCancel);
   const [open, setOpen] = useState<'photo' | 'name' | 'id' | 'devices' | 'privacy' | 'permissions' | 'password' | 'logout' | null>(null);
   const permissions = usePermissions((s) => s.state);
   const { sessions } = useSessions(open !== 'devices');
@@ -92,6 +104,14 @@ export function SettingsList() {
           />
           <Row icon={<EyeOff size={19} />} title="Privacy" hint="Last seen, read receipts and blocked people" onClick={() => setOpen('privacy')} />
           <Row icon={<Settings2 size={19} />} title="Microphone, speaker and camera" hint="For calls, voice and video" onClick={() => openDevices(true)} />
+          <Row
+            icon={<AudioLines size={19} />}
+            title="Noise cancellation"
+            hint={noiseCancel ? 'On: background noise is taken out of your microphone in calls' : 'Off: your microphone is sent as it is'}
+            onClick={() => setNoiseCancel(!noiseCancel)}
+            checked={noiseCancel}
+            trailing={<SwitchMark on={noiseCancel} />}
+          />
           {/* The app (1.10.0 on): what it may use on this phone. */}
           {permissions && <Row icon={<ShieldCheck size={19} />} title="App permissions" hint={permissionsSummary(permissions)} onClick={() => setOpen('permissions')} />}
           <Row
@@ -100,11 +120,7 @@ export function SettingsList() {
             hint={theme === 'dark' ? 'Midnight Aurora' : 'Off: Ocean Mint'}
             onClick={toggleTheme}
             checked={theme === 'dark'}
-            trailing={
-              <span aria-hidden className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${theme === 'dark' ? 'bg-aurora' : 'bg-line'}`}>
-                <span className={`absolute top-1 size-5 rounded-full bg-white shadow transition-[left] ${theme === 'dark' ? 'left-6' : 'left-1'}`} />
-              </span>
-            }
+            trailing={<SwitchMark on={theme === 'dark'} />}
           />
           <Row icon={<KeyRound size={19} />} title="Change password" onClick={() => setOpen('password')} />
           <Row icon={<LogOut size={19} />} title="Log out" onClick={() => setOpen('logout')} danger />

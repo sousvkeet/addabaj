@@ -1,6 +1,8 @@
 .gradle/
 build/
 app/build/
+# CMake's working files for the native code (noise cancellation).
+app/.cxx/
 local.properties
 .idea/
 *.iml

@@ -42,6 +42,8 @@
     "test:profile": "node tests/profile.mjs",
     "test:history": "node tests/history.mjs",
     "test:clear-chat": "node tests/clear-chat.mjs",
+    "test:noise": "node tests/noise-cancel.mjs",
+    "test:over-video": "node tests/player-calls.mjs",
     "test:moderation": "node tests/moderation.mjs"
   },
   "devDependencies": {

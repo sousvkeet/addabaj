@@ -12,6 +12,7 @@ import { useLiveStream, type HostSession } from '../../store/liveStream';
 import { toast } from '../../store/ui';
 import { Button, IconButton } from '../ui/Button';
 import { MuteForEveryone, MutedForEveryone, mutedForEveryone } from './RoomSound';
+import { PlayerCalls } from './PlayerCalls';
 
 /** Where the host's file is now, from the last shared state. */
 const positionOf = (w: WatchState) => (w.playing ? w.position + Math.max(0, serverNow() - w.at) / 1000 : w.position);
@@ -45,6 +46,8 @@ export function LiveStage({ room, onChange, docked = false }: { room: RoomDetail
   return (
     <section aria-label="Live stream" className={docked ? 'size-full bg-black' : 'shrink-0 border-b border-line bg-black'}>
       <div ref={frame} className={docked ? 'relative size-full bg-black' : 'relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black'}>
+        {/* My room call's cameras, floating over the video (on the room's page). */}
+        {!docked && <PlayerCalls roomId={room.id} />}
         {mine ? <HostView host={host} watch={watch} frame={frame} /> : <ViewerView key={device.sessionId} room={room} watch={watch} frame={frame} docked={docked} />}
         <span className="pointer-events-none absolute top-2 left-2 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-[12px] font-bold tracking-wide text-white">
           <span className="rec-dot size-2 rounded-full bg-danger" aria-hidden />

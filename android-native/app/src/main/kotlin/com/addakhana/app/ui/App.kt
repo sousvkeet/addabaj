@@ -138,7 +138,9 @@ private fun Main(leave: () -> Unit) {
         return
     }
     val cams = voice.roomId?.let { id -> chat.voice[id].orEmpty().count { it.camera } } ?: 0
-    val roomStage = voice.live && !voice.minimized && (cams > 0 || voice.cameraOn)
+    val watchUi by Graph.watch.state.collectAsState()
+    // With the room's video on its page, the cameras float over it (ui/watch/PlayerCalls.kt) rather than on the call's screen.
+    val roomStage = voice.live && !voice.minimized && (cams > 0 || voice.cameraOn) && !com.addakhana.app.ui.watch.callsOnPlayer(voice, chat, watchUi)
     val callStage = call.inCall && !call.minimized
     // A call's stage layout (who's full screen or floating) lasts until it ends.
     androidx.compose.runtime.LaunchedEffect(call.idle && !voice.active) { if (call.idle && !voice.active) com.addakhana.app.ui.call.Stages.clear() }

@@ -82,6 +82,12 @@ data class VoiceState(
     val frontCamera: Boolean = true,
     /** The call window is shrunk to the bar. */
     val minimized: Boolean = false,
+    /**
+     * With the room's video playing on its page, the call's cameras float over the
+     * player (ui/watch/PlayerCalls.kt) rather than on the call's own screen (on
+     * unless that screen was asked for).
+     */
+    val onPlayer: Boolean = true,
     /** My connection to the server dropped: the call carries on once it's back. */
     val reconnecting: Boolean = false,
     val moderation: Moderation = Moderation(),
@@ -236,7 +242,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         told.clear()
         shown = emptyMap()
         shownBy.clear()
-        _state.value = VoiceState()
+        _state.value = VoiceState(onPlayer = s.onPlayer)
     }
 
     private fun signal(roomId: String, to: String, data: JsonElement) =
@@ -631,10 +637,13 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
 
     fun setMinimized(minimized: Boolean) = set { it.copy(minimized = minimized) }
 
+    fun setOnPlayer(onPlayer: Boolean) = set { it.copy(onPlayer = onPlayer) }
+
     /** How big the call window (or its small floating view, "pip") shows each person now; anyone missing isn't shown. */
     fun setViews(views: Map<String, View>, from: String = "window") {
         if (views.isNotEmpty()) shownBy[from] = views else shownBy.remove(from)
-        shown = shownBy["pip"] ?: shownBy["window"] ?: emptyMap()
+        // Where cameras show: the system's floating window, over the room's video, or the call's screen.
+        shown = shownBy["pip"] ?: shownBy["player"] ?: shownBy["window"] ?: emptyMap()
         tellAll()
     }
 

@@ -6,6 +6,7 @@ import io.livekit.android.AudioOptions
 import io.livekit.android.LiveKit
 import io.livekit.android.LiveKitOverrides
 import io.livekit.android.RoomOptions
+import io.livekit.android.audio.AudioProcessorOptions
 import io.livekit.android.audio.NoAudioHandler
 import io.livekit.android.events.DisconnectReason
 import io.livekit.android.events.RoomEvent
@@ -21,7 +22,10 @@ import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.VideoEncoding
 import io.livekit.android.room.track.VideoQuality
+import com.addakhana.app.BuildConfig
+import com.addakhana.app.rtc.NoiseCanceller
 import com.addakhana.app.rtc.Rtc
+import com.addakhana.app.rtc.TestMic
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -78,7 +82,14 @@ class LiveKitCall(
                     // LiveKit hands every 10 ms of my microphone to its audio sinks, copied each time; the app has
                     // none, so the copying (a hundred a second, all call long, and the clean-up after) goes.
                     builder.setSamplesReadyCallback(null)
+                    // Debug builds: a test sound in place of the microphone, when there is one (TestMic).
+                    if (BuildConfig.DEBUG && TestMic.present()) builder.setAudioBufferCallback { buffer, format, channels, _, bytes, _ ->
+                        TestMic.fill(buffer, format, channels, bytes)
+                        0L
+                    }
                 },
+                // Noise cancellation, as in the app's own calls (NoiseCanceller).
+                audioProcessorOptions = AudioProcessorOptions(capturePostProcessor = NoiseCanceller),
             ),
             eglBase = egl,
         ),

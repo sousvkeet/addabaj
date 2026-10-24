@@ -16,6 +16,7 @@ import { Dialog, Field, inputClass } from '../ui/Dialog';
 import { LiveStage } from './LiveStage';
 import { FileView, YouTubeView, type PlayerAdapter, type UserAction } from './players';
 import { MuteForEveryone, MutedForEveryone, mutedForEveryone } from './RoomSound';
+import { PlayerCalls } from './PlayerCalls';
 
 /** Where the video should be right now, from the last shared state. */
 function expected(w: WatchState) {
@@ -251,6 +252,8 @@ function SyncedStage({ room, onChange, docked = false }: StageProps) {
   return (
     <section aria-label="Watch together" className={docked ? 'size-full bg-black' : 'shrink-0 border-b border-line bg-black'}>
       <div ref={frame} className={docked ? 'relative size-full bg-black' : 'relative mx-auto aspect-video w-full max-w-[calc(44dvh*16/9)] bg-black'}>
+        {/* My room call's cameras, floating over the video (on the room's page). */}
+        {!docked && <PlayerCalls roomId={room.id} />}
         {watch.source.preparing || watch.source.error ? (
           <Preparing roomId={room.id} failed={watch.source.error} finding={watch.source.finding ? watch.source.title : undefined} />
         ) : (

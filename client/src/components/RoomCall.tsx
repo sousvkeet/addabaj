@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Maximize, Mic, MicOff, Minimize, Minimize2, PhoneOff, Settings2, SwitchCamera, Video, VideoOff } from 'lucide-react';
+import { Maximize, Mic, MicOff, Minimize, Minimize2, PhoneOff, PictureInPicture2, Settings2, SwitchCamera, Video, VideoOff } from 'lucide-react';
 import { useBackClose } from '../lib/back';
 import { errorMessage } from '../lib/api';
 import type { VoiceParticipant } from '../lib/types';
@@ -8,6 +8,7 @@ import { useChat } from '../store/chat';
 import { useDevices } from '../store/devices';
 import { toast, useUi } from '../store/ui';
 import { useVoice, type View } from '../store/voice';
+import { useWatching } from '../store/watching';
 import { Avatar } from './ui/Avatar';
 import { IconButton } from './ui/Button';
 import { Menu, type MenuItem } from './ui/Menu';
@@ -30,18 +31,35 @@ export function useCallCameras() {
   return roomId ? others + (mine ? 1 : 0) : 0;
 }
 
-/** The room call's window is showing (rather than just the voice bar). */
+/** The room of my call is showing its video (watch together or a live stream) on its page now. */
+export function useCallRoomPlayerShown() {
+  const roomId = useVoice((s) => (s.status === 'live' ? s.roomId : null));
+  const here = useWatching((s) => !!roomId && s.roomId === roomId && !!s.slot);
+  const playing = useChat((s) => !!roomId && !!s.roomDetails[roomId]?.watch);
+  return here && playing;
+}
+
+/** The call's cameras float over the room's video player (components/watch/PlayerCalls.tsx), and the video plays on. */
+export function useCallsOnPlayer() {
+  const cameras = useCallCameras();
+  const onPlayer = useVoice((s) => s.onPlayer);
+  return useCallRoomPlayerShown() && onPlayer && cameras > 0;
+}
+
+/** The room call's window is showing (rather than just the voice bar, or the cameras over the room's video). */
 export function useRoomStageOpen() {
   const cameras = useCallCameras();
   const minimized = useVoice((s) => s.minimized);
-  return cameras > 0 && !minimized;
+  const onPlayer = useCallsOnPlayer();
+  return cameras > 0 && !minimized && !onPlayer;
 }
 
 /** The room call shrunk to its bar while cameras are on: its video floats over the app (components/CallPip.tsx). */
 export function useRoomPip() {
   const cameras = useCallCameras();
   const minimized = useVoice((s) => s.minimized);
-  return cameras > 0 && minimized;
+  const onPlayer = useCallsOnPlayer();
+  return cameras > 0 && minimized && !onPlayer;
 }
 
 /** Talking this long takes over the room call's small view... */
@@ -98,7 +116,7 @@ export function RoomCameraButton({ size = 40 }: { size?: number }) {
 }
 
 /** Front or back camera (or the next one along), when there's more than one. */
-function SwitchCameraButton({ size = 40 }: { size?: number }) {
+export function SwitchCameraButton({ size = 40 }: { size?: number }) {
   const devices = useDevices((s) => s.devices);
   const localVideo = useVoice((s) => s.localVideo);
   const cameras = devices.filter((d) => d.kind === 'videoinput');
@@ -191,6 +209,9 @@ function Stage({ roomId }: { roomId: string }) {
   const ownerId = useChat((s) => s.rooms[roomId]?.ownerId);
   const moderateVoice = useChat((s) => s.moderateVoice);
   const [focus, setFocus] = useState<string | null>(null);
+  // The room's video is on its page: the cameras can go back over it.
+  const overVideo = useCallRoomPlayerShown();
+  const setOnPlayer = useVoice((s) => s.setOnPlayer);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [full, setFull] = useState(false);
   const root = useRef<HTMLDivElement>(null);
@@ -393,6 +414,11 @@ function Stage({ roomId }: { roomId: string }) {
             {full ? <Minimize size={17} /> : <Maximize size={17} />}
           </IconButton>
         </span>
+        {overVideo && (
+          <IconButton label="Show over the video" variant="on-dark" size={38} onClick={() => setOnPlayer(true)}>
+            <PictureInPicture2 size={17} />
+          </IconButton>
+        )}
         <IconButton label="Shrink video" variant="on-dark" size={38} onClick={() => setMinimized(true)}>
           <Minimize2 size={17} />
         </IconButton>
@@ -484,7 +510,7 @@ function Tile({ person, width, height, fill, contain, mirrored, small, onClick, 
 }
 
 /** A camera in a tile, shown once its first picture arrives (the photo shows until then). */
-function TileVideo({ stream, mirrored, contain, who }: { stream: MediaStream; mirrored: boolean; contain: boolean; who: string }) {
+export function TileVideo({ stream, mirrored, contain, who }: { stream: MediaStream; mirrored: boolean; contain: boolean; who: string }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [ready, setReady] = useState(false);
   useEffect(() => {

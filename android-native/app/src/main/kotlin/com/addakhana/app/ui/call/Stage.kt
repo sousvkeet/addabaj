@@ -152,7 +152,7 @@ class TextureVideoView(context: Context) : TextureView(context), TextureView.Sur
 }
 
 @Composable
-private fun StageVideo(track: VideoTrack, mirror: Boolean, modifier: Modifier) {
+internal fun StageVideo(track: VideoTrack, mirror: Boolean, modifier: Modifier) {
     AndroidView(
         factory = { TextureVideoView(it) },
         update = { v ->

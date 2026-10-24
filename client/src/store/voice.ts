@@ -77,6 +77,12 @@ type VoiceState = {
   localVideo: MediaStream | null;
   /** The call window is shrunk to the bar. */
   minimized: boolean;
+  /**
+   * With the room's video playing on its page, the call's cameras float over the
+   * player (components/watch/PlayerCalls.tsx) rather than in the call's window
+   * (on unless the call's window was asked for).
+   */
+  onPlayer: boolean;
   /** My connection to the server dropped (a network change): the call carries on once it's back. */
   reconnecting: boolean;
   /** An admin muted me here (I can't unmute), or stopped my camera (I can't turn it on), until they let me. */
@@ -89,12 +95,13 @@ type VoiceState = {
   toggleMute: () => void;
   toggleCamera: () => Promise<void>;
   setMinimized: (minimized: boolean) => void;
+  setOnPlayer: (onPlayer: boolean) => void;
   /**
    * How big the call window (or, `from` 'pip', the call's small floating view)
    * shows each person now; anyone missing isn't shown. The small view's say
    * counts while it's there.
    */
-  setViews: (views: Record<string, View>, from?: 'window' | 'pip') => void;
+  setViews: (views: Record<string, View>, from?: ViewSource) => void;
 
   onPeerJoined: (e: { roomId: string; userId: string }) => void;
   onPeerLeft: (e: { roomId: string; userId: string }) => void;
@@ -136,6 +143,7 @@ const idle = {
   cameraBusy: false,
   localVideo: null,
   minimized: false,
+  onPlayer: true,
   reconnecting: false,
   moderation: FREE,
   via: null,
@@ -157,7 +165,9 @@ const lkMeters = new Map<string, () => void>();
 const wanted = new Map<string, View>();
 /** How big I show each person (as the call window, or its small floating view, last said). */
 let shown: Record<string, View> = {};
-const shownBy: Partial<Record<'window' | 'pip', Record<string, View>>> = {};
+/** Where cameras are shown: the call's window, its floating window, or over the room's video player. */
+type ViewSource = 'window' | 'pip' | 'player';
+const shownBy: Partial<Record<ViewSource, Record<string, View>>> = {};
 /** What I last told each person about that. */
 const told = new Map<string, View>();
 /** When each person's connection was last made again (see REPAIR_EVERY_MS). */
@@ -233,7 +243,8 @@ export const useVoice = create<VoiceState>()((set, get) => {
     shown = {};
     delete shownBy.window;
     delete shownBy.pip;
-    set({ ...idle });
+    delete shownBy.player;
+    set({ ...idle, onPlayer: get().onPlayer });
   }
 
   // ── Through LiveKit ──
@@ -710,10 +721,12 @@ export const useVoice = create<VoiceState>()((set, get) => {
 
     setMinimized: (minimized) => set({ minimized }),
 
+    setOnPlayer: (onPlayer) => set({ onPlayer }),
+
     setViews: (views, from = 'window') => {
       if (Object.keys(views).length) shownBy[from] = views;
       else delete shownBy[from];
-      shown = shownBy.pip ?? shownBy.window ?? {};
+      shown = shownBy.pip ?? shownBy.player ?? shownBy.window ?? {};
       for (const id of peers.keys()) tell(id);
       for (const id of lk?.remoteParticipants.keys() ?? []) showVia(id);
     },

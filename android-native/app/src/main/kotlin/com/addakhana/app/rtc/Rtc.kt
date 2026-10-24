@@ -1,6 +1,7 @@
 package com.addakhana.app.rtc
 
 import android.content.Context
+import com.addakhana.app.BuildConfig
 import com.addakhana.app.Graph
 import com.addakhana.app.model.ClientConfig
 import com.addakhana.app.net.int
@@ -23,6 +24,7 @@ import livekit.org.webrtc.CameraVideoCapturer
 import livekit.org.webrtc.DefaultVideoDecoderFactory
 import livekit.org.webrtc.DefaultVideoEncoderFactory
 import livekit.org.webrtc.EglBase
+import livekit.org.webrtc.ExternalAudioProcessingFactory
 import livekit.org.webrtc.IceCandidate
 import livekit.org.webrtc.MediaConstraints
 import livekit.org.webrtc.MediaStreamTrack
@@ -78,6 +80,8 @@ object Rtc {
     fun init(context: Context) {
         if (::factory.isInitialized) return
         app = context.applicationContext
+        // Noise cancellation's native code, loaded here rather than on the first call's sound thread.
+        if (!Rnnoise.loaded) android.util.Log.w("Rtc", "No noise cancellation on this phone")
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(app).createInitializationOptions())
         egl = EglBase.create()
         // The phone's own rate (WebRTC can fall back to 8 kHz, which some phones refuse to record at).
@@ -89,15 +93,20 @@ object Rtc {
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
             .setAudioBufferCallback { buffer, format, channels, rate, bytes, captureTimeNs ->
+                if (BuildConfig.DEBUG) TestMic.fill(buffer, format, channels, bytes)
                 if (format == android.media.AudioFormat.ENCODING_PCM_16BIT) soundFeed?.invoke(buffer, bytes, rate, channels)
                 captureTimeNs
             }
             .createAudioDeviceModule()
+        // Noise cancellation (NoiseCanceller), after WebRTC's own processing; it goes in once the factory exists.
+        val processing = ExternalAudioProcessingFactory()
         factory = PeerConnectionFactory.builder()
             .setAudioDeviceModule(adm)
+            .setAudioProcessingFactory(processing)
             .setVideoEncoderFactory(DefaultVideoEncoderFactory(egl.eglBaseContext, true, true))
             .setVideoDecoderFactory(DefaultVideoDecoderFactory(egl.eglBaseContext))
             .createPeerConnectionFactory()
+        runCatching { processing.setCapturePostProcessing(NoiseCanceller) }
     }
 
     // ── Connections ────────────────────────────────────────────────────

@@ -154,6 +154,8 @@ fun WatchStage(room: Room, onChange: () -> Unit) {
                         IconBtn(Icons.Rounded.Fullscreen, "Full screen", { Graph.watch.setFullscreen(true) }, size = 36.dp, tint = Color.White)
                     }
                 }
+                // My room call's cameras, floating over the video (in the full-screen player while it's that).
+                if (!ui.fullscreen) PlayerCalls(room.id)
             }
         }
         Column(Modifier.fillMaxWidth().background(p.deep).padding(horizontal = 16.dp, vertical = 10.dp)) {
@@ -667,6 +669,8 @@ fun WatchFullscreen() {
             tint = Color.White,
             background = androidx.compose.ui.graphics.SolidColor(Color.Black.copy(alpha = 0.45f)),
         )
+        // My room call's cameras over the video here too (clear of the button above).
+        PlayerCalls(roomId, Modifier.padding(top = 56.dp))
     }
 }
 

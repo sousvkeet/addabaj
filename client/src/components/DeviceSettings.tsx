@@ -8,6 +8,7 @@ import { useUi } from '../store/ui';
 import { useVoice } from '../store/voice';
 import { Button } from './ui/Button';
 import { Dialog, inputClass } from './ui/Dialog';
+import { Toggle } from './ui/Toggle';
 
 export function DeviceSettings() {
   const open = useUi((s) => s.devicesOpen);
@@ -59,6 +60,8 @@ export function DeviceSelect({ kind, label, compact }: { kind: DeviceKind; label
 function Settings({ onDone }: { onDone: () => void }) {
   const refresh = useDevices((s) => s.refresh);
   const micChoice = useDevices((s) => s.choice.audioinput);
+  const noiseCancel = useDevices((s) => s.noiseCancel);
+  const setNoiseCancel = useDevices((s) => s.setNoiseCancel);
   const speakerChoice = useDevices((s) => s.choice.audiooutput);
   const cameraChoice = useDevices((s) => s.choice.videoinput);
   const callCamera = useCall((s) => (s.cameraOn ? s.localVideo : null));
@@ -95,7 +98,7 @@ function Settings({ onDone }: { onDone: () => void }) {
       stopStream(stream);
       setLevel(0);
     };
-  }, [micChoice]);
+  }, [micChoice, noiseCancel]);
 
   // Camera preview only on request (or when your call camera is already on).
   useEffect(() => {
@@ -158,6 +161,14 @@ function Settings({ onDone }: { onDone: () => void }) {
           <span className="shrink-0 text-right text-[12.5px] whitespace-nowrap text-ink-soft">{level > 0.08 ? 'Hearing you' : 'Say something'}</span>
         </div>
         {micError && <p className="mt-2 text-[13.5px] text-danger">{micError}</p>}
+        <div className="mt-3.5">
+          <Toggle
+            checked={noiseCancel}
+            onChange={setNoiseCancel}
+            label="Noise cancellation"
+            hint="Takes background noise out of your microphone in calls and room voice: traffic, typing, fans, a television. Your voice stays. The bar above shows what the others hear."
+          />
+        </div>
       </Section>
 
       <Section

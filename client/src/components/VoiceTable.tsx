@@ -39,6 +39,7 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
   const cameraBusy = useVoice((s) => s.cameraBusy);
   const toggleCamera = useVoice((s) => s.toggleCamera);
   const setMinimized = useVoice((s) => s.setMinimized);
+  const setOnPlayer = useVoice((s) => s.setOnPlayer);
   const cameras = useCallCameras();
   const stageOpen = useRoomStageOpen();
   const inCall = useCall((s) => s.phase !== 'idle');
@@ -171,7 +172,11 @@ export function VoiceTable({ roomId, members }: { roomId: string; members: RoomM
         </div>
       )}
       {here && status === 'live' && cameras > 0 && !stageOpen && (
-        <Button variant="outline" className="mt-2 w-full" onClick={() => setMinimized(false)}>
+        <Button variant="outline" className="mt-2 w-full" onClick={() => {
+            // The call's own window, even with the room's video playing.
+            setOnPlayer(false);
+            setMinimized(false);
+          }}>
           <Video size={17} />
           Show video ({cameras} on camera)
         </Button>

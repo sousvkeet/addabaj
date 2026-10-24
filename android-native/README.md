@@ -30,6 +30,7 @@ Everything the web app does, natively:
   - **Floating:** drag a floating window anywhere; it stays clear of the buttons. Press and hold anyone else and drag them out of the grid into one. Tap a floating window to swap it with whoever's full screen, as in WhatsApp.
   - **Switch any time:** press and hold anyone (or tap their ⋮) for Full screen, Small floating window or Back to the grid. The grid button at the top puts everyone back.
   - A one-to-one call starts as WhatsApp's: them full screen, you floating in the corner. Each picture keeps playing while it moves between these (nothing reconnects or goes black), and in rooms each person is asked to send just the size they're shown at.
+- **The call over the room's video:** while the room's video plays on its page (or full screen), the call's cameras float over the player instead of the call's screen covering it, and the video plays on. Up to three windows, yours among them (the others: whoever spoke last; the rest counted, and not sent to the phone). Drag a window to move it, or a corner to resize it, each on its own, always inside the player. A bar at the top has the microphone, camera and switch-camera buttons, and **Open the call**; the call's screen has **Show over the video** to go back (`ui/watch/PlayerCalls.kt`).
 - **Room calls through LiveKit** when the server has it: each person sends their microphone and camera once and LiveKit passes them on, so rooms stay smooth with many people, on far less data and battery. Admins' mutes and camera stops hold in LiveKit too.
 - **Video calls float** in picture-in-picture when you leave the app, with Mute and Hang up. In a room, it shows whoever you made full screen.
 - **Watch together.**
@@ -42,9 +43,11 @@ Everything the web app does, natively:
   - Watch a stream from a phone or computer.
   - Stream your screen (the picture), or a video file playing on the phone, with its sound. The film's sound goes out in place of the microphone's.
 - **Switch where the sound plays, as in WhatsApp:** the sound button in calls, room calls and on the call and voice bars shows where it plays now (loudspeaker, earpiece, Bluetooth, headphones). With only the earpiece and loudspeaker, a tap switches between them; with a headset in too, it opens the list, the one playing ticked. A headset put on during a call takes the sound; taken off, the sound goes back.
+- **Noise cancellation**, as in Meet or Zoom: in calls and room voice, background noise (traffic, typing, fans, a television) is taken out of the microphone and voices stay. On unless turned off with its switch in **You** (or in **Audio and video**); it switches at once, mid-call too. A quiet microphone then sends next to nothing, so it saves data as well. A phone too slow for it (cleaning 10 ms of sound taking 5 ms of processor time) turns it off by itself until the app starts again, rather than let the call's sound break up.
 - **Audio and video settings** (Settings, and the call screens):
   - where calls sound (earpiece, loudspeaker, Bluetooth, headphones), with a test sound
   - a microphone level meter
+  - noise cancellation on or off
   - which camera calls start with, with a preview
 - **Uses little data, like WhatsApp** (**You › Storage and data**):
   - **Calls:** voices send next to nothing while nobody speaks, always. **Use less data for calls** (*Off*, *On mobile data* by default, or *Always*; and whenever the phone's Battery Saver is on) also caps voices at 20 kbit/s, and video at about 450 kbit/s and 20 frames a second in calls and 480p in rooms. It asks the other side to send less too, and films in watch together stop at 480p.
@@ -77,6 +80,11 @@ Works on Android 7.0 and newer (API 24+), targets Android 16 (API 36).
   - `CallStore` handles one-to-one calls (phone to phone). `VoiceStore` handles room voice: through LiveKit when the server has it (`LiveKitCall`, with the server's ticket; the server still keeps the seats), otherwise a WebRTC mesh with the web app's signalling and repair rules.
   - `CallService` is the foreground service: audio mode and routing, proximity, and wake locks.
   - `IncomingCallActivity` is the lock-screen call screen.
+- **`rtc/`**
+  - `Rtc` sets up WebRTC for calls and live streams.
+  - `NoiseCanceller` is noise cancellation: WebRTC hands it each 10 ms of the microphone after its own processing (the echo canceller), through `ExternalAudioProcessingFactory`, and it cleans it in place with RNNoise (`Rnnoise`, native). WebRTC has one slot for it, shared by the app's calls and LiveKit's rooms (`AudioProcessorOptions`), and both put this one in it. A film's sound streaming in watch together is left alone.
+  - In debug builds, `TestMic` plays a sound file (`files/test-mic.wav`) in place of the microphone, for testing calls on an emulator.
+- **`cpp/`** (in `src/main`) is the native code: [RNNoise](https://gitlab.xiph.org/xiph/rnnoise) 0.2 (`rnnoise/`, see its README) and the app's glue (`noise_core.c`, `noise_jni.c`). RNNoise works at 48 kHz; at other rates the glue converts the sound there and back.
 - **`watch/`**
   - `WatchStore` keeps watch together in sync, with `Players` (ExoPlayer, YouTube).
   - `LiveStore` handles live streams. `FileSound` copies a file's sound into WebRTC's recording.
@@ -92,6 +100,7 @@ Libraries (each at least two weeks old when chosen):
 - Coil 3.5
 - LiveKit Android 2.29.0 (room calls). Its copy of WebRTC (144.7559.14, as `livekit.org.webrtc`) is the one the whole app uses, for calls and live streams too, so there's one in the app, not two. One of LiveKit's libraries (`audioswitch`) comes from JitPack, which the build allows for that library only.
 - Firebase BOM 34.19
+- RNNoise 0.2 (April 2024, noise cancellation), built from source with the NDK. Copyright Jean-Marc Valin, Xiph.Org Foundation, Mozilla and Amazon, under the BSD licence in `app/src/main/cpp/rnnoise/COPYING`.
 
 ## Notifications (Firebase)
 
@@ -99,7 +108,7 @@ The same Firebase project as the WebView app: the build reads `../android/app/go
 
 ## Build
 
-Needs JDK 17 or newer and the Android SDK (platform 36). Set `sdk.dir` in `local.properties` or `ANDROID_HOME`.
+Needs JDK 17 or newer and the Android SDK (platform 36), with the NDK (27.2.12479018) and CMake (3.22.1) for noise cancellation's native code: `sdkmanager "ndk;27.2.12479018" "cmake;3.22.1"`. Set `sdk.dir` in `local.properties` or `ANDROID_HOME`.
 
 ```bash
 cd android-native
@@ -109,7 +118,7 @@ cd android-native
 
 The server is `addaUrl` in `gradle.properties`; `-PaddaUrl=https://your-server.example` builds for another.
 
-Release builds are shrunk (R8) and carry only the ARM code real phones use. The keep rules for WebRTC (LiveKit's copy, `livekit.org.webrtc`), whose native code finds its Java classes by name, are in `app/proguard-rules.pro`.
+Release builds are shrunk (R8) and carry only the ARM code real phones use (noise cancellation adds about 1.4 MB for each). The keep rules for WebRTC (LiveKit's copy, `livekit.org.webrtc`), whose native code finds its Java classes by name, are in `app/proguard-rules.pro`.
 
 ## Signing
 

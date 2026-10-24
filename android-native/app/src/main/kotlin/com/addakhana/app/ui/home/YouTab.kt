@@ -31,6 +31,9 @@ import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.CameraAlt
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.NoiseAware
+import androidx.compose.ui.draw.alpha
+import com.addakhana.app.rtc.NoiseCanceller
 import androidx.compose.material.icons.rounded.Lock
 import androidx.compose.material.icons.rounded.PhotoCamera
 import androidx.compose.material.icons.rounded.Security
@@ -143,6 +146,7 @@ fun YouTab() {
         SettingRow(Icons.Rounded.Devices, "Devices", list?.let { s -> "${s.size} device${if (s.size == 1) "" else "s"}: ${s.count { it.kind == "app" }} app, ${s.count { it.kind != "app" }} browser${if (s.count { it.kind != "app" } == 1) "" else "s"}" } ?: "Where you're logged in") { dialog = "devices" }
         SettingRow(Icons.Rounded.Shield, "Privacy", "Last seen, read receipts and blocked people") { dialog = "privacy" }
         SettingRow(Icons.Rounded.Headset, "Microphone, speaker and camera", "Where calls sound, and testing them") { dialog = "av" }
+        NoiseCancelRow()
         SettingRow(Icons.Rounded.DataUsage, "Storage and data", "Network usage, auto-download, quality") { Nav.push(Screen.Storage()) }
         val perms by com.addakhana.app.data.Permissions.items.collectAsState()
         val missing = perms.filter { it.status == com.addakhana.app.data.Permissions.Status.Ask || it.status == com.addakhana.app.data.Permissions.Status.Settings }
@@ -201,6 +205,36 @@ fun YouTab() {
             onConfirm = { scope.launch { Graph.auth.logout() } },
             onDismiss = { dialog = null },
         )
+    }
+}
+
+/** Noise cancellation on or off, straight from the list (also in Microphone, speaker and camera). */
+@Composable
+private fun NoiseCancelRow() {
+    val p = palette
+    val on by com.addakhana.app.data.Devices.noiseCancel.collectAsState()
+    val tooSlow by NoiseCanceller.tooSlow.collectAsState()
+    val can = NoiseCanceller.available && !tooSlow
+    Row(
+        Modifier.fillMaxWidth().alpha(if (can) 1f else 0.6f).clickable(enabled = can) { com.addakhana.app.data.Devices.setNoiseCancel(!on) }.padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconTile(Icons.Rounded.NoiseAware)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Noise cancellation", color = p.ink, fontSize = 15.5.sp, fontWeight = FontWeight.Medium)
+            Text(
+                when {
+                    !NoiseCanceller.available -> "Not available on this phone"
+                    tooSlow -> "Off for now: this phone couldn't keep up"
+                    on -> "On: background noise is taken out of your microphone in calls"
+                    else -> "Off: your microphone is sent as it is"
+                },
+                color = p.inkSoft,
+                fontSize = 13.sp,
+            )
+        }
+        Toggle(on && can, { if (can) com.addakhana.app.data.Devices.setNoiseCancel(it) })
     }
 }
 
