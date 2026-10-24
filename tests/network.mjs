@@ -78,6 +78,8 @@ async function page(user, phone = false) {
   });
   const p = await ctx.newPage();
   p.on('pageerror', (e) => console.log(`  [${user.name} pageerror]`, e.message));
+  // DEBUG_CONSOLE=1: the page's own log too.
+  if (process.env.DEBUG_CONSOLE) p.on('console', (m) => console.log(`  [${user.name} ${(Date.now() / 1000).toFixed(1)}]`, m.text().slice(0, 160)));
   return p;
 }
 /** Bytes of sound and video received over the page's working call connections. */
@@ -150,6 +152,13 @@ try {
   });
 
   await check('a call connection that breaks gets a fresh one (the other side asks), and works', async () => {
+    // Through LiveKit, its connections mend themselves (the drops above): this is phone to phone's way.
+    if ((await pa.evaluate(() => window.adda.voice.getState().via)) === 'livekit') {
+      console.log('    (through LiveKit: no connection between the two of them to break)');
+      await pa.getByRole('button', { name: 'Leave voice' }).click();
+      await pb.getByRole('button', { name: 'Leave voice' }).click();
+      return;
+    }
     // Whoever has the smaller id asks the other for a fresh connection, as on a failure.
     const [small, big] = A.id < B.id ? [pa, pb] : [pb, pa];
     const bigId = A.id < B.id ? B.id : A.id;
@@ -171,7 +180,7 @@ try {
     await pa.waitForFunction(() => window.adda.call.getState().phase === 'active', null, { timeout: 15_000 });
     callId = await pa.evaluate(() => window.adda.call.getState().callId);
     await flowing(pb, 'Bikram');
-    const ufrag = () => pa.evaluate(() => /a=ice-ufrag:(\S+)/.exec(window.__pcs.at(-1).localDescription?.sdp ?? '')?.[1]);
+    const ufrag = () => pa.evaluate(() => /a=ice-ufrag:(\S+)/.exec(window.__pcs.filter((pc) => pc.connectionState !== 'closed').at(-1).localDescription?.sdp ?? '')?.[1]);
     const first = await ufrag();
     await pa.context().setOffline(true);
     await pa.waitForFunction(() => window.adda.call.getState().reconnecting, null, { timeout: 8000 });
@@ -189,10 +198,10 @@ try {
   });
 
   await check('the callee noticing a broken path first asks the caller for a new one', async () => {
-    const pcOf = (p) => p.evaluate(() => /a=ice-ufrag:(\S+)/.exec(window.__pcs.at(-1).localDescription?.sdp ?? '')?.[1]);
+    const pcOf = (p) => p.evaluate(() => /a=ice-ufrag:(\S+)/.exec(window.__pcs.filter((pc) => pc.connectionState !== 'closed').at(-1).localDescription?.sdp ?? '')?.[1]);
     const before = await pcOf(pa);
     await pb.evaluate((id) => window.adda.socket.emit('call:signal', { callId: id, data: { restart: true } }), callId);
-    await pa.waitForFunction((u) => /a=ice-ufrag:(\S+)/.exec(window.__pcs.at(-1).localDescription?.sdp ?? '')?.[1] !== u, before, { timeout: 8000 });
+    await pa.waitForFunction((u) => /a=ice-ufrag:(\S+)/.exec(window.__pcs.filter((pc) => pc.connectionState !== 'closed').at(-1).localDescription?.sdp ?? '')?.[1] !== u, before, { timeout: 8000 });
     await flowing(pb, 'Bikram');
     await pa.getByRole('region', { name: /Video call with/ }).getByRole('button', { name: 'End call' }).click();
     await pa.waitForFunction(() => window.adda.call.getState().phase === 'idle', null, { timeout: 8000 });

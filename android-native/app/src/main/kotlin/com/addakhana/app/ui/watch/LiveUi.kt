@@ -137,7 +137,7 @@ private val shade = Brush.verticalGradient(listOf(Color.Transparent, Color.Black
 // ── The host ─────────────────────────────────────────────────────────
 
 @Composable
-private fun HostView(host: LiveHost, preview: org.webrtc.VideoTrack?, w: WatchState, small: Boolean) {
+private fun HostView(host: LiveHost, preview: livekit.org.webrtc.VideoTrack?, w: WatchState, small: Boolean) {
     val p = palette
     val roomMuted = w.muted != null
     Box(Modifier.fillMaxSize()) {

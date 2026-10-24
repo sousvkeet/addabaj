@@ -28,6 +28,7 @@ import com.addakhana.app.Graph
 import com.addakhana.app.R
 import com.addakhana.app.push.Avatars
 import com.addakhana.app.data.Devices
+import com.addakhana.app.data.Output
 import com.addakhana.app.push.Notifications
 import kotlinx.coroutines.launch
 
@@ -80,8 +81,17 @@ class CallService : Service() {
             private set
         @Volatile private var session: Session? = null
         @Volatile private var instance: CallService? = null
-        /** null: the session's default (the earpiece for voice calls); otherwise what the person chose. */
-        @Volatile private var speakerChoice: Boolean? = null
+        /** null: the default (a headset that's in, else the earpiece for voice calls, the loudspeaker otherwise); otherwise what the person picked in the call. */
+        @Volatile private var routeChoice: Output? = null
+
+        /** Somewhere a call's sound can play: what it is, and its name ("Bluetooth: Buds Pro"). */
+        data class Route(val output: Output, val name: String)
+        private val _routes = kotlinx.coroutines.flow.MutableStateFlow<List<Route>>(emptyList())
+        /** Where the sound can play now (the call screens' sound button). */
+        val routes: kotlinx.coroutines.flow.StateFlow<List<Route>> = _routes
+        private val _route = kotlinx.coroutines.flow.MutableStateFlow<Output?>(null)
+        /** Where it plays now (null: no call). */
+        val route: kotlinx.coroutines.flow.StateFlow<Output?> = _route
 
         /** What's running now; null stops the service. */
         fun update(c: Context, next: Session?) {
@@ -92,7 +102,7 @@ class CallService : Service() {
             }
             val wasKind = session?.kind
             session = next
-            if (wasKind != next.kind) speakerChoice = null
+            if (wasKind != next.kind) routeChoice = null
             val i = Intent(c, CallService::class.java).setAction(ACTION_UPDATE)
             try {
                 if (running) c.startService(i) else ContextCompat.startForegroundService(c, i)
@@ -101,8 +111,11 @@ class CallService : Service() {
             }
         }
 
-        fun setSpeaker(on: Boolean) {
-            speakerChoice = on
+        fun setSpeaker(on: Boolean) = setRoute(if (on) Output.Speaker else Output.Earpiece)
+
+        /** The call's sound to there (the sound button), until the call ends or another headset comes in. */
+        fun setRoute(o: Output) {
+            routeChoice = o
             instance?.let { s -> s.main.post { s.applyAudio() } }
         }
 
@@ -128,11 +141,41 @@ class CallService : Service() {
     private var callMode = false
     private var routed = false
 
+    /**
+     * Headphones or a Bluetooth headset coming in take the sound (as in
+     * WhatsApp); the one it played through going away hands it back.
+     */
+    private val devicesWatch = object : android.media.AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(added: Array<out AudioDeviceInfo>) {
+            if (!running) return
+            // Put on during the call: the sound goes there (over Settings' choice too), until it's taken off.
+            added.mapNotNull { Devices.kind(it) }.firstOrNull { it == Output.Bluetooth || it == Output.Wired }?.let { routeChoice = it }
+            applyAudio()
+        }
+
+        override fun onAudioDevicesRemoved(removed: Array<out AudioDeviceInfo>) {
+            if (!running) return
+            if (routeChoice != null && removed.any { Devices.kind(it) == routeChoice }) routeChoice = null
+            applyAudio()
+        }
+    }
+
+    /** Where the phone actually plays a call's sound now (switching takes a moment, more for Bluetooth). */
+    private val routeWatch: Any? = if (Build.VERSION.SDK_INT >= 31) {
+        AudioManager.OnCommunicationDeviceChangedListener { publish() }
+    } else {
+        null
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
+        getSystemService(AudioManager::class.java)?.let { am ->
+            am.registerAudioDeviceCallback(devicesWatch, main)
+            if (Build.VERSION.SDK_INT >= 31) am.addOnCommunicationDeviceChangedListener(mainExecutor, routeWatch as AudioManager.OnCommunicationDeviceChangedListener)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -321,29 +364,42 @@ class CallService : Service() {
         // A video's sound plays as media.
         if (s.kind == "live" || s.kind == "watch") {
             releaseProximity()
+            _routes.value = emptyList()
+            _route.value = null
             return
         }
-        // Where Settings › Audio and video sends it (when that's connected), unless the call's own speaker button was used.
-        val chosen = Devices.device(this, Devices.output.value)
-        if (speakerChoice == null && chosen != null) {
-            routeTo(am, chosen)
-            if (oneToOne && chosen.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE && s.phase == "active") holdProximity() else releaseProximity()
-            val on = speakerOn(this)
-            main.post { if (kind == "call") Graph.calls.speakerChanged(on) }
-            return
-        }
-        // Headphones or a headset take the sound wherever they are.
-        if (hasHeadset(am)) {
-            releaseProximity()
-            return
-        }
-        val speaker = speakerChoice ?: !voiceCall
-        route(am, speaker)
+        // Where to: what was picked in the call (the sound button); else where Settings › Audio and
+        // video sends it; else a headset that's in (Bluetooth first); else the earpiece for voice
+        // calls and the loudspeaker otherwise. Whichever of these is connected now.
+        val available = Devices.outputs(this)
+        fun device(o: Output?) = o?.let { want -> available.firstOrNull { it.first == want }?.second }
+        val target = device(routeChoice) ?: device(Devices.output.value.takeIf { it != Output.Auto }) ?: device(Output.Bluetooth) ?: device(Output.Wired)
+        if (target != null) routeTo(am, target) else route(am, speaker = !voiceCall)
+        val now = current(am)
         // The screen turns off at your ear (only when the sound is at your ear).
-        if (oneToOne && !speaker && s.phase == "active") holdProximity() else releaseProximity()
-        // What actually happened (a tablet has no earpiece, say), not what was asked for.
-        val on = speakerOn(this)
-        main.post { if (kind == "call") Graph.calls.speakerChanged(on) }
+        if (oneToOne && now == Output.Earpiece && s.phase == "active") holdProximity() else releaseProximity()
+        publish()
+    }
+
+    /** Where the sound can play, and where it plays now, for the call screens (what actually happened, not what was asked for). */
+    private fun publish() {
+        val am = getSystemService(AudioManager::class.java) ?: return
+        if (!running || session?.kind.let { it == "live" || it == "watch" }) return
+        _routes.value = Devices.outputs(this).map { (o, d) -> Route(o, Devices.label(o, d)) }
+        val now = current(am)
+        _route.value = now
+        main.post { if (kind == "call") Graph.calls.speakerChanged(now == Output.Speaker) }
+    }
+
+    private fun current(am: AudioManager): Output? {
+        if (Build.VERSION.SDK_INT >= 31) return am.communicationDevice?.let { Devices.kind(it) }
+        @Suppress("DEPRECATION")
+        return when {
+            am.isBluetoothScoOn -> Output.Bluetooth
+            am.isSpeakerphoneOn -> Output.Speaker
+            hasHeadset(am) -> Output.Wired
+            else -> Output.Earpiece
+        }
     }
 
     private fun route(am: AudioManager, speaker: Boolean) {
@@ -352,9 +408,18 @@ class CallService : Service() {
             val want = if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
             am.availableCommunicationDevices.firstOrNull { it.type == want }?.let { am.setCommunicationDevice(it) }
         } else {
+            stopSco(am)
             @Suppress("DEPRECATION")
             am.isSpeakerphoneOn = speaker
         }
+    }
+
+    /** Off a Bluetooth headset (before Android 12, its own connection for calls). */
+    @Suppress("DEPRECATION")
+    private fun stopSco(am: AudioManager) {
+        if (!am.isBluetoothScoOn) return
+        am.stopBluetoothSco()
+        am.isBluetoothScoOn = false
     }
 
     /** A particular device (Settings › Audio and video). */
@@ -371,8 +436,14 @@ class CallService : Service() {
                 am.startBluetoothSco()
                 am.isBluetoothScoOn = true
             }
-            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> am.isSpeakerphoneOn = true
-            else -> am.isSpeakerphoneOn = false
+            AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> {
+                stopSco(am)
+                am.isSpeakerphoneOn = true
+            }
+            else -> {
+                stopSco(am)
+                am.isSpeakerphoneOn = false
+            }
         }
     }
 
@@ -409,7 +480,9 @@ class CallService : Service() {
         running = false
         _projecting.value = false
         kind = "none"
-        speakerChoice = null
+        routeChoice = null
+        _routes.value = emptyList()
+        _route.value = null
         main.removeCallbacksAndMessages(null)
         releaseProximity()
         letSleep()
@@ -429,6 +502,10 @@ class CallService : Service() {
     }
 
     override fun onDestroy() {
+        getSystemService(AudioManager::class.java)?.let { am ->
+            runCatching { am.unregisterAudioDeviceCallback(devicesWatch) }
+            if (Build.VERSION.SDK_INT >= 31) runCatching { am.removeOnCommunicationDeviceChangedListener(routeWatch as AudioManager.OnCommunicationDeviceChangedListener) }
+        }
         if (running) tearDown()
         if (instance === this) instance = null
         super.onDestroy()

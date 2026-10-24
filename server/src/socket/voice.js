@@ -1,6 +1,7 @@
-// Room voice ("live adda") and video: a full mesh of WebRTC peer connections.
-// The server only tracks who is in which voice room (muted, camera on) and
-// relays signalling messages. Someone whose connection drops (switching from
+// Room voice ("live adda") and video: through LiveKit when it's set up
+// (services/livekit.js: voice:join hands out a ticket), otherwise a full mesh
+// of WebRTC peer connections (voice:signal relays their signalling). Either
+// way, the server tracks who is in which voice room (muted, camera on). Someone whose connection drops (switching from
 // mobile data to Wi-Fi, a tunnel) keeps their seat for a while, shown as
 // reconnecting, and takes it back on their new connection (voice:join with
 // `resume`), as in other messengers. Room admins can mute someone (they can't
@@ -10,6 +11,7 @@ import { one } from '../db.js';
 import { limits } from '../config.js';
 import { AppError, isUuid } from '../errors.js';
 import { getIO, roomChannel } from '../realtime.js';
+import { callTicket, livekitEnabled, moderateInCall, removalsDone, removeFromCall } from '../services/livekit.js';
 import { calls } from './calls.js';
 import { handle } from './util.js';
 
@@ -42,9 +44,11 @@ function broadcastState(roomId) {
   getIO()?.to(roomChannel(roomId)).emit('voice:state', { roomId, participants: participants(roomId) });
 }
 
-function leave(userId, roomId) {
+/** `fromCall`: also out of LiveKit's call (not when they're joining it again from another device: that replaces them there). */
+function leave(userId, roomId, { fromCall = true } = {}) {
   const room = rooms.get(roomId);
   if (!room?.has(userId)) return;
+  if (fromCall) removeFromCall(roomId, userId);
   clearTimeout(room.get(userId).awayTimer);
   room.delete(userId);
   if (userRoom.get(userId) === roomId) userRoom.delete(userId);
@@ -79,6 +83,7 @@ export const voice = {
     p.cameraBlocked = cameraBlocked;
     if (voiceMuted) p.muted = true;
     if (cameraBlocked) p.camera = false;
+    moderateInCall(roomId, userId, { voiceMuted, cameraBlocked });
     broadcastState(roomId);
   },
 
@@ -94,12 +99,21 @@ export const voice = {
     // `resume`: back on a new connection after the last one dropped (`from`
     // is its id): the same seat, without joining again. `resumed` says whether
     // it was still there (otherwise this joined afresh).
-    socket.on('voice:join', handle(async ({ roomId, muted, camera, resume, from }) => {
+    // `livekit`: the app can take its call through LiveKit (apps from before can't, and must update).
+    socket.on('voice:join', handle(async ({ roomId, muted, camera, resume, from, livekit }) => {
       if (!isUuid(roomId)) throw new AppError(404, "That room doesn't exist.");
-      const member = await one('SELECT voice_muted, camera_blocked FROM room_members WHERE room_id = $1 AND user_id = $2', [roomId, userId]);
+      const member = await one(
+        'SELECT m.voice_muted, m.camera_blocked, u.name FROM room_members m JOIN users u ON u.id = m.user_id WHERE m.room_id = $1 AND m.user_id = $2',
+        [roomId, userId],
+      );
       if (!member) throw new AppError(403, "You're not a member of this room.");
+      if (livekitEnabled() && !livekit) throw new AppError(426, 'Update Adda Khana to join voice: room calls now go through a new, smoother service.');
       // What an admin decided holds from the start.
       const moderation = { voiceMuted: member.voice_muted, cameraBlocked: member.camera_blocked };
+      // Through LiveKit: the ticket into the room's call (sending only what's allowed).
+      const ticket = () => (livekitEnabled() ? { livekit: callTicket({ roomId, userId, name: member.name, moderation }) } : {});
+      // Just left this call: out of it at LiveKit before back in.
+      await removalsDone(roomId, userId);
       muted = !!muted || moderation.voiceMuted;
       camera = !!camera && !moderation.cameraBlocked;
       if (calls.isInCall(userId)) throw new AppError(409, 'End your call before joining voice.');
@@ -108,7 +122,7 @@ export const voice = {
       if (current) {
         const mine = rooms.get(current)?.get(userId);
         const others = () => participants(roomId).filter((p) => p.userId !== userId);
-        if (current === roomId && mine?.socketId === socket.id) return { peers: others(), resumed: true, moderation };
+        if (current === roomId && mine?.socketId === socket.id) return { peers: others(), resumed: true, moderation, ...ticket() };
         if (resume && current === roomId && mine) {
           // Taken by another tab or device meanwhile: that one has the seat now.
           if (mine.socketId !== from) throw new AppError(409, 'You joined voice from another tab, so this one left.');
@@ -122,10 +136,11 @@ export const voice = {
           // The old connection is dead (the server just may not have noticed yet).
           if (from !== socket.id) io.sockets.sockets.get(from)?.disconnect(true);
           broadcastState(roomId);
-          return { peers: others(), resumed: true, moderation };
+          return { peers: others(), resumed: true, moderation, ...ticket() };
         }
         if (mine && mine.socketId !== socket.id) io.to(mine.socketId).emit('voice:kicked', { roomId: current, reason: 'elsewhere' });
-        leave(userId, current);
+        // The same room's call from here: joining it replaces the other device there.
+        leave(userId, current, { fromCall: current !== roomId });
       }
 
       let room = rooms.get(roomId);
@@ -140,7 +155,7 @@ export const voice = {
         if (p.socketId !== socket.id) io.to(p.socketId).emit('voice:peer-joined', { roomId, userId });
       }
       broadcastState(roomId);
-      return { peers, resumed: false, moderation };
+      return { peers, resumed: false, moderation, ...ticket() };
     }));
 
     socket.on('voice:signal', ({ roomId, to, data } = {}) => {

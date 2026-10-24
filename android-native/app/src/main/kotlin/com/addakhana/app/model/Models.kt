@@ -388,6 +388,8 @@ data class ClientConfig(
     val iceTransportPolicy: String = "all",
     val limits: Limits = Limits(),
     val push: Boolean = false,
+    /** Room calls go through LiveKit (see call/LiveKitCall.kt), not phone to phone. */
+    val livekit: Boolean = false,
 )
 
 @Serializable

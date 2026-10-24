@@ -28,8 +28,8 @@ android {
         applicationId = "com.addakhana.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 102
-        versionName = "2.2.0"
+        versionCode = 103
+        versionName = "2.3.0"
         buildConfigField("String", "APP_URL", "\"$appUrl\"")
         // The site's own https address, also in debug builds (YouTube's player wants a real https page).
         buildConfigField("String", "SITE_URL", "\"$appUrl\"")
@@ -177,7 +177,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
-    implementation(libs.webrtc)
+    implementation(libs.livekit)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.media3.exoplayer)

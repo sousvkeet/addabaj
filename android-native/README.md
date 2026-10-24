@@ -30,6 +30,7 @@ Everything the web app does, natively:
   - **Floating:** drag a floating window anywhere; it stays clear of the buttons. Press and hold anyone else and drag them out of the grid into one. Tap a floating window to swap it with whoever's full screen, as in WhatsApp.
   - **Switch any time:** press and hold anyone (or tap their ⋮) for Full screen, Small floating window or Back to the grid. The grid button at the top puts everyone back.
   - A one-to-one call starts as WhatsApp's: them full screen, you floating in the corner. Each picture keeps playing while it moves between these (nothing reconnects or goes black), and in rooms each person is asked to send just the size they're shown at.
+- **Room calls through LiveKit** when the server has it: each person sends their microphone and camera once and LiveKit passes them on, so rooms stay smooth with many people, on far less data and battery. Admins' mutes and camera stops hold in LiveKit too.
 - **Video calls float** in picture-in-picture when you leave the app, with Mute and Hang up. In a room, it shows whoever you made full screen.
 - **Watch together.**
   - Files and streams play in ExoPlayer. YouTube plays in YouTube's own player, the only one apps may use.
@@ -40,6 +41,7 @@ Everything the web app does, natively:
 - **Live streams.**
   - Watch a stream from a phone or computer.
   - Stream your screen (the picture), or a video file playing on the phone, with its sound. The film's sound goes out in place of the microphone's.
+- **Switch where the sound plays, as in WhatsApp:** the sound button in calls, room calls and on the call and voice bars shows where it plays now (loudspeaker, earpiece, Bluetooth, headphones). With only the earpiece and loudspeaker, a tap switches between them; with a headset in too, it opens the list, the one playing ticked. A headset put on during a call takes the sound; taken off, the sound goes back.
 - **Audio and video settings** (Settings, and the call screens):
   - where calls sound (earpiece, loudspeaker, Bluetooth, headphones), with a test sound
   - a microphone level meter
@@ -65,7 +67,7 @@ Works on Android 7.0 and newer (API 24+), targets Android 16 (API 36).
   - `Realtime` is a small Socket.IO v4 client over OkHttp's WebSocket: Engine.IO 4, websocket transport, with heartbeats, a watchdog and reconnection.
 - **`data/`** has the chats store (a port of the web app's `store/chat.ts`), auth, site settings, media, permissions, updates and device settings.
 - **`call/`**
-  - `CallStore` handles one-to-one calls and `VoiceStore` handles room voice: WebRTC mesh with the web app's signalling and repair rules.
+  - `CallStore` handles one-to-one calls (phone to phone). `VoiceStore` handles room voice: through LiveKit when the server has it (`LiveKitCall`, with the server's ticket; the server still keeps the seats), otherwise a WebRTC mesh with the web app's signalling and repair rules.
   - `CallService` is the foreground service: audio mode and routing, proximity, and wake locks.
   - `IncomingCallActivity` is the lock-screen call screen.
 - **`watch/`**
@@ -81,7 +83,7 @@ Libraries (each at least two weeks old when chosen):
 - kotlinx.serialization 1.11
 - Media3 1.10.1
 - Coil 3.5
-- WebRTC (`io.github.webrtc-sdk:android`) 144.7559.15
+- LiveKit Android 2.29.0 (room calls). Its copy of WebRTC (144.7559.14, as `livekit.org.webrtc`) is the one the whole app uses, for calls and live streams too, so there's one in the app, not two. One of LiveKit's libraries (`audioswitch`) comes from JitPack, which the build allows for that library only.
 - Firebase BOM 34.19
 
 ## Notifications (Firebase)
@@ -100,7 +102,7 @@ cd android-native
 
 The server is `addaUrl` in `gradle.properties`; `-PaddaUrl=https://your-server.example` builds for another.
 
-Release builds are shrunk (R8) and carry only the ARM code real phones use. The keep rules for WebRTC, whose native code finds its Java classes by name, are in `app/proguard-rules.pro`.
+Release builds are shrunk (R8) and carry only the ARM code real phones use. The keep rules for WebRTC (LiveKit's copy, `livekit.org.webrtc`), whose native code finds its Java classes by name, are in `app/proguard-rules.pro`.
 
 ## Signing
 

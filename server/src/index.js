@@ -34,6 +34,7 @@ import { ensureRoomCodes } from './services/rooms.js';
 import { startHistorySweeps } from './services/history.js';
 import { initSocket } from './socket/index.js';
 import { getIceServers, iceTransportPolicy } from './services/ice.js';
+import { livekitEnabled } from './services/livekit.js';
 import { ensureYtdlp, ytdlpPath, ytdlpVersion } from './stream/ytdlp.js';
 import { warmAdBlocker } from './stream/adblock.js';
 import { checkBrowser } from './stream/sniff.js';
@@ -127,6 +128,8 @@ app.get('/api/config', requireAuth, async (_req, res) => {
     iceTransportPolicy: iceTransportPolicy(),
     limits: { ...limits, uploadMaxBytes: maxUploadBytes },
     push: pushEnabled(),
+    // Room calls go through LiveKit (voice:join hands out the ticket).
+    livekit: livekitEnabled(),
   });
 });
 // `build`: which version of the page this server hosts, so pages still running
@@ -250,6 +253,7 @@ server.listen(config.port, async () => {
     console.log(turn.length ? `Cloudflare TURN ready (${turn.length} relay URLs)` : 'Cloudflare TURN unavailable; using STUN only');
   }
   if (config.forceTurnRelay) console.log('FORCE_TURN_RELAY is on: all call audio goes through TURN');
+  console.log(config.livekit ? `Room calls: through LiveKit (${config.livekit.url})` : 'Room calls: phone to phone (set LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET for LiveKit)');
   console.log(pushEnabled() ? 'Push notifications: on (Firebase Cloud Messaging)' : 'Push notifications: off (set FCM_SERVICE_ACCOUNT to turn them on)');
   void videoToolsAtStart();
   console.log(

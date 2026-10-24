@@ -387,20 +387,27 @@ await check('room video: cameras go on in the call and everyone sees them, each 
       who,
       { timeout: 20000 },
     );
-  /** Video arriving at this page over each of its connections (bytes). */
+  /** Video arriving at this page, by camera (bytes; phone to phone each comes over its own connection, through LiveKit all over one). */
   const videoIn = (u) =>
-    u.page.evaluate(() =>
-      Promise.all(
-        window.__pcs.map(async (pc) => {
-          let bytes = 0;
-          if (pc.connectionState !== 'connected') return bytes;
-          (await pc.getStats()).forEach((r) => {
-            if (r.type === 'inbound-rtp' && r.kind === 'video') bytes += r.bytesReceived;
-          });
-          return bytes;
-        }),
-      ),
-    );
+    u.page.evaluate(async () => {
+      const bytes = {};
+      for (const pc of window.__pcs.filter((c) => c.connectionState === 'connected')) {
+        (await pc.getStats()).forEach((r) => {
+          if (r.type === 'inbound-rtp' && r.kind === 'video') bytes[r.trackIdentifier ?? r.id] = (bytes[r.trackIdentifier ?? r.id] ?? 0) + r.bytesReceived;
+        });
+      }
+      return bytes;
+    });
+  /** How tall someone's camera arrives at this page now (pixels). */
+  const heightOf = (u, who) =>
+    u.page.evaluate(async (who) => {
+      const id = window.adda.voice.getState().videos[who]?.getVideoTracks()[0]?.id;
+      for (const pc of window.__pcs.filter((c) => c.connectionState === 'connected')) {
+        for (const r of (await pc.getStats()).values()) if (r.type === 'inbound-rtp' && r.kind === 'video' && r.trackIdentifier === id) return r.frameHeight ?? 0;
+      }
+      return 0;
+    }, who);
+  const viaLiveKit = await A.page.evaluate(() => window.adda.voice.getState().via === 'livekit');
 
   // Asha turns her camera on from the room's panel: the call's window opens for everyone.
   await A.page.getByRole('region', { name: 'Voice', exact: true }).getByRole('button', { name: 'Turn camera on' }).click();
@@ -420,7 +427,18 @@ await check('room video: cameras go on in the call and everyone sees them, each 
 
   // Asha shows Rahul large: his camera goes to her at full size, and stays small for Mitali's phone.
   await stage(A).getByRole('button', { name: /^Rahul Das.*Show Rahul Das large/ }).click();
-  await B.page.waitForFunction(
+  // Through LiveKit, his camera goes up once in three sizes, and each of them gets the one they show.
+  if (viaLiveKit) {
+    const end = Date.now() + 20000;
+    let big = 0;
+    let small = 0;
+    while (Date.now() < end) {
+      [big, small] = [await heightOf(A, b), await heightOf(C, b)];
+      if (big >= 2 * small && small > 0) break;
+      await A.page.waitForTimeout(1000);
+    }
+    if (!(big >= 2 * small && small > 0)) throw new Error(`Rahul's camera arrives ${big}px tall for Asha (large) and ${small}px for Mitali (small)`);
+  } else await B.page.waitForFunction(
     () => {
       const scales = window.__pcs
         .filter((pc) => pc.connectionState === 'connected')
@@ -438,7 +456,7 @@ await check('room video: cameras go on in the call and everyone sees them, each 
   await C.page.waitForTimeout(2500);
   const before = await videoIn(C);
   await C.page.waitForTimeout(3000);
-  const sending = (await videoIn(C)).filter((bytes, i) => bytes > (before[i] ?? 0)).length;
+  const sending = Object.entries(await videoIn(C)).filter(([id, bytes]) => bytes > (before[id] ?? 0)).length;
   if (sending !== 1) throw new Error(`${sending} cameras sent video to the shrunk window, not just the one it floats`);
   await C.page.getByRole('button', { name: /^Show video in/ }).click();
   await sees(C, [a, b]);

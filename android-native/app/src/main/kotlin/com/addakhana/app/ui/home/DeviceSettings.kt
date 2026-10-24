@@ -141,7 +141,7 @@ fun DeviceSettings(onDismiss: () -> Unit) {
 
         Spacer(Modifier.height(18.dp))
         Heading(Icons.Rounded.Videocam, "Camera")
-        val cameras = remember { runCatching { org.webrtc.Camera2Enumerator(context).deviceNames.size }.getOrDefault(0) }
+        val cameras = remember { runCatching { livekit.org.webrtc.Camera2Enumerator(context).deviceNames.size }.getOrDefault(0) }
         if (cameras > 1) {
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Choice("Front", front) { Devices.setFrontCamera(true) }

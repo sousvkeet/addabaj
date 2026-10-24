@@ -41,17 +41,17 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import org.webrtc.AudioSource
-import org.webrtc.AudioTrack
-import org.webrtc.DataChannel
-import org.webrtc.IceCandidate
-import org.webrtc.MediaStream
-import org.webrtc.PeerConnection
-import org.webrtc.RtpReceiver
-import org.webrtc.RtpSender
-import org.webrtc.RtpTransceiver
-import org.webrtc.SessionDescription
-import org.webrtc.VideoTrack
+import livekit.org.webrtc.AudioSource
+import livekit.org.webrtc.AudioTrack
+import livekit.org.webrtc.DataChannel
+import livekit.org.webrtc.IceCandidate
+import livekit.org.webrtc.MediaStream
+import livekit.org.webrtc.PeerConnection
+import livekit.org.webrtc.RtpReceiver
+import livekit.org.webrtc.RtpSender
+import livekit.org.webrtc.RtpTransceiver
+import livekit.org.webrtc.SessionDescription
+import livekit.org.webrtc.VideoTrack
 
 data class CallState(
     /** idle, outgoing, incoming, connecting or active */
@@ -468,8 +468,8 @@ class CallStore(private val realtime: Realtime, private val scope: CoroutineScop
         set { it.copy(cameraBusy = false) }
         if (ok) {
             emitCamera(true)
-            // A camera usually means looking at the screen: the loudspeaker.
-            if (!s.speaker) setSpeaker(true)
+            // A camera usually means looking at the screen: the loudspeaker (from the earpiece; a headset stays).
+            if (CallService.route.value == com.addakhana.app.data.Output.Earpiece) setSpeaker(true)
         } else {
             Toasts.error("Couldn't start your camera.")
         }
