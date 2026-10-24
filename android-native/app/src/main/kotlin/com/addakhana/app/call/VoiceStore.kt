@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.sync.Mutex
@@ -44,15 +45,15 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import org.webrtc.AudioSource
-import org.webrtc.AudioTrack
-import org.webrtc.DataChannel
-import org.webrtc.IceCandidate
-import org.webrtc.MediaStream
-import org.webrtc.PeerConnection
-import org.webrtc.RtpReceiver
-import org.webrtc.RtpTransceiver
-import org.webrtc.VideoTrack
+import livekit.org.webrtc.AudioSource
+import livekit.org.webrtc.AudioTrack
+import livekit.org.webrtc.DataChannel
+import livekit.org.webrtc.IceCandidate
+import livekit.org.webrtc.MediaStream
+import livekit.org.webrtc.PeerConnection
+import livekit.org.webrtc.RtpReceiver
+import livekit.org.webrtc.RtpTransceiver
+import livekit.org.webrtc.VideoTrack
 
 /** How big someone's camera is shown: not at all, or a small, medium or large tile. */
 enum class View(val wire: String) {
@@ -85,15 +86,21 @@ data class VoiceState(
     val reconnecting: Boolean = false,
     val moderation: Moderation = Moderation(),
     val startedAt: Long = 0,
+    /** How the call goes: "livekit", or "mesh" (phone to phone). */
+    val via: String? = null,
 ) {
     val live get() = status == "live"
     val active get() = status != "idle"
 }
 
 /**
- * Room voice (and video), natively: a full mesh, as the web app's
- * (client/src/store/voice.ts), so everyone in the room talks whatever app
- * they use. The newcomer offers to everyone already there. Video rides on the
+ * Room voice (and video), natively, as the web app's (client/src/store/voice.ts),
+ * so everyone in the room talks whatever app they use. Through LiveKit when the
+ * server has it (ClientConfig.livekit; see LiveKitCall): voice:join hands out a
+ * ticket into the room's call, and the sizes I show people (setViews) become
+ * the quality LiveKit sends me. The server still keeps the seats.
+ *
+ * Without LiveKit, a full mesh. The newcomer offers to everyone already there. Video rides on the
  * same connections, in a slot made from the start (a camera going on or off
  * is a track swap), each viewer telling each sender how big it shows them.
  *
@@ -152,6 +159,8 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
     private val shownBy = mutableMapOf<String, Map<String, View>>()
     private val told = mutableMapOf<String, View>()
     private val repaired = mutableMapOf<String, Long>()
+    /** Through LiveKit: the room's call (null phone to phone). */
+    private var lk: LiveKitCall? = null
     private var micSource: AudioSource? = null
     private var mic: AudioTrack? = null
     private var streamId = Rtc.newStreamId()
@@ -175,15 +184,15 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         scope.launch { realtime.connects.collect { onReconnected() } }
         // Onto mobile data, or the setting changed: what I ask for, and send, follows.
         scope.launch {
-            combine(DataUse.net, DataUse.calls) { _, _ -> DataUse.lessForCalls() }.distinctUntilChanged().drop(1).collect {
-                for (id in peers.keys) tell(id)
+            combine(DataUse.net, DataUse.calls, DataUse.saver) { _, _, _ -> DataUse.lessForCalls() }.distinctUntilChanged().drop(1).collect {
+                tellAll()
                 sendVideoToAll()
             }
         }
         scope.launch {
             AppLifecycle.foreground.collect { shown ->
                 // Out of sight: nobody needs to send me video, and my camera stops (the others see my photo).
-                for (id in peers.keys) tell(id)
+                tellAll()
                 val roomId = s.roomId
                 if (roomId != null && s.live) {
                     if (!shown && camera != null) {
@@ -212,6 +221,8 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
     private fun cleanup() {
         lostJob?.cancel()
         meterJob?.cancel()
+        lk?.close()
+        lk = null
         repaired.clear()
         for (id in peers.keys.toList()) closePeer(id)
         mic?.dispose()
@@ -231,16 +242,26 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
     private fun signal(roomId: String, to: String, data: JsonElement) =
         realtime.emit("voice:signal", buildJsonObject { put("roomId", roomId); put("to", to); put("data", data) })
 
-    /** Tells someone how big I show their camera, when that changed (out of sight: not at all). */
-    private fun tell(userId: String, again: Boolean = false) {
-        val roomId = s.roomId ?: return
+    /** How big I want someone's camera: as I show it (out of sight: not at all), a step smaller using less data. */
+    private fun viewOf(userId: String): View {
         val shownAs = if (!AppLifecycle.foreground.value) View.Hidden else shown[userId] ?: View.Hidden
         // Using less data, a step smaller than it shows (sharp enough, a fraction of the data).
-        val view = if (!DataUse.lessForCalls()) shownAs else when (shownAs) {
+        return if (!DataUse.lessForCalls()) shownAs else when (shownAs) {
             View.Large -> View.Medium
             View.Medium -> View.Small
             else -> shownAs
         }
+    }
+
+    private fun tellAll() {
+        for (id in peers.keys) tell(id)
+        lk?.let { call -> for (id in call.others()) call.show(id, viewOf(id)) }
+    }
+
+    /** Tells someone how big I show their camera, when that changed (out of sight: not at all). */
+    private fun tell(userId: String, again: Boolean = false) {
+        val roomId = s.roomId ?: return
+        val view = viewOf(userId)
         if (!again && told[userId] == view) return
         told[userId] = view
         signal(roomId, userId, buildJsonObject { put("view", view.wire) })
@@ -266,7 +287,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
     private fun sendVideoToAll() = peers.keys.toList().forEach { sendVideo(it) }
 
     /** One copy of my camera, at the size, sharpness and smoothness its viewer asked for, within my upload. */
-    private fun tune(sender: org.webrtc.RtpSender, view: View) {
+    private fun tune(sender: livekit.org.webrtc.RtpSender, view: View) {
         val less = DataUse.lessForCalls()
         val ladder = if (less) LESS else QUALITY
         val q = ladder[view] ?: return
@@ -394,6 +415,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         try {
             Graph.site.freshConfig()
             Rtc.ready(Graph.context)
+            if (Graph.site.config.value.livekit) return@launch joinThroughLiveKit(roomId, video)
             val (source, track) = Rtc.openMicrophone()
             micSource = source
             mic = track
@@ -411,7 +433,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
                 realtime.emit("voice:leave", buildJsonObject { put("roomId", roomId) })
                 return@launch
             }
-            set { it.copy(status = "live") }
+            set { it.copy(status = "live", via = "mesh") }
             res.obj("moderation")?.let { moderate(Moderation(it.bool("voiceMuted") == true, it.bool("cameraBlocked") == true), joining = true) }
             Tones.blip(join = true)
             startMeters()
@@ -421,6 +443,135 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
             cleanup()
             Toasts.error(e.message ?: "Couldn't join voice.")
         }
+    }
+
+    // ── Through LiveKit ────────────────────────────────────────────────
+
+    private suspend fun joinThroughLiveKit(roomId: String, video: Boolean) {
+        val res = realtime.request("voice:join", buildJsonObject {
+            put("roomId", roomId)
+            put("muted", false)
+            put("camera", video)
+            put("livekit", true)
+        }, 10_000)
+        // Left while joining: the leave reached the server first, so say it again.
+        if (s.roomId != roomId) {
+            realtime.emit("voice:leave", buildJsonObject { put("roomId", roomId) })
+            return
+        }
+        val ticket = res.obj("livekit") ?: throw IllegalStateException("Couldn't join voice.")
+        set { it.copy(status = "live", via = "livekit") }
+        res.obj("moderation")?.let { moderate(Moderation(it.bool("voiceMuted") == true, it.bool("cameraBlocked") == true), joining = true) }
+        Tones.blip(join = true)
+        try {
+            startCall(roomId, ticket, camera = video && !s.moderation.cameraBlocked)
+        } catch (e: Exception) {
+            // The network went as I joined (the server's gone too): back in when it's back (onReconnected), as after any drop.
+            if (realtime.state.value !is Connection.Online && s.roomId == roomId) {
+                set { it.copy(reconnecting = true) }
+                return
+            }
+            // In the seat, but not the call: out of both.
+            realtime.emit("voice:leave", buildJsonObject { put("roomId", roomId) })
+            throw e
+        }
+    }
+
+    /** Into the room's call (again, after LiveKit's connection was lost for good), sending what I may. */
+    private suspend fun startCall(roomId: String, ticket: JsonObject, camera: Boolean) {
+        lk?.close()
+        lateinit var call: LiveKitCall
+        call = LiveKitCall(Graph.context, scope, object : LiveKitCall.Events {
+            private val mine get() = lk === call
+
+            override fun video(userId: String, track: VideoTrack?) {
+                if (!mine) return
+                set { it.copy(videos = if (track == null) it.videos - userId else it.videos + (userId to track)) }
+                if (track != null) call.show(userId, viewOf(userId))
+            }
+
+            override fun here(userId: String, here: Boolean) {
+                if (!mine) return
+                set {
+                    if (here) it.copy(connection = it.connection + (userId to PeerConnection.PeerConnectionState.CONNECTED))
+                    else it.copy(connection = it.connection - userId, videos = it.videos - userId, speaking = it.speaking - userId)
+                }
+                if (here) call.show(userId, viewOf(userId))
+            }
+
+            override fun speaking(ids: Set<String>) {
+                if (!mine) return
+                set { st -> st.copy(speaking = (st.speaking.keys + ids).associateWith { id -> id in ids && (id != myId || !st.muted) }) }
+            }
+
+            override fun reconnecting(now: Boolean) {
+                if (mine) set { it.copy(reconnecting = now || realtime.state.value !is Connection.Online) }
+            }
+
+            override fun gone(reason: io.livekit.android.events.DisconnectReason?) {
+                scope.launch {
+                    if (!mine || !s.live) return@launch
+                    val online = realtime.state.value is Connection.Online
+                    val removed = reason == io.livekit.android.events.DisconnectReason.DUPLICATE_IDENTITY ||
+                        reason == io.livekit.android.events.DisconnectReason.PARTICIPANT_REMOVED ||
+                        reason == io.livekit.android.events.DisconnectReason.ROOM_DELETED
+                    // Joined from another device, or taken out: the server says so (voice:kicked).
+                    if (online && removed) {
+                        delay(2_000)
+                        if (lk === call) {
+                            cleanup()
+                            Toasts.error("You left voice.")
+                        }
+                        return@launch
+                    }
+                    // It gave up on the connection: in again with a fresh ticket (without the server either:
+                    // when it's back, onReconnected; or I'm told it didn't come back).
+                    set { it.copy(reconnecting = true) }
+                    if (online) rejoinCall(roomId)
+                }
+            }
+
+            override fun refused(what: String) {
+                Log.w(TAG, "LiveKit didn't take my $what")
+            }
+        })
+        lk = call
+        call.connect(ticket.str("url") ?: throw IllegalStateException("No call address."), ticket.str("token") ?: throw IllegalStateException("No call ticket."))
+        if (lk !== call) return call.close()
+        if (!s.moderation.voiceMuted && !s.muted) call.mic(true)
+        if (camera) startCameraLk()
+        set { it.copy(reconnecting = realtime.state.value !is Connection.Online) }
+    }
+
+    /** LiveKit's connection is gone for good: a fresh ticket (the seat is still mine), and in again. */
+    private suspend fun rejoinCall(roomId: String) {
+        try {
+            val res = realtime.request("voice:join", buildJsonObject {
+                put("roomId", roomId)
+                put("resume", true)
+                (realtime.state.value as? Connection.Online)?.sid?.let { put("from", it) }
+                put("muted", s.muted)
+                put("camera", s.cameraOn)
+                put("livekit", true)
+            })
+            if (s.roomId != roomId) return
+            startCall(roomId, res.obj("livekit") ?: return, camera = s.cameraOn)
+        } catch (e: Exception) {
+            if (s.roomId != roomId) return
+            realtime.emit("voice:leave", buildJsonObject { put("roomId", roomId) })
+            cleanup()
+            Toasts.error(e.message ?: "You left voice.")
+        }
+    }
+
+    /** My camera into the call (in place of the one before). */
+    private suspend fun startCameraLk(): Boolean {
+        val call = lk ?: return false
+        val front = com.addakhana.app.data.Devices.frontCamera.value
+        val track = call.cameraOn(front, DataUse.lessForCalls()) ?: return false
+        if (lk !== call) return false
+        set { it.copy(cameraOn = true, localVideo = track, frontCamera = front, minimized = false) }
+        return true
     }
 
     fun leave() {
@@ -438,6 +589,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         }
         val next = !s.muted
         mic?.setEnabled(!next)
+        lk?.let { call -> scope.launch { call.mic(!next) } }
         set { it.copy(muted = next, speaking = it.speaking + (myId to false)) }
         if (roomId != null) realtime.emit("voice:mute", buildJsonObject { put("roomId", roomId); put("muted", next) })
     }
@@ -449,6 +601,16 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
             Toasts.show("An admin stopped your camera here. You can turn it on again when an admin lets you.")
             return
         }
+        if (lk != null) {
+            scope.launch {
+                set { it.copy(cameraBusy = true) }
+                val ok = startCameraLk()
+                set { it.copy(cameraBusy = false) }
+                if (ok) s.roomId?.let { realtime.emit("voice:camera", buildJsonObject { put("roomId", it); put("on", true) }) }
+                else Toasts.error("Couldn't start your camera.")
+            }
+            return
+        }
         set { it.copy(cameraBusy = true) }
         val ok = startCamera()
         set { it.copy(cameraBusy = false) }
@@ -456,7 +618,16 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         else Toasts.error("Couldn't start your camera.")
     }
 
-    fun switchCamera() = camera?.switch { front -> set { it.copy(frontCamera = front) } }
+    fun switchCamera() {
+        lk?.let { call ->
+            if (!s.cameraOn) return
+            val front = !s.frontCamera
+            call.switchCamera(front)
+            set { it.copy(frontCamera = front) }
+            return
+        }
+        camera?.switch { front -> set { it.copy(frontCamera = front) } }
+    }
 
     fun setMinimized(minimized: Boolean) = set { it.copy(minimized = minimized) }
 
@@ -464,7 +635,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
     fun setViews(views: Map<String, View>, from: String = "window") {
         if (views.isNotEmpty()) shownBy[from] = views else shownBy.remove(from)
         shown = shownBy["pip"] ?: shownBy["window"] ?: emptyMap()
-        for (id in peers.keys) tell(id)
+        tellAll()
     }
 
     private fun startCamera(): Boolean {
@@ -481,6 +652,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
     private fun stopCamera(announce: Boolean) {
         val cam = camera
         camera = null
+        lk?.cameraOff()
         set { it.copy(cameraOn = false, localVideo = null) }
         // Out of every slot before the camera goes.
         for (peer in peers.values) runCatching { peer.video?.sender?.setTrack(null, false) }
@@ -495,9 +667,10 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
         set { it.copy(moderation = next) }
         if (next.voiceMuted && !s.muted) {
             mic?.setEnabled(false)
+            lk?.let { call -> scope.launch { call.mic(false) } }
             set { it.copy(muted = true, speaking = it.speaking + (myId to false)) }
         }
-        if (next.cameraBlocked && camera != null) stopCamera(announce = true)
+        if (next.cameraBlocked && (camera != null || (lk != null && s.cameraOn))) stopCamera(announce = true)
         if (joining) {
             if (next.voiceMuted || next.cameraBlocked) {
                 val what = if (next.voiceMuted && next.cameraBlocked) "muted you and stopped your camera" else if (next.voiceMuted) "muted you" else "stopped your camera"
@@ -520,7 +693,11 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
             val quietSince = mutableMapOf<String, Long>()
             while (isActive) {
                 delay(300)
-                if (!AppLifecycle.foreground.value) continue
+                // Out of sight nobody sees the rings: nothing to look at until the app shows again.
+                if (!AppLifecycle.foreground.value) {
+                    AppLifecycle.foreground.first { it }
+                    continue
+                }
                 var local: Double? = null
                 for ((id, peer) in peers.toMap()) {
                     val report = runCatching { peer.pc.stats() }.getOrNull() ?: continue
@@ -600,7 +777,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
             val sdpObj = data.obj("sdp")
             val sdp = sdpObj?.let { Rtc.sdpOf(it) }
             when {
-                sdp?.type == org.webrtc.SessionDescription.Type.OFFER -> {
+                sdp?.type == livekit.org.webrtc.SessionDescription.Type.OFFER -> {
                     // Both offered at once (both reconnecting): the larger id's offer wins.
                     val mine = peers[from]
                     if (mine != null && mine.pc.signalingState() == PeerConnection.SignalingState.HAVE_LOCAL_OFFER && myId > from &&
@@ -619,7 +796,7 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
                     signal(roomId, from, buildJsonObject { put("sdp", Rtc.sdpJson(Rtc.lean(peer.pc.localDescription ?: answer))) })
                     sendVideo(from)
                 }
-                sdp?.type == org.webrtc.SessionDescription.Type.ANSWER -> {
+                sdp?.type == livekit.org.webrtc.SessionDescription.Type.ANSWER -> {
                     val peer = peers[from] ?: return
                     peer.pc.setRemote(Rtc.lean(Rtc.startSharp(sdp)))
                     peer.queue.flush()
@@ -662,10 +839,17 @@ class VoiceStore(private val realtime: Realtime, private val scope: CoroutineSco
                 realtime.previousSid?.let { put("from", it) }
                 put("muted", s.muted)
                 put("camera", s.cameraOn)
+                if (s.via == "livekit") put("livekit", true)
             })
             if (s.roomId != roomId) return
             set { it.copy(reconnecting = false) }
             res.obj("moderation")?.let { moderate(Moderation(it.bool("voiceMuted") == true, it.bool("cameraBlocked") == true), joining = false) }
+            // Through LiveKit: its call carried on, or is coming back by itself; only if it gave up, in again.
+            res.obj("livekit")?.let { ticket ->
+                val call = lk
+                if (call == null || call.disconnected) startCall(roomId, ticket, camera = s.cameraOn)
+                return
+            }
             val others = runCatching { json.decodeFromJsonElement(ListSerializer(VoiceParticipant.serializer()), res["peers"]!!) }.getOrDefault(emptyList())
             val here = others.map { it.userId }.toSet()
             // Gone while I was away.

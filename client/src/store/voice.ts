@@ -5,12 +5,20 @@ import { inApp } from '../lib/native';
 import { droppedSocketId, emitAck, socket } from '../lib/socket';
 import { blip, unlockAudio } from '../lib/sounds';
 import type { VoiceParticipant } from '../lib/types';
+import type { LocalTrackPublication, Room } from 'livekit-client';
 import { myId, onLogout } from './auth';
 import { useCall } from './call';
 import { useChat } from './chat';
 import { onDeviceChoice } from './devices';
 import { toast } from './ui';
 
+// Room voice goes through LiveKit (a media server) when the server has it: the
+// server's voice:join hands out a ticket into the room's call, each person
+// sends their microphone and camera once, and LiveKit passes them on to
+// everyone, at the quality each one shows them (see setViews). The server
+// still keeps the seats (who's in voice, muted, on camera, moderated). The
+// rest of this describes the other way, without LiveKit:
+//
 // Room voice is a full mesh: the person who joins sends an offer to everyone
 // already there, so two peers never both offer at once.
 //
@@ -73,6 +81,8 @@ type VoiceState = {
   reconnecting: boolean;
   /** An admin muted me here (I can't unmute), or stopped my camera (I can't turn it on), until they let me. */
   moderation: Moderation;
+  /** How the call goes: through LiveKit, or phone to phone (a mesh). */
+  via: 'livekit' | 'mesh' | null;
 
   join: (roomId: string, options?: { video?: boolean }) => Promise<void>;
   leave: () => Promise<void>;
@@ -128,12 +138,21 @@ const idle = {
   minimized: false,
   reconnecting: false,
   moderation: FREE,
+  via: null,
 };
 
 let localStream: MediaStream | null = null;
 let cameraTrack: MediaStreamTrack | null = null;
 let stopLocalMeter: (() => void) | null = null;
 const peers = new Map<string, Peer>();
+/** Through LiveKit: the room's call (null in a mesh), and what I send into it. */
+type Ticket = { url: string; token: string };
+let lk: Room | null = null;
+let lkModule: typeof import('livekit-client') | null = null;
+let micPub: LocalTrackPublication | null = null;
+let camPub: LocalTrackPublication | null = null;
+/** Who's speaking, from each person's sound (LiveKit). */
+const lkMeters = new Map<string, () => void>();
 /** How big each person shows my camera (as they asked). */
 const wanted = new Map<string, View>();
 /** How big I show each person (as the call window, or its small floating view, last said). */
@@ -197,6 +216,12 @@ export const useVoice = create<VoiceState>()((set, get) => {
     window.clearTimeout(lostTimer);
     repaired.clear();
     for (const id of [...peers.keys()]) closePeer(id);
+    const call = lk;
+    lk = null;
+    micPub = camPub = null;
+    void call?.disconnect();
+    for (const stop of lkMeters.values()) stop();
+    lkMeters.clear();
     stopLocalMeter?.();
     stopLocalMeter = null;
     stopStream(localStream);
@@ -209,6 +234,155 @@ export const useVoice = create<VoiceState>()((set, get) => {
     delete shownBy.window;
     delete shownBy.pip;
     set({ ...idle });
+  }
+
+  // ── Through LiveKit ──
+
+  /** Asks LiveKit for someone's camera at the size I show it (out of sight: not at all). */
+  function showVia(userId: string) {
+    const L = lkModule;
+    const pub = L && lk?.remoteParticipants.get(userId)?.getTrackPublication(L.Track.Source.Camera);
+    if (!L || !pub) return;
+    const view = document.visibilityState === 'hidden' ? 'hidden' : (shown[userId] ?? 'hidden');
+    pub.setEnabled(view !== 'hidden');
+    if (view !== 'hidden') pub.setVideoQuality(view === 'large' ? L.VideoQuality.HIGH : view === 'medium' ? L.VideoQuality.MEDIUM : L.VideoQuality.LOW);
+  }
+
+  function forget(userId: string) {
+    lkMeters.get(userId)?.();
+    lkMeters.delete(userId);
+    set((s) => ({
+      streams: without(s.streams, userId),
+      videos: without(s.videos, userId),
+      speaking: without(s.speaking, userId),
+      connection: without(s.connection, userId),
+    }));
+  }
+
+  /** Into the room's call through LiveKit, sending my microphone (and my camera, if it's on). */
+  async function joinCall(roomId: string, ticket: Ticket) {
+    const L = (lkModule ??= await import('livekit-client'));
+    const { RoomEvent, Track, DisconnectReason } = L;
+    // A fresh call (after a long drop): what I send goes into it anew.
+    void lk?.disconnect();
+    micPub = camPub = null;
+    // My microphone and camera stay mine: unpublished (an admin muted me), they aren't stopped.
+    const room = new L.Room({ adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: false, publishDefaults: { dtx: true, red: true, simulcast: true } });
+    lk = room;
+    const current = () => lk === room;
+    const linked = (id: string) => set((s) => ({ connection: { ...s.connection, [id]: 'connected' } }));
+    room
+      .on(RoomEvent.ParticipantConnected, (p) => current() && linked(p.identity))
+      .on(RoomEvent.ParticipantDisconnected, (p) => current() && forget(p.identity))
+      .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+        if (!current()) return;
+        const id = p.identity;
+        const stream = new MediaStream([track.mediaStreamTrack]);
+        if (track.kind === Track.Kind.Video) {
+          set((s) => ({ videos: { ...s.videos, [id]: stream } }));
+          showVia(id);
+          return;
+        }
+        lkMeters.get(id)?.();
+        lkMeters.set(id, watchSpeaking(stream, (speaking) => set((s) => ({ speaking: { ...s.speaking, [id]: speaking } }))));
+        set((s) => ({ streams: { ...s.streams, [id]: stream } }));
+      })
+      .on(RoomEvent.TrackUnsubscribed, (track, _pub, p) => {
+        if (!current()) return;
+        const id = p.identity;
+        if (track.kind === Track.Kind.Video) {
+          set((s) => ({ videos: without(s.videos, id) }));
+          return;
+        }
+        lkMeters.get(id)?.();
+        lkMeters.delete(id);
+        set((s) => ({ streams: without(s.streams, id), speaking: { ...s.speaking, [id]: false } }));
+      })
+      .on(RoomEvent.TrackPublished, (pub, p) => current() && pub.source === Track.Source.Camera && showVia(p.identity))
+      // Taken out of the call by the server (an admin muted me, or stopped my camera)…
+      .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+        if (pub === micPub) micPub = null;
+        if (pub === camPub) camPub = null;
+      })
+      // …or sent again by LiveKit itself, after it joined afresh.
+      .on(RoomEvent.LocalTrackPublished, (pub) => {
+        if (!current()) return;
+        if (pub.source === Track.Source.Microphone) micPub = pub;
+        if (pub.source === Track.Source.Camera) camPub = pub;
+      })
+      // LiveKit's own connection dropped (it tries again by itself).
+      .on(RoomEvent.Reconnecting, () => current() && set({ reconnecting: true }))
+      .on(RoomEvent.Reconnected, () => current() && socket.connected && set({ reconnecting: false }))
+      .on(RoomEvent.Disconnected, (reason) => {
+        if (!current() || get().status !== 'live') return;
+        // Joined from another device, or taken out by the server: the server says so (voice:kicked).
+        // (Without the server either, the wait for it decides, and says why.)
+        if (socket.connected && (reason === DisconnectReason.DUPLICATE_IDENTITY || reason === DisconnectReason.PARTICIPANT_REMOVED || reason === DisconnectReason.ROOM_DELETED)) {
+          window.setTimeout(() => {
+            if (lk !== room) return;
+            cleanup();
+            toast('You left voice.', 'error');
+          }, 2000);
+          return;
+        }
+        // It gave up on the connection: in again, with a fresh ticket. (No server either: that
+        // comes back first, and onReconnected joins the call again; or it doesn't, and I'm told.)
+        set({ reconnecting: true });
+        if (socket.connected) void rejoinCall(roomId);
+      });
+    await room.connect(ticket.url, ticket.token);
+    if (!current()) {
+      void room.disconnect();
+      return;
+    }
+    for (const p of room.remoteParticipants.values()) linked(p.identity);
+    // What an admin allows goes in (they may decide just as I join: then it waits, see publishMic).
+    if (!get().moderation.voiceMuted) await publishMic();
+    if (cameraTrack && !get().moderation.cameraBlocked) await publishCamera(cameraTrack).catch((err) => console.warn('Camera not sent', err));
+  }
+
+  /** My microphone into the call (again, after an admin let me talk: on unmuting). */
+  async function publishMic() {
+    const room = lk;
+    const L = lkModule;
+    const mic = localStream?.getAudioTracks()[0];
+    if (!room || !L || !mic || micPub) return;
+    try {
+      // Speech quality (24 kbps; LiveKit's default is for music), with redundancy against lost packets.
+      const pub = await room.localParticipant.publishTrack(mic, { source: L.Track.Source.Microphone, dtx: true, red: true, audioPreset: L.AudioPresets.speech });
+      if (lk !== room) return;
+      micPub = pub;
+      if (get().muted) await pub.mute();
+    } catch (err) {
+      // Not allowed (an admin muted me meanwhile): it goes in when they let me.
+      console.warn('Microphone not sent', err);
+    }
+  }
+
+  /** LiveKit's connection is gone for good: a fresh ticket from the server (the seat is still mine), and in again. */
+  async function rejoinCall(roomId: string) {
+    try {
+      const res = await emitAck<{ livekit?: Ticket }>('voice:join', { roomId, resume: true, from: socket.id, muted: get().muted, camera: get().cameraOn, livekit: true });
+      if (get().roomId !== roomId || !res.livekit) return;
+      await joinCall(roomId, res.livekit);
+    } catch (err) {
+      if (get().roomId !== roomId) return;
+      socket.emit('voice:leave', { roomId });
+      cleanup();
+      toast(errorMessage(err), 'error');
+    }
+  }
+
+  /** My camera into the call (in place of the one before, after a switch). */
+  async function publishCamera(track: MediaStreamTrack) {
+    const room = lk;
+    const L = lkModule;
+    if (!room || !L) return;
+    const before = camPub?.track;
+    camPub = null;
+    if (before) await room.localParticipant.unpublishTrack(before, false);
+    if (lk !== room || cameraTrack !== track) return;
+    camPub = await room.localParticipant.publishTrack(track, { source: L.Track.Source.Camera, simulcast: true });
   }
 
   /** Tells someone how big I show their camera, when that changed (out of sight: not at all). */
@@ -312,10 +486,14 @@ export const useVoice = create<VoiceState>()((set, get) => {
     };
     set({ cameraOn: true, localVideo: new MediaStream([track]), minimized: false });
     sendVideoToAll();
+    if (lk) await publishCamera(track);
     return true;
   }
 
   function stopCamera() {
+    const pub = camPub;
+    camPub = null;
+    if (lk && pub?.track) void lk.localParticipant.unpublishTrack(pub.track, false);
     cameraTrack?.stop();
     cameraTrack = null;
     set({ cameraOn: false, localVideo: null });
@@ -333,6 +511,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
     set({ moderation: next });
     if (next.voiceMuted && !get().muted) {
       localStream?.getAudioTracks().forEach((t) => (t.enabled = false));
+      void micPub?.mute();
       set((s) => ({ muted: true, speaking: { ...s.speaking, [myId()]: false } }));
     }
     if (next.cameraBlocked && cameraTrack) stopCamera();
@@ -360,6 +539,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
       await Promise.all(
         [...peers.values()].map((p) => p.pc.getSenders().find((s) => s.track?.kind === 'audio')?.replaceTrack(track)),
       );
+      if (micPub?.track) await micPub.track.replaceTrack(track, true);
       stopStream(localStream);
       localStream = fresh;
       watchLocalMic();
@@ -388,6 +568,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
   // instead of a frozen picture until I'm back. (A browser tab keeps its camera going.)
   document.addEventListener('visibilitychange', () => {
     for (const id of peers.keys()) tell(id);
+    for (const id of lk?.remoteParticipants.keys() ?? []) showVia(id);
     const { roomId, status } = get();
     if (inApp && cameraTrack && roomId && status === 'live') {
       socket.emit('voice:camera', { roomId, on: document.visibilityState !== 'hidden' });
@@ -448,20 +629,37 @@ export const useVoice = create<VoiceState>()((set, get) => {
           }
         }
         if (get().roomId !== roomId) return cleanup();
-        const { peers: others, moderation } = await emitAck<{ peers: VoiceParticipant[]; moderation?: Moderation }>('voice:join', {
+        const { peers: others, moderation, livekit } = await emitAck<{ peers: VoiceParticipant[]; moderation?: Moderation; livekit?: Ticket }>('voice:join', {
           roomId,
           muted: false,
           camera: !!cameraTrack,
+          livekit: true,
         });
         // Left while joining: the leave reached the server first, so say it again.
         if (get().roomId !== roomId) {
           socket.emit('voice:leave', { roomId });
           return;
         }
-        set({ status: 'live' });
+        set({ status: 'live', via: livekit ? 'livekit' : 'mesh' });
         if (moderation) moderate(moderation, true);
         blip('join');
         watchLocalMic();
+        if (livekit) {
+          try {
+            await joinCall(roomId, livekit);
+          } catch (err) {
+            // The network went as I joined (the server's gone too): as after any drop, I'm back in when it is
+            // (onReconnected), or told it didn't come back.
+            if (!socket.connected && get().roomId === roomId) {
+              set({ reconnecting: true });
+              return;
+            }
+            // In the seat, but not the call: out of both.
+            socket.emit('voice:leave', { roomId });
+            throw err;
+          }
+          return;
+        }
         await Promise.all(others.map((p) => offerTo(p.userId, roomId).catch((err) => console.warn('Voice offer failed', err))));
       } catch (err) {
         cleanup();
@@ -484,6 +682,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
       }
       const next = !muted;
       localStream?.getAudioTracks().forEach((t) => (t.enabled = !next));
+      if (lk) void (next ? micPub?.mute() : micPub ? micPub.unmute() : publishMic());
       set((s) => ({ muted: next, speaking: { ...s.speaking, [myId()]: false } }));
       if (roomId) socket.emit('voice:mute', { roomId, muted: next });
     },
@@ -516,6 +715,7 @@ export const useVoice = create<VoiceState>()((set, get) => {
       else delete shownBy[from];
       shown = shownBy.pip ?? shownBy.window ?? {};
       for (const id of peers.keys()) tell(id);
+      for (const id of lk?.remoteParticipants.keys() ?? []) showVia(id);
     },
 
     onPeerJoined: ({ roomId }) => {
@@ -610,16 +810,23 @@ export const useVoice = create<VoiceState>()((set, get) => {
       const { roomId, status, muted, cameraOn } = get();
       if (!roomId || status !== 'live') return;
       try {
-        const res = await emitAck<{ peers: VoiceParticipant[]; resumed: boolean; moderation?: Moderation }>('voice:join', {
+        const res = await emitAck<{ peers: VoiceParticipant[]; resumed: boolean; moderation?: Moderation; livekit?: Ticket }>('voice:join', {
           roomId,
           resume: true,
           from: droppedSocketId(),
           muted,
           camera: cameraOn,
+          livekit: true,
         });
         if (get().roomId !== roomId) return;
         set({ reconnecting: false });
         if (res.moderation) moderate(res.moderation, false);
+        // Through LiveKit: its call carried on, or is coming back by itself (a resume keeps
+        // everything as it was); only if it gave up, in again.
+        if (res.livekit) {
+          if (!lk || lk.state === 'disconnected') await joinCall(roomId, res.livekit);
+          return;
+        }
         const here = new Set(res.peers.map((p) => p.userId));
         // Gone while I was away.
         for (const id of [...peers.keys()]) if (!here.has(id)) closePeer(id);

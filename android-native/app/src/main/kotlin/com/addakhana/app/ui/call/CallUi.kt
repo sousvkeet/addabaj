@@ -32,6 +32,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.PhoneInTalk
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.CallEnd
 import androidx.compose.material.icons.rounded.Cameraswitch
 import androidx.compose.material.icons.rounded.CloseFullscreen
@@ -67,8 +71,12 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.addakhana.app.Graph
@@ -85,9 +93,9 @@ import com.addakhana.app.ui.components.hueFromId
 import com.addakhana.app.ui.duration
 import com.addakhana.app.ui.theme.palette
 import kotlinx.coroutines.delay
-import org.webrtc.RendererCommon
-import org.webrtc.SurfaceViewRenderer
-import org.webrtc.VideoTrack
+import livekit.org.webrtc.RendererCommon
+import livekit.org.webrtc.SurfaceViewRenderer
+import livekit.org.webrtc.VideoTrack
 
 /** A camera's picture (libwebrtc's renderer). `overlay`: drawn above other video (the self view). */
 @Composable
@@ -145,6 +153,87 @@ private fun RoundButton(icon: ImageVector, label: String, onClick: () -> Unit, s
             Icon(icon, label, tint = tint, modifier = Modifier.size(size * 0.45f))
         }
         if (caption != null) Text(caption, color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+    }
+}
+
+/** An output's icon: the loudspeaker, the phone at your ear, a Bluetooth headset, headphones. */
+private fun soundIcon(o: com.addakhana.app.data.Output?): ImageVector = when (o) {
+    com.addakhana.app.data.Output.Speaker -> Icons.Rounded.VolumeUp
+    com.addakhana.app.data.Output.Bluetooth -> Icons.Rounded.Bluetooth
+    com.addakhana.app.data.Output.Wired -> Icons.Rounded.Headphones
+    else -> Icons.Rounded.PhoneInTalk
+}
+
+/**
+ * Where a call's sound plays, as WhatsApp's audio button: its icon says
+ * where now. With just the earpiece and the loudspeaker a tap switches
+ * between them; with Bluetooth or headphones in too, it opens the list, the
+ * one playing ticked. A headset coming in takes the sound by itself.
+ */
+@Composable
+fun SoundButton(size: Dp = 56.dp) {
+    val route by com.addakhana.app.call.CallService.route.collectAsState()
+    val routes by com.addakhana.app.call.CallService.routes.collectAsState()
+    var menu by remember { mutableStateOf(false) }
+    val p = palette
+    // Away from your ear: lit, as the loudspeaker button was.
+    val lit = route != null && route != com.addakhana.app.data.Output.Earpiece
+    val name = routes.firstOrNull { it.output == route }?.name ?: route?.label ?: "Earpiece"
+    Box {
+        RoundButton(
+            soundIcon(route),
+            "Sound: $name. Change where it plays",
+            {
+                // Just the earpiece and the loudspeaker: one tap switches. Anything else (a headset, or
+                // a phone with only the loudspeaker): the list.
+                val just = routes.map { it.output }.toSet()
+                val simple = just == setOf(com.addakhana.app.data.Output.Speaker, com.addakhana.app.data.Output.Earpiece)
+                if (simple) {
+                    com.addakhana.app.call.CallService.setRoute(if (route == com.addakhana.app.data.Output.Speaker) com.addakhana.app.data.Output.Earpiece else com.addakhana.app.data.Output.Speaker)
+                } else {
+                    menu = true
+                }
+            },
+            size,
+            background = if (lit) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)),
+            tint = if (lit) p.deep else Color.White,
+        )
+        SoundMenu(menu, { menu = false })
+    }
+}
+
+/** The sound button on the bars a call or room voice shrinks to: its list on a tap. */
+@Composable
+private fun SoundBarButton() {
+    val route by com.addakhana.app.call.CallService.route.collectAsState()
+    val routes by com.addakhana.app.call.CallService.routes.collectAsState()
+    var menu by remember { mutableStateOf(false) }
+    val name = routes.firstOrNull { it.output == route }?.name ?: route?.label ?: "Earpiece"
+    Box {
+        BarButton(soundIcon(route), "Sound: $name. Change where it plays", { menu = true }, on = route != null && route != com.addakhana.app.data.Output.Earpiece)
+        SoundMenu(menu, { menu = false })
+    }
+}
+
+/** The places a call's sound can play, the one playing ticked. */
+@Composable
+fun SoundMenu(open: Boolean, onDismiss: () -> Unit) {
+    val p = palette
+    val route by com.addakhana.app.call.CallService.route.collectAsState()
+    val routes by com.addakhana.app.call.CallService.routes.collectAsState()
+    androidx.compose.material3.DropdownMenu(open, onDismiss, containerColor = p.surface) {
+        Text("Sound", color = p.inkSoft, fontSize = 12.5.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+        for (r in routes) {
+            androidx.compose.material3.DropdownMenuItem(
+                text = { Text(r.name, color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingIcon = { Icon(soundIcon(r.output), null, tint = p.ink) },
+                trailingIcon = { if (r.output == route) Icon(Icons.Rounded.Check, "Playing here", tint = p.brand) },
+                onClick = {
+                    onDismiss()
+                    com.addakhana.app.call.CallService.setRoute(r.output)
+                },
+            )
+        }
     }
 }
 
@@ -211,10 +300,14 @@ fun IncomingCallScreen() {
 fun callStatus(): String {
     val call by Graph.calls.state.collectAsState()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(call.startedAt) {
-        while (true) {
-            now = System.currentTimeMillis()
-            delay(1_000)
+    // The clock ticks only while the screen shows it (screen off, nothing redraws for it).
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(call.startedAt, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                now = System.currentTimeMillis()
+                delay(1_000)
+            }
         }
     }
     val base = when {
@@ -226,6 +319,14 @@ fun callStatus(): String {
         else -> ""
     }
     return base + if (call.muted) ", muted" else ""
+}
+
+/** The call's status line, on its own: its clock ticking redraws just this line, not the call screen. */
+@Composable
+private fun CallStatusText(color: Color, fontSize: TextUnit, whileCalling: String? = null) {
+    val phase = Graph.calls.state.collectAsState().value.phase
+    val status = callStatus()
+    Text(if (whileCalling != null && phase == "outgoing") whileCalling else status, color = color, fontSize = fontSize)
 }
 
 /**
@@ -240,7 +341,6 @@ fun CallStage() {
     val peer = call.peer ?: return
     BackHandler { Graph.calls.setMinimized(true) }
     val ask = rememberMediaPermission { ok, video -> if (ok && video) Graph.calls.toggleCamera() }
-    val status = callStatus()
     var settings by remember { mutableStateOf(false) }
     if (settings) com.addakhana.app.ui.home.DeviceSettings { settings = false }
     val first = peer.name.split(' ').first()
@@ -261,7 +361,7 @@ fun CallStage() {
         ) {
             Column(Modifier.weight(1f)) {
                 Text(peer.name, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(status, color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp)
+                CallStatusText(Color.White.copy(alpha = 0.8f), 14.sp)
             }
             if (layout?.arranged == true) {
                 RoundButton(Icons.Rounded.GridView, "Show you both side by side", { layout.everyoneToGrid() }, 44.dp)
@@ -280,7 +380,7 @@ fun CallStage() {
             RoundButton(if (call.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (call.muted) "Unmute microphone" else "Mute microphone", { Graph.calls.toggleMute() }, background = if (call.muted) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (call.muted) p.deep else Color.White)
             RoundButton(if (call.cameraOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, if (call.cameraOn) "Turn camera off" else "Turn camera on", { if (call.cameraOn) Graph.calls.toggleCamera() else ask(true) })
             if (call.cameraOn) RoundButton(Icons.Rounded.Cameraswitch, "Switch camera", { Graph.calls.switchCamera() })
-            RoundButton(if (call.speaker) Icons.Rounded.VolumeUp else Icons.Rounded.Hearing, if (call.speaker) "Use the earpiece" else "Use the loudspeaker", { Graph.calls.setSpeaker(!call.speaker) }, background = if (call.speaker) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (call.speaker) p.deep else Color.White)
+            SoundButton()
             RoundButton(Icons.Rounded.CallEnd, if (call.phase == "outgoing") "Cancel call" else "End call", { Graph.calls.endCall() }, background = SolidColor(p.danger))
         }
     }
@@ -305,7 +405,7 @@ fun CallStage() {
                 Avatar(peer.name, peer.hue, peer.photo, 112.dp, ring = call.remoteSpeaking)
                 Spacer(Modifier.height(16.dp))
                 Text(peer.name, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-                Text(if (call.phase == "outgoing") "Calling $first…" else status, color = Color.White.copy(alpha = 0.75f), fontSize = 15.sp)
+                CallStatusText(Color.White.copy(alpha = 0.75f), 15.sp, whileCalling = "Calling $first…")
             }
             Box(Modifier.align(Alignment.TopCenter)) { header() }
             Box(Modifier.align(Alignment.BottomCenter)) { controls() }
@@ -319,14 +419,14 @@ fun CallBar() {
     val p = palette
     val call by Graph.calls.state.collectAsState()
     val peer = call.peer ?: return
-    val status = callStatus()
     Bar(onClick = { Graph.calls.setMinimized(false) }) {
         Avatar(peer.name, peer.hue, peer.photo, 40.dp, ring = call.remoteSpeaking)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(peer.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(status, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+            CallStatusText(Color.White.copy(alpha = 0.75f), 13.sp)
         }
+        SoundBarButton()
         BarButton(if (call.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (call.muted) "Unmute microphone" else "Mute microphone", { Graph.calls.toggleMute() }, on = call.muted)
         BarButton(Icons.Rounded.CallEnd, "End call", { Graph.calls.endCall() }, danger = true)
     }
@@ -395,6 +495,7 @@ fun VoiceBar() {
             )
         }
         BarButton(if (voice.cameraOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, "Camera", { Graph.voice.toggleCamera() }, on = voice.cameraOn)
+        SoundBarButton()
         BarButton(if (voice.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (voice.muted) "Unmute" else "Mute", { Graph.voice.toggleMute() }, on = voice.muted)
         BarButton(Icons.Rounded.CallEnd, "Leave voice", { Graph.voice.leave() }, danger = true)
     }
@@ -464,6 +565,13 @@ fun VoiceTable(room: Room) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 AddaButton(if (voice.moderation.voiceMuted) "Muted" else if (voice.muted) "Unmute" else "Mute", { Graph.voice.toggleMute() }, Modifier.weight(1f), variant = if (voice.muted) Variant.Primary else Variant.Soft, icon = if (voice.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic)
                 AddaButton("Camera", { if (voice.cameraOn) Graph.voice.toggleCamera() else camAsk(true) }, Modifier.weight(1f), variant = if (voice.cameraOn) Variant.Primary else Variant.Soft, icon = if (voice.cameraOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff)
+                // Where it plays (the loudspeaker, a headset…): tap for the list.
+                val route by com.addakhana.app.call.CallService.route.collectAsState()
+                var soundMenu by remember { mutableStateOf(false) }
+                Box(Modifier.weight(1f)) {
+                    AddaButton("Sound", { soundMenu = true }, Modifier.fillMaxWidth(), variant = Variant.Soft, icon = soundIcon(route))
+                    SoundMenu(soundMenu, { soundMenu = false })
+                }
                 AddaButton("Leave", { Graph.voice.leave() }, Modifier.weight(1f), variant = Variant.DangerSoft)
             }
             val cams = people.count { it.camera }
@@ -536,7 +644,7 @@ fun RoomCallStage() {
             silenced = v.silenced,
             note = when {
                 v.away -> ", reconnecting…"
-                !mine && voice.connection[v.userId]?.let { it != org.webrtc.PeerConnection.PeerConnectionState.CONNECTED } == true -> ", connecting…"
+                !mine && voice.connection[v.userId]?.let { it != livekit.org.webrtc.PeerConnection.PeerConnectionState.CONNECTED } == true -> ", connecting…"
                 else -> ""
             },
         )
@@ -570,6 +678,7 @@ fun RoomCallStage() {
                 RoundButton(if (voice.muted) Icons.Rounded.MicOff else Icons.Rounded.Mic, if (voice.muted) "Unmute" else "Mute", { Graph.voice.toggleMute() }, 48.dp, background = if (voice.muted) SolidColor(Color.White) else SolidColor(Color.White.copy(alpha = 0.14f)), tint = if (voice.muted) p.deep else Color.White)
                 RoundButton(if (voice.cameraOn) Icons.Rounded.Videocam else Icons.Rounded.VideocamOff, "Camera", { if (voice.cameraOn) Graph.voice.toggleCamera() else camAsk(true) }, 48.dp)
                 if (voice.cameraOn) RoundButton(Icons.Rounded.Cameraswitch, "Switch camera", { Graph.voice.switchCamera() }, 48.dp)
+                SoundButton(48.dp)
                 RoundButton(Icons.Rounded.CallEnd, "Leave the call", { Graph.voice.leave() }, 48.dp, background = SolidColor(p.danger))
             }
         },

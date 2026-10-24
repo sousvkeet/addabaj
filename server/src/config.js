@@ -40,6 +40,11 @@ export const config = {
       : null,
   // Send all media through TURN (hides users' IP addresses from each other; also handy for testing TURN).
   forceTurnRelay: process.env.FORCE_TURN_RELAY === 'true',
+  // Room voice and video through LiveKit (services/livekit.js); without it, a mesh.
+  livekit:
+    process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET
+      ? { url: process.env.LIVEKIT_URL, apiKey: process.env.LIVEKIT_API_KEY, apiSecret: process.env.LIVEKIT_API_SECRET }
+      : null,
   // Used when Cloudflare TURN isn't configured or can't be reached.
   iceServers: [
     { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },

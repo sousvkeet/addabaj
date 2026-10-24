@@ -1,11 +1,15 @@
 package com.addakhana.app.data
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.TrafficStats
+import android.os.PowerManager
 import android.os.Process
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
@@ -85,6 +89,10 @@ object DataUse {
     /** The network now (kept up to date as it changes). */
     val net: StateFlow<Net> = _net.asStateFlow()
 
+    private val _saver = MutableStateFlow(false)
+    /** The phone's Battery Saver is on: calls use less data (and so less battery) then, whatever the setting. */
+    val saver: StateFlow<Boolean> = _saver.asStateFlow()
+
     fun init(c: Context, scope: CoroutineScope) {
         prefs = c.getSharedPreferences("data_use", Context.MODE_PRIVATE)
         _calls.value = runCatching { CallSaving.valueOf(prefs.getString("calls", null) ?: "") }.getOrDefault(CallSaving.Mobile)
@@ -99,6 +107,7 @@ object DataUse {
         _photos.value = runCatching { UploadQuality.valueOf(prefs.getString("photos", null) ?: "") }.getOrDefault(UploadQuality.Standard)
         _videos.value = runCatching { UploadQuality.valueOf(prefs.getString("videos", null) ?: "") }.getOrDefault(UploadQuality.Standard)
         watchNetwork(c)
+        watchSaver(c)
         loadUsage()
         countRest(scope)
     }
@@ -126,11 +135,23 @@ object DataUse {
     /** What downloads by itself now. */
     fun autoNow(): AutoDownload = _auto.value.getValue(_net.value)
 
-    /** Calls use less data now. */
-    fun lessForCalls(): Boolean = when (_calls.value) {
+    /** Calls use less data now (as chosen, or with Battery Saver on). */
+    fun lessForCalls(): Boolean = _saver.value || when (_calls.value) {
         CallSaving.Always -> true
         CallSaving.Mobile -> _net.value != Net.Wifi
         CallSaving.Never -> false
+    }
+
+    private fun watchSaver(c: Context) {
+        val pm = c.getSystemService(PowerManager::class.java) ?: return
+        runCatching {
+            _saver.value = pm.isPowerSaveMode
+            c.registerReceiver(object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    _saver.value = pm.isPowerSaveMode
+                }
+            }, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
+        }
     }
 
     private fun watchNetwork(c: Context) {
@@ -181,11 +202,13 @@ object DataUse {
     }
 
     /**
-     * Every 10 s: whatever the app sent and received that the HTTP client and
+     * Every 10 s (on screen; less often out of sight): whatever the app sent and received that the HTTP client and
      * the live connection didn't count is calls while one runs (WebRTC), or
      * media otherwise (YouTube's player). Then the counts are saved.
      */
     private fun countRest(scope: CoroutineScope) = scope.launch {
+        // Leaving the app, what's counted so far is saved (the phone may stop the app before the next minute).
+        launch { AppLifecycle.foreground.collect { if (!it) save() } }
         val uid = Process.myUid()
         while (true) {
             val tx = TrafficStats.getUidTxBytes(uid)
@@ -203,16 +226,28 @@ object DataUse {
             lastTx = tx
             lastRx = rx
             publish()
-            delay(10_000)
+            // Often while it's on screen (Storage and data shows it), less in a call out of sight, rarely otherwise.
+            val call = com.addakhana.app.call.CallService.running
+            delay(if (AppLifecycle.foreground.value) 10_000 else if (call) 30_000 else 60_000)
         }
     }
 
+    private var savedAt = 0L
+    private var saved: List<Long>? = null
+
     private fun publish() {
         val now = List(12) { counts.get(it) }
-        if (now != _usage.value.bytes) {
-            _usage.value = _usage.value.copy(bytes = now)
-            prefs.edit().putString("usage", now.joinToString(",")).apply()
-        }
+        if (now != _usage.value.bytes) _usage.value = _usage.value.copy(bytes = now)
+        // Saved at most once a minute (not a write to storage every few seconds of a call).
+        if (System.currentTimeMillis() - savedAt >= 60_000) save()
+    }
+
+    private fun save() {
+        val now = _usage.value.bytes
+        if (now == saved) return
+        saved = now
+        savedAt = System.currentTimeMillis()
+        prefs.edit().putString("usage", now.joinToString(",")).apply()
     }
 
     private fun loadUsage() {
@@ -220,6 +255,7 @@ object DataUse {
         if (saved?.size == 12) saved.forEachIndexed { i, v -> counts.set(i, v) }
         val since = prefs.getLong("usage_since", 0L).takeIf { it > 0 } ?: System.currentTimeMillis().also { prefs.edit().putLong("usage_since", it).apply() }
         _usage.value = Counts(List(12) { counts.get(it) }, since)
+        this.saved = _usage.value.bytes
     }
 
     fun resetUsage() {
@@ -227,5 +263,6 @@ object DataUse {
         val now = System.currentTimeMillis()
         prefs.edit().putString("usage", "").putLong("usage_since", now).apply()
         _usage.value = Counts(List(12) { 0L }, now)
+        saved = _usage.value.bytes
     }
 }

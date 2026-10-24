@@ -56,6 +56,7 @@
     "@ghostery/adblocker-content": "2.18.2",
     "@ghostery/adblocker-extended-selectors": "2.18.2",
     "tldts-experimental": "7.4.18",
-    "tldts-core": "7.4.18"
+    "tldts-core": "7.4.18",
+    "jose": "6.2.12"
   }
 }

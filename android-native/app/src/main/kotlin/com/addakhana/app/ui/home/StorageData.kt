@@ -69,6 +69,7 @@ fun StorageDataScreen(page: String) {
 private fun StorageData() {
     val context = LocalContext.current
     val calls by DataUse.calls.collectAsState()
+    val saver by DataUse.saver.collectAsState()
     val auto by DataUse.auto.collectAsState()
     val photos by DataUse.photos.collectAsState()
     val videos by DataUse.videos.collectAsState()
@@ -96,8 +97,8 @@ private fun StorageData() {
                 AddaButton("Clear", { dialog = "clear" }, height = 36.dp, variant = Variant.Soft, enabled = (stored ?: 0) > 0)
             }
         }
-        Panel(title = "Calls", hint = "Calls, room voice and live streams send less (lower video quality); voices send next to nothing while nobody speaks, always.") {
-            Setting("Use less data for calls", calls.label) { dialog = "calls" }
+        Panel(title = "Calls", hint = "Calls, room voice and live streams send less (lower video quality), and with Battery Saver on too; voices send next to nothing while nobody speaks, always.") {
+            Setting("Use less data for calls", if (saver && calls != CallSaving.Always) "${calls.label} (on now: Battery Saver)" else calls.label) { dialog = "calls" }
         }
         Panel(title = "Media auto-download", hint = "What downloads by itself on each network. Voice messages always download when you play them, and photos open in full when you tap them.") {
             for (n in Net.entries) Setting(n.label, auto.getValue(n).summary) { dialog = n.name }

@@ -47,7 +47,8 @@ object Devices {
         prefs.edit().putBoolean("front_camera", front).apply()
     }
 
-    private fun kind(d: AudioDeviceInfo): Output? = when (d.type) {
+    /** What kind of output a device is (null: one calls don't use). */
+    fun kind(d: AudioDeviceInfo): Output? = when (d.type) {
         AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> Output.Earpiece
         AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> Output.Speaker
         AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> Output.Bluetooth

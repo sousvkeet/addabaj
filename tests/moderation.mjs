@@ -124,8 +124,12 @@ try {
     await sleep(800);
     const seen = await voiceOf(pa, B.id);
     expect(seen?.muted && seen.silenced, `the server let him unmute: ${JSON.stringify(seen)}`);
-    // Asha's player for his sound is muted.
-    await pa.waitForFunction(() => [...document.querySelectorAll('audio[data-call-audio]')].some((a) => a.muted), null, { timeout: 8000 });
+    // His sound doesn't reach Asha (through LiveKit, he can't send it), or her player for it is muted.
+    await pa.waitForFunction(
+      (id) => !window.adda.voice.getState().streams[id] || [...document.querySelectorAll('audio[data-call-audio]')].some((a) => a.muted),
+      B.id,
+      { timeout: 8000 },
+    );
   });
 
   await check('it holds after leaving voice and coming back', async () => {
@@ -177,7 +181,28 @@ try {
     await pa.getByRole('region', { name: /^Video call in/ }).waitFor({ timeout: 15_000 });
   });
 
-  await check('the room’s call starts each picture sharp: video is asked to start at 1.2 Mbps, and a large view gets 720p at 2 Mbps', async () => {
+  await check('the room’s call sends each picture sharp: a large view gets the full-size picture, within 2 Mbps or so', async () => {
+    // Through LiveKit, Bikram's camera goes up once, in three sizes (each viewer gets the one they show); phone to phone, one copy per viewer.
+    const layers = await pb.evaluate(() =>
+      window.__pcs.filter((pc) => pc.connectionState === 'connected').flatMap((pc) => pc.getSenders().filter((s) => s.track?.kind === 'video').map((s) => s.getParameters().encodings ?? [])),
+    );
+    const viaLiveKit = layers.some((e) => e.length > 1);
+    if (viaLiveKit) {
+      const top = Math.max(...layers.flat().map((e) => e.maxBitrate ?? 0));
+      expect(top >= 1_000_000 && top <= 2_500_000, `the full-size picture goes at ${top} bps`);
+      // Asha shows Bikram large: the full-size one reaches her.
+      await pa.waitForFunction(
+        async () => {
+          for (const pc of window.__pcs.filter((c) => c.connectionState === 'connected')) {
+            for (const r of (await pc.getStats()).values()) if (r.type === 'inbound-rtp' && r.kind === 'video' && (r.frameHeight ?? 0) >= 360) return true;
+          }
+          return false;
+        },
+        null,
+        { timeout: 15_000, polling: 1000 },
+      );
+      return;
+    }
     const sdp = await pa.evaluate(() => window.__pcs.filter((pc) => pc.connectionState === 'connected').map((pc) => pc.remoteDescription?.sdp ?? ''));
     expect(sdp.length && sdp.every((s) => s.includes('x-google-start-bitrate=1200')), 'the start bitrate hint is missing');
     // Asha shows Bikram large: his camera goes to her at full size, within its most.

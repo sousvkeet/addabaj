@@ -47,7 +47,7 @@ type CallState = {
 
   onIncoming: (e: { callId: string; from: Peer; video?: boolean }) => void;
   onAccepted: (e: { callId: string; video?: boolean }) => Promise<void>;
-  onSignal: (e: { callId: string; data: { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; restart?: boolean } }) => Promise<void>;
+  onSignal: (e: { callId: string; data: { sdp?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit; restart?: boolean; watching?: boolean } }) => Promise<void>;
   onPeerMute: (e: { callId: string; muted: boolean }) => void;
   onPeerCamera: (e: { callId: string; on: boolean }) => void;
   onEnded: (e: { callId: string; reason: string }) => void;
@@ -113,6 +113,8 @@ let healthTimer = 0;
 let role: 'caller' | 'callee' | null = null;
 let lostTimer = 0;
 let lastRepair = 0;
+/** The other side sees my video (a phone with its screen off doesn't): my camera sends only then. */
+let peerWatching = true;
 
 /** Bytes of call audio received so far, or null if unknown. */
 async function audioBytesReceived(conn: RTCPeerConnection) {
@@ -132,6 +134,7 @@ export const useCall = create<CallState>()((set, get) => {
     window.clearTimeout(lostTimer);
     role = null;
     lastRepair = 0;
+    peerWatching = true;
     stopTone();
     stopLocalMeter?.();
     stopRemoteMeter?.();
@@ -184,8 +187,10 @@ export const useCall = create<CallState>()((set, get) => {
     const sender = videoTx?.sender;
     const params = sender?.getParameters();
     const encoding = params?.encodings?.[0];
-    if (!sender || !params || !encoding || (encoding.maxBitrate === CALL_VIDEO.maxBitrate && encoding.maxFramerate === CALL_VIDEO.maxFramerate)) return;
-    Object.assign(encoding, CALL_VIDEO);
+    if (!sender || !params || !encoding) return;
+    // Nobody watching (their screen is off): nothing is encoded or sent.
+    if (encoding.maxBitrate === CALL_VIDEO.maxBitrate && encoding.maxFramerate === CALL_VIDEO.maxFramerate && encoding.active === peerWatching) return;
+    Object.assign(encoding, CALL_VIDEO, { active: peerWatching });
     await sender.setParameters(params).catch(() => {});
   }
 
@@ -462,7 +467,14 @@ export const useCall = create<CallState>()((set, get) => {
     },
 
     onSignal: async ({ callId, data }) => {
-      if (get().callId !== callId || !pc) return;
+      if (get().callId !== callId) return;
+      // Whether the other side sees my video now.
+      if (typeof data.watching === 'boolean') {
+        peerWatching = data.watching;
+        void tuneVideo();
+        return;
+      }
+      if (!pc) return;
       const conn = pc;
       // The callee's side broke: it asks me (the caller) for a new path.
       if (data.restart) {

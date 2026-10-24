@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -111,11 +112,14 @@ class WatchStore(private val realtime: Realtime, private val scope: CoroutineSco
                 Follow(id, detail != null, detail?.watch, detail?.myRole == "admin", id != null && chat.bootstrapped && chat.rooms[id] == null)
             }.distinctUntilChanged().collect { follow(it) }
         }
-        // Every 2 s: the host reports where it really is; everyone else corrects any drift.
+        // Every 2 s while a video plays here: the host reports where it really is; everyone else corrects any drift.
+        // (Nothing wakes the phone for it otherwise.)
         scope.launch {
-            while (true) {
-                delay(2_000)
-                tick()
+            _state.map { it.ready }.distinctUntilChanged().collectLatest { ready ->
+                while (ready) {
+                    delay(2_000)
+                    tick()
+                }
             }
         }
         // Out of sight and back: YouTube stops (and catches up); files play on.
